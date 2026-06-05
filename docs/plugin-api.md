@@ -1,4 +1,4 @@
-# GeoLibre Plugin API
+# MilGeo.app Plugin API
 
 ## Interface
 
@@ -73,7 +73,7 @@ export interface GeoLibreAppAPI {
 ## Register a plugin
 
 ```typescript
-import { PluginManager } from "@geolibre/plugins";
+import { PluginManager } from "@geolibre/plugins"; // package name unchanged
 
 const manager = new PluginManager();
 manager.register(myPlugin);
@@ -115,13 +115,13 @@ export const myPlugin: GeoLibrePlugin = {
 
 Map control plugins can optionally expose `getMapControlPosition()` and `setMapControlPosition()` so the desktop Plugins menu can move the control between map corners. Position-aware plugins should remove and recreate or re-add their control when the position changes.
 
-Plugins with serializable runtime settings can expose `getProjectState()` and `applyProjectState()` so GeoLibre can save and restore those settings in the project file. A wrapper should use these hooks to adapt upstream control APIs such as `getState()` without requiring every upstream package to implement a GeoLibre-specific interface.
+Plugins with serializable runtime settings can expose `getProjectState()` and `applyProjectState()` so MilGeo.app can save and restore those settings in the project file. A wrapper should use these hooks to adapt upstream control APIs such as `getState()` without requiring every upstream package to implement a MilGeo.app-specific interface.
 
 ## External plugins
 
-Use the [GeoLibre plugin template](https://github.com/opengeos/geolibre-plugin-template) as the recommended starting point for external plugin development. The template includes a MapLibre control wrapper, a `plugin.json` manifest, a GeoLibre plugin entry point, and a `package:geolibre` script that builds the zip layout GeoLibre Desktop expects.
+Use the [GeoLibre plugin template](https://github.com/opengeos/geolibre-plugin-template) as the recommended starting point for external plugin development. The template includes a MapLibre control wrapper, a `plugin.json` manifest, a plugin entry point, and a `package:geolibre` script that builds the zip layout MilGeo.app expects.
 
-GeoLibre Desktop loads external plugins from the app data `plugins/` directory at startup. External plugins are trusted code and can be installed as:
+MilGeo.app loads external plugins from the app data `plugins/` directory at startup. External plugins are trusted code and can be installed as:
 
 - A `.zip` file with a root `plugin.json`.
 - An unpacked directory with a root `plugin.json`.
@@ -129,9 +129,9 @@ GeoLibre Desktop loads external plugins from the app data `plugins/` directory a
 
 The Plugins settings section can also add local development directories outside the app data folder. Each configured directory can contain plugin zips, unpacked plugin bundle folders, or be a single unpacked plugin bundle itself. Configured development directories are scanned before the app data `plugins/` directory, so a development copy can override an installed external plugin with the same ID. Built-in plugins still take precedence over all external plugins.
 
-For the web app, use manifest URLs. GeoLibre fetches the manifest, resolves `entry` and `style` relative to the manifest URL, then loads the bundled ESM entry. Browser loading requires HTTPS except for `localhost` and depends on the host allowing CORS.
+For the web app, use manifest URLs. MilGeo.app fetches the manifest, resolves `entry` and `style` relative to the manifest URL, then loads the bundled ESM entry. Browser loading requires HTTPS except for `localhost` and depends on the host allowing CORS.
 
-To include an external plugin folder in a GeoLibre web build, place the built plugin bundle under the Vite public directory:
+To include an external plugin folder in a MilGeo.app web build, place the built plugin bundle under the Vite public directory:
 
 ```text
 apps/geolibre-desktop/public/plugins/example-plugin/
@@ -146,7 +146,7 @@ Vite copies files from `public/` into the final web build, so the manifest URL b
 /plugins/example-plugin/plugin.json
 ```
 
-This works in both development and production web builds. The browser still cannot scan `/plugins/` at runtime, so each bundled plugin must be loaded by an explicit manifest URL, such as one entered in Settings > Plugins. Manifest URLs are saved in the project `plugins.manifestUrls` array so reloading a shared project can fetch its external plugins before restoring active plugin state. For plugins that should always ship as part of GeoLibre without user configuration, prefer registering them as built-in plugins.
+This works in both development and production web builds. The browser still cannot scan `/plugins/` at runtime, so each bundled plugin must be loaded by an explicit manifest URL, such as one entered in Settings > Plugins. Manifest URLs are saved in the project `plugins.manifestUrls` array so reloading a shared project can fetch its external plugins before restoring active plugin state. For plugins that should always ship as part of MilGeo.app without user configuration, prefer registering them as built-in MilGeo.app plugins.
 
 ```json
 {

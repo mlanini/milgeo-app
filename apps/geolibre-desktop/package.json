@@ -1,5 +1,5 @@
 {
-  "name": "geolibre-desktop",
+  "name": "milgeo-app",
   "version": "0.8.0",
   "private": true,
   "type": "module",
@@ -47,6 +47,7 @@
     "maplibre-gl-lidar": "^0.14.1",
     "maplibre-gl-streetview": "^0.4.0",
     "maplibre-gl-swipe": "^0.7.1",
+    "milsymbol": "^3.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "shpjs": "^6.2.0",

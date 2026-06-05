@@ -73,6 +73,7 @@ import {
   Puzzle,
   RefreshCw,
   Save,
+  Shield,
   SlidersHorizontal,
   Sun,
   Wrench,
@@ -106,6 +107,8 @@ interface TopToolbarProps {
   compact?: boolean;
   diagnosticsErrorCount: number;
   mapControllerRef: React.RefObject<MapController | null>;
+  milSymbolOpen?: boolean;
+  onToggleMilSymbol?: () => void;
   showLabels?: boolean;
   showProjectInfo?: boolean;
   themeMode: ThemeMode;
@@ -166,6 +169,8 @@ export function TopToolbar({
   compact = false,
   diagnosticsErrorCount,
   mapControllerRef,
+  milSymbolOpen = false,
+  onToggleMilSymbol,
   showLabels = true,
   showProjectInfo = true,
   themeMode,
@@ -473,7 +478,7 @@ export function TopToolbar({
       <span className="mr-1 flex shrink-0 items-center gap-1.5 text-sm font-semibold text-primary md:mr-2">
         <Map className="h-4 w-4" />
         {showProjectInfo ? (
-          <span className="hidden sm:inline">GeoLibre Desktop</span>
+          <span className="hidden sm:inline">MilGeo.app</span>
         ) : null}
       </span>
       <NewProjectDialog
@@ -560,6 +565,17 @@ export function TopToolbar({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <Button
+        className={cn(toolbarButtonClass, milSymbolOpen && "bg-primary/10 text-primary")}
+        variant="ghost"
+        size={toolbarButtonSize}
+        onClick={onToggleMilSymbol}
+        aria-label="MilGeo Symbols"
+        aria-pressed={milSymbolOpen}
+      >
+        <Shield className={toolbarIconClassName} />
+        {renderToolbarLabel("MilGeo")}
+      </Button>
       <Button
         className={toolbarButtonClass}
         variant="ghost"

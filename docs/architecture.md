@@ -1,8 +1,8 @@
-# GeoLibre Desktop Architecture
+# MilGeo.app Architecture
 
 ## Overview
 
-GeoLibre Desktop is an npm workspaces monorepo. The UI is a React app hosted by Tauri v2. Map rendering uses MapLibre GL JS in the browser webview, with deck.gl used for advanced raster, point cloud, and 3D overlays. Application state lives in a Zustand store (`@geolibre/core`).
+MilGeo.app is an npm workspaces monorepo. The UI is a React app hosted by Tauri v2. Map rendering uses MapLibre GL JS in the browser webview, with deck.gl used for advanced raster, point cloud, and 3D overlays. Application state lives in a Zustand store (`@geolibre/core`).
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ flowchart LR
 | `@geolibre/ui` | Shared UI primitives (shadcn-style) |
 | `@geolibre/processing` | Client-side algorithm registry |
 | `@geolibre/plugins` | Plugin interface and built-in plugins |
-| `geolibre-desktop` | Shell layout, Tauri I/O, composition |
+| `geolibre-desktop` | MilGeo.app shell layout, Tauri I/O, composition |
 
 ## State flow
 
@@ -51,7 +51,7 @@ GeoParquet is read with DuckDB's Parquet reader after loading Spatial. Other loc
 
 ## Advanced Add Data workflows
 
-The v0.8.0 Add Data surface includes native dialogs for XYZ, WMS, WFS, vector files, GeoJSON URLs, vector tile sources, delimited text, raster tile templates, COG and GeoTIFF rasters, MBTiles, ArcGIS FeatureServer or VectorTileServer layers, and GPX waypoints, tracks, and routes. It also supports 3D Tiles layers, WFS and GeoJSON URL refresh, text marker labels, and multiple DuckDB SQL query-result layers. The Components plugin wraps `maplibre-gl-components` panels for FlatGeobuf, PMTiles, Zarr, LiDAR, and Gaussian splats, then mirrors added layers into the GeoLibre store so the Layer panel, project format, and layer control can reason about them.
+The v0.8.0 Add Data surface includes native dialogs for XYZ, WMS, WFS, vector files, GeoJSON URLs, vector tile sources, delimited text, raster tile templates, COG and GeoTIFF rasters, MBTiles, ArcGIS FeatureServer or VectorTileServer layers, and GPX waypoints, tracks, and routes. It also supports 3D Tiles layers, WFS and GeoJSON URL refresh, text marker labels, and multiple DuckDB SQL query-result layers. The Components plugin wraps `maplibre-gl-components` panels for FlatGeobuf, PMTiles, Zarr, LiDAR, and Gaussian splats, then mirrors added layers into the MilGeo.app store so the Layer panel, project format, and layer control can reason about them.
 
 Local MBTiles tiles are read through a custom MapLibre protocol backed by Tauri commands. Remote rasters are fetched through the desktop backend when needed, and the local development server includes a raster proxy for selected release assets that need CORS handling.
 

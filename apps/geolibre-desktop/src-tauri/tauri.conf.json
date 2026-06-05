@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "GeoLibre Desktop",
+  "productName": "MilGeo.app",
   "version": "0.8.0",
   "identifier": "org.geolibre.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "create": false,
-        "title": "GeoLibre Desktop",
+        "title": "MilGeo.app",
         "width": 1280,
         "height": 800,
         "resizable": true,

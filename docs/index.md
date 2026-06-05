@@ -5,13 +5,13 @@ hide:
 
 <section class="hero">
   <div class="hero__content">
-    <p class="eyebrow">Cloud-native desktop GIS</p>
-    <h1>MapLibre-powered GIS for local projects and modern geospatial workflows.</h1>
+    <p class="eyebrow">Web GIS with military tactical tools</p>
+    <h1>MapLibre-powered GIS with APP-6D symbol support and cloud-native geospatial workflows.</h1>
     <p class="hero__lead">
-      GeoLibre is a lightweight desktop GIS prototype built with Tauri, React,
-      TypeScript, MapLibre GL JS, DuckDB-WASM Spatial, and deck.gl. It focuses
-      on fast local data work, project files, styling, plugins, and a practical
-      path toward cloud-native geospatial workflows.
+      MilGeo.app is a lightweight web GIS built with React,
+      TypeScript, MapLibre GL JS, DuckDB-WASM Spatial, milsymbol, and deck.gl. It focuses
+      on APP-6D tactical symbol placement, tactical graphics, fast local data work,
+      project files, styling, and plugins.
     </p>
     <div class="hero__actions">
       <a class="md-button md-button--primary" href="https://viewer.geolibre.app/">Open live demo</a>
@@ -20,11 +20,11 @@ hide:
     </div>
   </div>
   <figure class="hero__media">
-    <img src="https://files.opengeos.org/GeoLibre-demo.webp" alt="GeoLibre map interface showing the desktop GIS workspace">
+    <img src="https://files.opengeos.org/GeoLibre-demo.webp" alt="MilGeo.app map interface showing the GIS workspace">
   </figure>
 </section>
 
-## What GeoLibre does today
+## What MilGeo.app does today
 
 <div class="feature-grid" markdown>
 
@@ -62,7 +62,7 @@ The processing toolbox includes client-side algorithms now, with a roadmap towar
 
 ## Try it in the browser
 
-The live demo is the browser-capable version of the GeoLibre desktop UI. It is useful for exploring the map, loading browser-selected vector data supported by DuckDB-WASM Spatial, adding URL-based layers, styling layers, and testing plugins. Desktop-only file dialogs, local MBTiles, local raster reads, and filesystem save/open operations still require the installed Tauri app.
+The live demo is the browser-capable version of the MilGeo.app UI. It is useful for exploring the map, loading browser-selected vector data supported by DuckDB-WASM Spatial, adding URL-based layers, styling layers, and testing plugins. Desktop-only file dialogs, local MBTiles, local raster reads, and filesystem save/open operations still require the installed Tauri app.
 
 Open a project by passing a public `.geolibre.json` URL with the `url` query parameter:
 
@@ -97,4 +97,4 @@ Use `toolbar=icons` when you only want icon-only toolbar buttons. `panels=hidden
 
 ## Project status
 
-GeoLibre is an active prototype. Version 0.8.0 includes the map workspace, project format, plugin API, browser vector import, DuckDB-WASM Spatial loading, advanced Add Data workflows, MBTiles desktop support, ArcGIS layers, COG and GeoTIFF raster rendering, PMTiles, Zarr, LiDAR, Gaussian splats, 3D Tiles, WFS layers, delimited text layers, GPX layers, WMS GetFeatureInfo identify, plugin-state persistence, external plugin manifests, dynamic plugin zip loading, map settings, runtime environment variables, inline attribute editing, multiple DuckDB SQL query-result layers, diagnostics, and the Whitebox toolbox. See the [roadmap](roadmap.md) for planned work on SQL panel workflows, expanded processing pipelines, and external plugin distribution.
+MilGeo.app is an active prototype. Version 0.8.0 includes the map workspace, project format, plugin API, browser vector import, DuckDB-WASM Spatial loading, advanced Add Data workflows, MBTiles desktop support, ArcGIS layers, COG and GeoTIFF raster rendering, PMTiles, Zarr, LiDAR, Gaussian splats, 3D Tiles, WFS layers, delimited text layers, GPX layers, WMS GetFeatureInfo identify, plugin-state persistence, external plugin manifests, dynamic plugin zip loading, map settings, runtime environment variables, inline attribute editing, multiple DuckDB SQL query-result layers, diagnostics, and the Whitebox toolbox. See the [roadmap](roadmap.md) for planned work on SQL panel workflows, expanded processing pipelines, and external plugin distribution.

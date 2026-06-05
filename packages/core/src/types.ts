@@ -56,7 +56,9 @@ export type LayerType =
   | "cog"
   | "flatgeobuf"
   | "geoparquet"
-  | "duckdb-query";
+  | "duckdb-query"
+  | "mil-symbol"
+  | "mil-graphic";
 
 export type VectorStyleMode =
   | "single"
@@ -167,6 +169,42 @@ export interface GeoLibreLayer {
   beforeId?: string;
   geojson?: FeatureCollection;
   sourcePath?: string;
+}
+
+// ─── APP-6D / MIL-STD-2525D layer sources ────────────────────────────────────
+
+export type MilAffiliation = "FRIENDLY" | "HOSTILE" | "NEUTRAL" | "UNKNOWN";
+
+/**
+ * Source shape for layers of type "mil-symbol" (point symbols).
+ * Stored in GeoLibreLayer.source and serialised in the project file.
+ */
+export interface MilSymbolLayerSource {
+  /** 20-character APP-6D SIDC code (uppercase). */
+  SIDC: string;
+  lon: number;
+  lat: number;
+  affiliation: MilAffiliation;
+  uniqueDesignation?: string;
+  higherFormation?: string;
+  additionalInfo?: string;
+  speed?: string;
+  direction?: number;
+}
+
+/**
+ * Source shape for layers of type "mil-graphic" (line / area tactical graphics).
+ * coordinates follow GeoJSON convention: [lon, lat] pairs.
+ */
+export interface MilGraphicLayerSource {
+  /** 20-character APP-6D SIDC code (uppercase). */
+  SIDC: string;
+  /** GeoJSON geometry type encoded in the SIDC. */
+  geometryType: "LineString" | "Polygon";
+  coordinates: [number, number][];
+  affiliation: MilAffiliation;
+  uniqueDesignation?: string;
+  additionalInfo?: string;
 }
 
 export interface MapViewState {

@@ -1,6 +1,6 @@
 # Getting Started
 
-GeoLibre Desktop is an npm workspaces monorepo. The main app lives in `apps/geolibre-desktop` and is built with Tauri, React, TypeScript, and MapLibre GL JS.
+MilGeo.app is an npm workspaces monorepo. The main app lives in `apps/geolibre-desktop` and is built with React, TypeScript, and MapLibre GL JS.
 
 ## Prerequisites
 

@@ -1,8 +1,8 @@
 {
-  "name": "geolibre",
+  "name": "milgeo",
   "private": true,
   "version": "0.8.0",
-  "description": "GeoLibre Desktop — lightweight cloud-native desktop GIS",
+  "description": "MilGeo.app — geospatial web app with APP-6D military tactical tools",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -13,10 +13,11 @@
     "protobufjs"
   ],
   "scripts": {
-    "dev": "npm run dev -w geolibre-desktop",
-    "build": "npm run build -w geolibre-desktop",
-    "tauri": "npm run tauri -w geolibre-desktop",
-    "tauri:dev": "npm run tauri dev -w geolibre-desktop",
+    "dev": "npm run dev -w milgeo-app",
+    "build": "npm run build -w milgeo-app",
+    "build:render": "npm run build -w milgeo-app",
+    "tauri": "npm run tauri -w milgeo-app",
+    "tauri:dev": "npm run tauri dev -w milgeo-app",
     "tauri:build": "node scripts/tauri-build.mjs",
     "msix:build": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-msix.ps1"
   },

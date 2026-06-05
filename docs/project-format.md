@@ -1,4 +1,4 @@
-# GeoLibre Project Format
+# MilGeo.app Project Format
 
 Projects are saved as **`.geolibre.json`** files.
 
@@ -106,6 +106,8 @@ Manual refresh uses the same saved source URL without requiring this metadata.
 | `geoparquet`     | Imported as GeoJSON via DuckDB-WASM                                                                |
 | `duckdb-query`   | Supported for SQL query-result layers                                              |
 | `3d-tiles`       | Supported through the `maplibre-gl-3d-tiles` plugin                               |
+| `mil-symbol`     | APP-6D point symbol (unit, equipment, installation) placed via the MilGeo panel   |
+| `mil-graphic`    | APP-6D tactical graphic (line or area: FLOT, boundary, fire area, objective…)     |
 
 ## Example
 

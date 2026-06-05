@@ -1,4 +1,4 @@
-# GeoLibre Desktop Roadmap
+# MilGeo.app Roadmap
 
 ## v0.1: Map viewer and GeoJSON
 
@@ -36,7 +36,7 @@
 - [x] MapLibre Components plugin with FlatGeobuf, PMTiles, Zarr, LiDAR, and Gaussian splat panels
 - [x] Desktop MBTiles metadata and tile reads through Tauri commands
 - [x] Plugin control position controls in the Plugins menu
-- [x] Layer control integration for GeoLibre-managed layers
+- [x] Layer control integration for MilGeo.app-managed layers
 
 ## v0.6: Project access, web embeds, and expanded integrations
 
@@ -83,13 +83,21 @@
 - [x] Desktop diagnostics panel and improved diagnostics/status bar contrast
 - [x] Toolbar toggles for Colorbar, Legend, and HTML panels
 
-## v0.9: SQL and processing sidecar
+## v0.9: MilGeo tactical features + SQL sidecar
 
 - [ ] SQL panel workflow for building and managing queries
 - [ ] GDAL / Rasterio / GeoPandas pipelines
 - [ ] Buffer, reproject, and export GeoJSON processing tools
 - [ ] Expanded WhiteboxTools coverage
 - [ ] Leafmap, GeoAI, and SamGeo integrations (selective)
+
+## v0.9: MilGeo tactical features (target)
+
+- [ ] APP-6D symbol sets expanded from milsymbol `getSymbolSets()` runtime catalog
+- [ ] Edit symbol position via drag-and-drop on the map
+- [ ] Tactical graphics: dashed / solid style per SIDC
+- [ ] Symbology for dismounted individuals and activities
+- [ ] Integration with GeoEditor for mixed sketch + mil-symbol workflows
 
 ## v1.0: External plugin system and stable prototype
 

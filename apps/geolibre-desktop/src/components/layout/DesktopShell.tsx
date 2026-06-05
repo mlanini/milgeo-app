@@ -32,6 +32,8 @@ import {
 import { AttributeTable } from "../panels/AttributeTable";
 import { LayerPanel } from "../panels/LayerPanel";
 import { StylePanel } from "../panels/StylePanel";
+import { MilSymbolPanel } from "../panels/MilSymbolPanel";
+import MilSymbolRenderer from "../map/MilSymbolRenderer";
 import { DiagnosticsDialog } from "./DiagnosticsDialog";
 import { StatusBar } from "./StatusBar";
 import { TopToolbar } from "./TopToolbar";
@@ -109,6 +111,7 @@ export function DesktopShell({
   const [dropMessage, setDropMessage] = useState<string | null>(null);
   const [dropError, setDropError] = useState<string | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [milSymbolOpen, setMilSymbolOpen] = useState(false);
   const diagnostics = useDiagnosticsSnapshot();
   const externalPluginsReady = useExternalPluginsReady();
   const [layerPanelWidth, setLayerPanelWidth] = useState(
@@ -468,6 +471,8 @@ export function DesktopShell({
         showLabels={layoutOptions.toolbarLabels}
         showProjectInfo={layoutOptions.showProjectInfo}
         themeMode={themeMode}
+        milSymbolOpen={milSymbolOpen}
+        onToggleMilSymbol={() => setMilSymbolOpen((v) => !v)}
         onOpenDiagnostics={() => setDiagnosticsOpen(true)}
         onToggleThemeMode={onToggleThemeMode}
       />
@@ -488,7 +493,16 @@ export function DesktopShell({
             onMapDiagnosticEvent={handleMapDiagnosticEvent}
             onControllerReady={handleMapControllerReady}
           />
+          <MilSymbolRenderer mapControllerRef={mapControllerRef} />
         </main>
+        {milSymbolOpen && layoutOptions.panelsVisible ? (
+          <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l bg-card">
+            <div className="border-b px-3 py-2 text-xs font-semibold flex items-center justify-between">
+              <span>MilGeo Symbols</span>
+            </div>
+            <MilSymbolPanel mapControllerRef={mapControllerRef} />
+          </aside>
+        ) : null}
         {layoutOptions.panelsVisible ? (
           <StylePanel onResizeStart={startStylePanelResize} />
         ) : null}

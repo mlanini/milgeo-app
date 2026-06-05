@@ -1,0 +1,71 @@
+# Render.com Blueprint — https://render.com/docs/blueprint-spec
+# Connect this repo on Render → it auto-detects this file → one-click deploy.
+#
+# Static site: Vite builds the React SPA in apps/geolibre-desktop.
+# The monorepo workspace packages (@geolibre/core, @geolibre/map …) are
+# resolved directly from TypeScript source by Vite path aliases, so no
+# separate package compilation step is required.
+
+services:
+  - type: web
+    name: milgeo-app
+    runtime: static
+
+    # ── Build ──────────────────────────────────────────────────────────────
+    # npm install (not npm ci) so a stale or absent lock file never aborts
+    # the build. Render caches node_modules between builds automatically.
+    buildCommand: npm install && npm run build:render
+    staticPublishPath: apps/geolibre-desktop/dist
+
+    # ── Environment ────────────────────────────────────────────────────────
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Increase the default heap so DuckDB-WASM WASM compilation at build
+      # time does not exhaust the default 512 MB Render free-tier limit.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=2048"
+
+    # ── SPA routing ────────────────────────────────────────────────────────
+    # All paths fall back to index.html so React Router / query-param project
+    # loading works on direct URLs.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+    # ── HTTP headers ───────────────────────────────────────────────────────
+    headers:
+      # Vite content-hashed assets are immutable.
+      - path: /assets/*
+        name: Cache-Control
+        value: "public, max-age=31536000, immutable"
+
+      # DuckDB WASM workers and main bundle — same immutable fingerprinting.
+      - path: /assets/*.wasm
+        name: Cache-Control
+        value: "public, max-age=31536000, immutable"
+
+      # Always re-validate the entry point so users pick up new deployments.
+      - path: /index.html
+        name: Cache-Control
+        value: "no-cache, no-store, must-revalidate"
+
+      # Security headers applied to all responses.
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+
+      - path: /*
+        name: Permissions-Policy
+        value: "geolocation=(self), camera=(), microphone=()"

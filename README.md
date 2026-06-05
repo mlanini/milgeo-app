@@ -1,6 +1,6 @@
-# GeoLibre Desktop
+# MilGeo.app
 
-Lightweight, cloud-native desktop GIS prototype built with **Tauri v2**, **React**, **TypeScript**, **MapLibre GL JS**, **DuckDB-WASM Spatial**, and **deck.gl**.
+Lightweight web GIS with **APP-6D military tactical tools** built with **React**, **TypeScript**, **MapLibre GL JS**, **DuckDB-WASM Spatial**, **milsymbol**, and **deck.gl**.
 
 [![](https://files.opengeos.org/GeoLibre-demo.webp)](https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json)
 
@@ -16,6 +16,9 @@ Lightweight, cloud-native desktop GIS prototype built with **Tauri v2**, **React
 - Attribute table with filtering, sorting, resize controls, feature highlighting, and optional zoom to selected features
 - Multiple DuckDB SQL query-result layers
 - Save/open `.geolibre.json` projects
+- **APP-6D / MIL-STD-2525D symbol placement** from a searchable catalog with affiliation selector
+- **Tactical graphics** (FLOT, boundaries, fire support areas, objectives) with interactive drawing
+- **Import / export** GeoJSON and KML files carrying a `SIDC` field
 - Desktop diagnostics panel, update check, and MSIX packaging support
 - Plugin system with basemap, layer control, MapLibre components, swipe, street view, LiDAR, GeoAgent, and GeoEditor integrations, including configurable control positions and external plugin manifests
 - External plugin zip loading from the app data plugins directory and local development plugin directories
@@ -115,7 +118,7 @@ uvicorn geolibre_server.app.main:app --host 127.0.0.1 --port 8765
 ## Repository layout
 
 ```
-apps/geolibre-desktop   # Tauri + React app
+apps/geolibre-desktop   # MilGeo.app — React web app
 packages/core           # Types, store, project format
 packages/map            # MapLibre integration
 packages/ui             # Tailwind + shadcn/ui
@@ -130,7 +133,7 @@ docs/                   # Architecture & API docs
 
 Built-in plugins live in `packages/plugins/src/plugins/` and are registered by the desktop app in `apps/geolibre-desktop/src/hooks/usePlugins.ts`. Map control plugins can expose a control position through `getMapControlPosition()` and `setMapControlPosition()` so the Plugins menu can move them between map corners.
 
-For external plugin development, start from the [GeoLibre plugin template](https://github.com/opengeos/geolibre-plugin-template). It includes a `plugin.json` manifest, a GeoLibre plugin wrapper entry point, and a `package:geolibre` script that creates a zip file for the desktop app data `plugins/` directory. During development, Settings > Plugins can scan an additional local plugin directory, including an unpacked bundle folder such as the template's `geolibre-plugin/` directory, or a hosted `plugin.json` manifest URL. See the [Plugin API](docs/plugin-api.md) for the external plugin contract.
+For external plugin development, start from the [GeoLibre plugin template](https://github.com/opengeos/geolibre-plugin-template) (upstream). It includes a `plugin.json` manifest, a GeoLibre plugin wrapper entry point, and a `package:geolibre` script that creates a zip file for the desktop app data `plugins/` directory. During development, Settings > Plugins can scan an additional local plugin directory, including an unpacked bundle folder such as the template's `geolibre-plugin/` directory, or a hosted `plugin.json` manifest URL. See the [Plugin API](docs/plugin-api.md) for the external plugin contract.
 
 For web builds, an external plugin can be bundled by placing its built folder under `apps/geolibre-desktop/public/plugins/<plugin-id>/` and loading `/plugins/<plugin-id>/plugin.json` as a manifest URL. Browsers cannot scan plugin folders at runtime, so bundled web plugins still need explicit manifest URLs unless they are registered as built-in plugins.
 
@@ -173,7 +176,7 @@ Plugins can use the app API to change basemaps, add GeoJSON layers, or attach Ma
 
 Built-in MapLibre controls such as Navigation, Fullscreen, Geolocate, Globe, Terrain, Scale, Attribution, and Logo are toggled from the desktop app's Controls menu. The same menu also opens Search, a standalone place search panel backed by the Components plugin. Keep project-specific controls such as Layer Control and Components in the plugin menu when they use the plugin API or need plugin lifecycle behavior.
 
-The Components plugin wraps `maplibre-gl-components` controls and wires their layer events into the GeoLibre store. It provides Add Data shortcuts for FlatGeobuf, PMTiles, Zarr, LiDAR, and Gaussian splats, while raster COG and GeoTIFF layers can also be added through the standard Add Raster Layer dialog.
+The Components plugin wraps `maplibre-gl-components` controls and wires their layer events into the MilGeo.app store. It provides Add Data shortcuts for FlatGeobuf, PMTiles, Zarr, LiDAR, and Gaussian splats, while raster COG and GeoTIFF layers can also be added through the standard Add Raster Layer dialog.
 
 If a third-party MapLibre control needs app-specific styling fixes, add scoped overrides in `apps/geolibre-desktop/src/index.css` instead of editing files in `node_modules`. Keep selectors limited to the plugin control class. For example, GeoEditor toolbar buttons need a local override because MapLibre's default control button CSS can override their flex centering:
 
