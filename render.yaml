@@ -14,7 +14,7 @@ services:
     # ── Build ──────────────────────────────────────────────────────────────
     # npm install (not npm ci) so a stale or absent lock file never aborts
     # the build. Render caches node_modules between builds automatically.
-    buildCommand: npm install && npm run build:render
+    buildCommand: npm install && NODE_OPTIONS=--max-old-space-size=4096 npm run build:render
     staticPublishPath: apps/geolibre-desktop/dist
 
     # ── Environment ────────────────────────────────────────────────────────
@@ -23,10 +23,8 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
-      # Increase the default heap so DuckDB-WASM WASM compilation at build
-      # time does not exhaust the default 512 MB Render free-tier limit.
-      - key: NODE_OPTIONS
-        value: "--max-old-space-size=2048"
+      # NODE_OPTIONS is set inline in buildCommand above (--max-old-space-size=4096)
+      # so the heap limit applies to the exact node process running Vite.
 
     # ── SPA routing ────────────────────────────────────────────────────────
     # All paths fall back to index.html so React Router / query-param project
