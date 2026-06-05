@@ -20,6 +20,8 @@ const WMS_PROXY_PATH = "/__geolibre_wms_proxy";
 const WFS_PROXY_PATH = "/__geolibre_wfs_proxy";
 const GPX_PROXY_PATH = "/__geolibre_gpx_proxy";
 const RASTER_PROXY_PATH = "/__geolibre_raster_proxy";
+/** Milsymbol local render server path (dev only — served by Vite middleware). */
+const MILSYMBOL_PATH = "/__milsymbol";
 const DUCKDB_WORKER_PATH_PART = "/@duckdb/duckdb-wasm/dist/";
 const DUCKDB_WORKER_SOURCE_MAP_RE =
   /\n?\/\/# sourceMappingURL=duckdb-browser-(?:eh|mvp)\.worker\.js\.map\s*$/;
@@ -185,6 +187,94 @@ function isDuckDbWorkerRequest(pathname: string): boolean {
   );
 }
 
+/**
+ * milsymbolPlugin
+ *
+ * Vite dev-server middleware that renders APP-6D symbols to SVG on-the-fly,
+ * mirroring the standalone `@geolibre/milsymbol-server` package.
+ *
+ * Endpoint: GET /__milsymbol/symbol?sidc=<20-char>[&size=<px>]
+ *                                   [&uniqueDesignation=<text>]
+ *                                   [&higherFormation=<text>]
+ *           GET /__milsymbol/health
+ */
+function milsymbolPlugin(): Plugin {
+  return {
+    name: "geolibre-milsymbol",
+    configureServer(server) {
+      server.middlewares.use(MILSYMBOL_PATH, async (req, res) => {
+        try {
+          // Dynamic import keeps milsymbol out of the Vite transform pipeline.
+          const { default: ms } = await import("milsymbol");
+          ms.setStandard("APP6");
+
+          const url = new URL(req.url ?? "/", "http://localhost");
+
+          // ── /health ──────────────────────────────────────────────────────
+          if (url.pathname === "/health" || url.pathname === "") {
+            res.statusCode = 200;
+            res.setHeader("content-type", "application/json");
+            res.setHeader("access-control-allow-origin", "*");
+            res.end(JSON.stringify({ status: "ok", standard: "APP6" }));
+            return;
+          }
+
+          // ── /symbol ──────────────────────────────────────────────────────
+          if (url.pathname === "/symbol") {
+            const sidc = url.searchParams.get("sidc") ?? "";
+            if (!sidc) {
+              res.statusCode = 400;
+              res.setHeader("content-type", "application/json");
+              res.end(JSON.stringify({ error: "Missing required parameter: sidc" }));
+              return;
+            }
+
+            const size              = parseInt(url.searchParams.get("size") ?? "40", 10);
+            const uniqueDesignation = url.searchParams.get("uniqueDesignation") ?? undefined;
+            const higherFormation   = url.searchParams.get("higherFormation")   ?? undefined;
+            const outlineColor      = url.searchParams.get("outlineColor")      ?? "white";
+            const outlineWidth      = parseInt(url.searchParams.get("outlineWidth") ?? "6", 10);
+
+            const sym = new ms.Symbol(sidc, {
+              size,
+              uniqueDesignation,
+              higherFormation,
+              outlineColor,
+              outlineWidth,
+            });
+
+            if (!sym.isValid()) {
+              res.statusCode = 422;
+              res.setHeader("content-type", "application/json");
+              res.end(JSON.stringify({ error: `Invalid SIDC: "${sidc}"` }));
+              return;
+            }
+
+            const svg = sym.asSVG();
+            const buf = Buffer.from(svg, "utf8");
+            res.statusCode = 200;
+            res.setHeader("content-type",                "image/svg+xml; charset=utf-8");
+            res.setHeader("access-control-allow-origin", "*");
+            res.setHeader("cache-control",               "public, max-age=86400, immutable");
+            res.setHeader("content-length",              buf.byteLength);
+            res.end(buf);
+            return;
+          }
+
+          res.statusCode = 404;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ error: `Unknown path: ${url.pathname}` }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Milsymbol render error";
+          res.statusCode = 500;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ error: message }));
+        }
+      });
+    },
+  };
+}
+
 function projectUrlQueryPlugin(): Plugin {
   return {
     name: "geolibre-project-url-query",
@@ -276,6 +366,7 @@ export default defineConfig({
     projectUrlQueryPlugin(),
     react(),
     wmsProxyPlugin(),
+    milsymbolPlugin(),
   ],
   clearScreen: false,
   define: {

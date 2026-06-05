@@ -19,7 +19,8 @@
     "tauri": "npm run tauri -w milgeo-app",
     "tauri:dev": "npm run tauri dev -w milgeo-app",
     "tauri:build": "node scripts/tauri-build.mjs",
-    "msix:build": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-msix.ps1"
+    "msix:build": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-msix.ps1",
+    "milsymbol-server": "node servers/milsymbol-server.mjs"
   },
   "engines": {
     "node": ">=22"

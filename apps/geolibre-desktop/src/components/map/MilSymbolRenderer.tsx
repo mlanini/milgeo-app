@@ -30,7 +30,14 @@ import type { MilGraphicItem } from "@geolibre/core";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
+// Ensure APP-6D standard is active for this module — must be set before any
+// ms.Symbol call, regardless of whether useMilSymbol.ts has been loaded yet.
+ms.setStandard("APP6");
+
 const MilSymbol = ms.Symbol;
+
+/** Local milsymbol server endpoint (Vite dev middleware or standalone server). */
+const MILSYMBOL_SERVER_PATH = "/__milsymbol";
 
 const SYM_SOURCE_ID = "mil-symbol-source";
 const SYM_LAYER_ID  = "mil-symbol-layer";
@@ -73,9 +80,10 @@ function makeSymbolKey(sidc: string, opts: SymbolOptions): string {
  * Rasterize a milsymbol SIDC to padded ImageData so the anchor point lands
  * exactly at the canvas centre — the position MapLibre uses as icon origin.
  *
+ * Used as fallback when the milsymbol server is unavailable (e.g. Tauri prod).
  * Technique from orbat-mapper MlMapLogic.vue L494–514.
  */
-function buildMilSymbolImageData(
+function buildMilSymbolImageDataLocal(
   sidc: string,
   opts: SymbolOptions,
   pixelRatio: number,
@@ -90,7 +98,6 @@ function buildMilSymbolImageData(
     if (!srcCanvas) return null;
 
     // Pad so the anchor sits at the padded canvas centre.
-    // halfW/H = distance from anchor to the farthest edge in each axis.
     const halfW = Math.max(anchor.x, width  - anchor.x);
     const halfH = Math.max(anchor.y, height - anchor.y);
     const pw = Math.ceil(2 * halfW * pixelRatio);
@@ -108,6 +115,66 @@ function buildMilSymbolImageData(
   } catch {
     return null;
   }
+}
+
+/**
+ * Convert an SVG string to ImageData by rendering through an offscreen canvas.
+ * The resulting image preserves natural SVG dimensions scaled by pixelRatio.
+ */
+function svgStringToImageData(
+  svg: string,
+  pixelRatio: number,
+): Promise<ImageData | null> {
+  return new Promise((resolve) => {
+    try {
+      const blob = new Blob([svg], { type: "image/svg+xml" });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const w = Math.ceil(img.naturalWidth  * pixelRatio);
+        const h = Math.ceil(img.naturalHeight * pixelRatio);
+        const canvas = document.createElement("canvas");
+        canvas.width  = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { URL.revokeObjectURL(url); resolve(null); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        resolve(ctx.getImageData(0, 0, w, h));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Fetch a rendered SVG from the local milsymbol server and convert it to
+ * ImageData.  Falls back to client-side rendering if the server is unreachable
+ * (e.g. production Tauri build without a running sidecar).
+ */
+async function buildMilSymbolImageData(
+  sidc: string,
+  opts: SymbolOptions,
+  pixelRatio: number,
+): Promise<ImageData | null> {
+  try {
+    const params = new URLSearchParams({ sidc, size: String(opts.size ?? SYMBOL_SIZE) });
+    if (opts.uniqueDesignation) params.set("uniqueDesignation", opts.uniqueDesignation);
+    if (opts.higherFormation)   params.set("higherFormation",   opts.higherFormation);
+
+    const res = await fetch(`${MILSYMBOL_SERVER_PATH}/symbol?${params.toString()}`);
+    if (res.ok) {
+      const svg = await res.text();
+      return svgStringToImageData(svg, pixelRatio);
+    }
+  } catch {
+    // Server not available — fall through to local rendering.
+  }
+  // Fallback: render in browser via the milsymbol package.
+  return buildMilSymbolImageDataLocal(sidc, opts, pixelRatio);
 }
 
 /**
@@ -196,13 +263,15 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
     if (!map) return;
 
     // Lazy rasterize: MapLibre calls this when it first needs a sprite image.
-    const onImageMissing = (e: { id: string }) => {
+    // The handler is async: tries the milsymbol server first, then falls back
+    // to client-side rendering so production Tauri builds always work.
+    const onImageMissing = async (e: { id: string }) => {
       if (!e.id.startsWith(IMG_PREFIX)) return;
       if (map.hasImage(e.id)) return;
       const entry = symbolCacheRef.current.get(e.id);
       if (!entry) return;
-      const data = buildMilSymbolImageData(entry.sidc, entry.options, PIXEL_RATIO);
-      if (data) map.addImage(e.id, data, { pixelRatio: PIXEL_RATIO });
+      const data = await buildMilSymbolImageData(entry.sidc, entry.options, PIXEL_RATIO);
+      if (data && !map.hasImage(e.id)) map.addImage(e.id, data, { pixelRatio: PIXEL_RATIO });
     };
 
     // After a basemap style reload all sources/layers are cleared — recreate.
