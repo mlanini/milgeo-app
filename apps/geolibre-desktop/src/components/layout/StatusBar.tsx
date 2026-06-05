@@ -1,6 +1,7 @@
 import { useAppStore } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
 import { Bug } from "lucide-react";
+import { toMgrs } from "../../lib/mgrs";
 
 interface StatusBarProps {
   compact?: boolean;
@@ -23,6 +24,10 @@ export function StatusBar({
     ? `${pointerCoords[0].toFixed(5)}, ${pointerCoords[1].toFixed(5)}`
     : "—";
 
+  const mgrsText = pointerCoords
+    ? toMgrs(pointerCoords[0], pointerCoords[1])
+    : "—";
+
   const bboxText = mapView.bbox
     ? mapView.bbox.map((n) => n.toFixed(4)).join(", ")
     : "—";
@@ -37,6 +42,7 @@ export function StatusBar({
       <span className="shrink-0">
         {compact ? "XY" : "Coords"}: {coordText}
       </span>
+      <span className="shrink-0">MGRS: {mgrsText}</span>
       <span className="shrink-0">Zoom: {mapView.zoom.toFixed(2)}</span>
       <span className="shrink-0">
         Bearing: {mapView.bearing.toFixed(1)}°
