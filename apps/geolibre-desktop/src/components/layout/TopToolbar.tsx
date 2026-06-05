@@ -565,17 +565,6 @@ export function TopToolbar({
         </DropdownMenuContent>
       </DropdownMenu>
       <Button
-        className={cn(toolbarButtonClass, milSymbolOpen && "bg-primary/10 text-primary")}
-        variant="ghost"
-        size={toolbarButtonSize}
-        onClick={onToggleMilSymbol}
-        aria-label="MilSymb"
-        aria-pressed={milSymbolOpen}
-      >
-        <Shield className={toolbarIconClassName} />
-        {renderToolbarLabel("MilSymb")}
-      </Button>
-      <Button
         className={toolbarButtonClass}
         variant="ghost"
         size={toolbarButtonSize}
@@ -662,6 +651,17 @@ export function TopToolbar({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <Button
+        className={cn(toolbarButtonClass, milSymbolOpen && "bg-primary/10 text-primary")}
+        variant="ghost"
+        size={toolbarButtonSize}
+        onClick={onToggleMilSymbol}
+        aria-label="APP-6(D)"
+        aria-pressed={milSymbolOpen}
+      >
+        <Shield className={toolbarIconClassName} />
+        {renderToolbarLabel("APP-6(D)")}
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
