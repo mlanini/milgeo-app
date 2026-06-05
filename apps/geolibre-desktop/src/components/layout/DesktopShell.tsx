@@ -32,7 +32,7 @@ import {
 import { AttributeTable } from "../panels/AttributeTable";
 import { LayerPanel } from "../panels/LayerPanel";
 import { StylePanel } from "../panels/StylePanel";
-import { MilSymbolPanel } from "../panels/MilSymbolPanel";
+import { MilLayerPanel } from "../panels/MilLayerPanel";
 import MilSymbolRenderer from "../map/MilSymbolRenderer";
 import { DiagnosticsDialog } from "./DiagnosticsDialog";
 import { StatusBar } from "./StatusBar";
@@ -496,11 +496,11 @@ export function DesktopShell({
           <MilSymbolRenderer mapControllerRef={mapControllerRef} />
         </main>
         {milSymbolOpen && layoutOptions.panelsVisible ? (
-          <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l bg-card">
+          <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-l bg-card">
             <div className="border-b px-3 py-2 text-xs font-semibold flex items-center justify-between">
               <span>MilGeo Symbols</span>
             </div>
-            <MilSymbolPanel mapControllerRef={mapControllerRef} />
+            <MilLayerPanel mapControllerRef={mapControllerRef} />
           </aside>
         ) : null}
         {layoutOptions.panelsVisible ? (

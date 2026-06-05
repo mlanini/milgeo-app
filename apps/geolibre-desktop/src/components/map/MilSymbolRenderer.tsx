@@ -21,12 +21,12 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
-import { useAppStore } from "@geolibre/core";
 import type { MapController } from "@geolibre/map";
 import ms from "milsymbol";
 import type { SymbolOptions } from "milsymbol";
-import type { MilSymbolLayerSource, MilGraphicLayerSource } from "@geolibre/core";
 import type { FeatureCollection, Feature, Point } from "geojson";
+import { useMilLayerStore, selectAllSymbols } from "../../hooks/useMilLayerStore";
+import type { MilGraphicItem } from "@geolibre/core";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -44,13 +44,6 @@ const SYMBOL_SIZE = 38;
 
 /** Capture DPR once; constant for the component lifetime. */
 const PIXEL_RATIO = window.devicePixelRatio || 1;
-
-const GRAPHIC_COLORS: Record<string, string> = {
-  FRIENDLY: "#4A7FCE",
-  HOSTILE:  "#CE4A4A",
-  NEUTRAL:  "#4ACE8C",
-  UNKNOWN:  "#999999",
-};
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -168,7 +161,8 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendererProps) {
-  const layers = useAppStore((s) => s.layers);
+  const symbols  = useMilLayerStore(selectAllSymbols);
+  const milLayers = useMilLayerStore((s) => s.layers);
 
   /** symbol key → { sidc, options } — read by the styleimagemissing handler. */
   const symbolCacheRef = useRef<Map<string, SymbolCacheEntry>>(new Map());
@@ -217,38 +211,39 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Sync mil-symbol layers → GeoJSON source ───────────────────────────
+  // ── Sync mil-symbol items → GeoJSON source ───────────────────────────
   useEffect(() => {
     const map = mapControllerRef.current?.getMap();
     if (!map) return;
 
-    const milLayers = layers.filter((l) => l.type === "mil-symbol");
     const features: Feature<Point>[] = [];
 
-    for (const layer of milLayers) {
-      if (!layer.visible) continue;
-      const src = layer.source as unknown as MilSymbolLayerSource;
-      if (!src.SIDC || src.lon === undefined || src.lat === undefined) continue;
+    for (const sym of symbols) {
+      if (!sym.sidc || sym.lon === undefined || sym.lat === undefined) continue;
+
+      // Resolve parent layer opacity
+      const parentLayer = milLayers.find((l) => l.id === sym.layerId);
+      const opacity = parentLayer?.opacity ?? 1;
 
       const opts: SymbolOptions = {
         size:              SYMBOL_SIZE,
-        uniqueDesignation: src.uniqueDesignation,
-        higherFormation:   src.higherFormation,
+        uniqueDesignation: sym.uniqueDesignation,
+        higherFormation:   sym.higherFormation,
         outlineColor:      "white",
         outlineWidth:      6,
       };
-      const key = makeSymbolKey(src.SIDC, opts);
-      symbolCacheRef.current.set(key, { sidc: src.SIDC, options: opts });
+      const key = makeSymbolKey(sym.sidc, opts);
+      symbolCacheRef.current.set(key, { sidc: sym.sidc, options: opts });
 
       features.push({
         type: "Feature",
-        geometry: { type: "Point", coordinates: [src.lon, src.lat] },
+        geometry: { type: "Point", coordinates: [sym.lon, sym.lat] },
         properties: {
-          id:        layer.id,
+          id:        sym.id,
           symbolKey: key,
-          direction: src.direction ?? 0,
-          label:     src.uniqueDesignation ?? "",
-          opacity:   layer.opacity ?? 1,
+          direction: sym.direction ?? 0,
+          label:     sym.uniqueDesignation ?? "",
+          opacity,
         },
       });
     }
@@ -261,15 +256,21 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
     } else if (map.isStyleLoaded()) {
       addSymbolLayers(map, fc);
     }
-  }, [layers, mapControllerRef]);
+  }, [symbols, milLayers, mapControllerRef]);
 
-  // ── Sync mil-graphic layers → GeoJSON sources/layers ─────────────────
+  // ── Sync mil-graphic items → GeoJSON sources/layers ─────────────────
   useEffect(() => {
     const map = mapControllerRef.current?.getMap();
     if (!map || !map.isStyleLoaded()) return;
 
-    const graphicLayers = layers.filter((l) => l.type === "mil-graphic");
-    const graphicIds    = new Set(graphicLayers.map((l) => l.id));
+    // Collect all graphics across visible layers
+    const allGraphics: (MilGraphicItem & { visible: boolean; layerOpacity: number })[] = [];
+    for (const layer of milLayers) {
+      for (const gr of layer.graphics) {
+        allGraphics.push({ ...gr, visible: layer.visible, layerOpacity: layer.opacity });
+      }
+    }
+    const graphicIds = new Set(allGraphics.map((g) => g.id));
 
     // Remove stale graphic sources
     for (const id of graphicSourcesRef.current) {
@@ -283,63 +284,62 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       }
     }
 
-    for (const layer of graphicLayers) {
-      const src = layer.source as unknown as MilGraphicLayerSource;
-      if (!src.SIDC || !src.coordinates?.length) continue;
+    for (const gr of allGraphics) {
+      if (!gr.sidc || !gr.coordinates?.length) continue;
 
-      const color  = GRAPHIC_COLORS[src.affiliation] ?? "#4A7FCE";
-      const lineId = `mg-line-${layer.id}`;
-      const fillId = `mg-fill-${layer.id}`;
+      const color  = "#4A7FCE"; // TODO: derive from SIDC identity
+      const lineId = `mg-line-${gr.id}`;
+      const fillId = `mg-fill-${gr.id}`;
 
       const geom =
-        src.geometryType === "Polygon"
-          ? { type: "Polygon"    as const, coordinates: [src.coordinates] }
-          : { type: "LineString" as const, coordinates: src.coordinates };
+        gr.geometryType === "Polygon"
+          ? { type: "Polygon"    as const, coordinates: [gr.coordinates] }
+          : { type: "LineString" as const, coordinates: gr.coordinates };
 
       const geoData = {
         type:       "Feature"  as const,
         geometry:   geom,
-        properties: { name: layer.name, sidc: src.SIDC },
+        properties: { name: gr.name, sidc: gr.sidc },
       };
 
-      if (graphicSourcesRef.current.has(layer.id)) {
-        (map.getSource(layer.id) as maplibregl.GeoJSONSource)?.setData(geoData);
-        const vis = layer.visible ? "visible" : "none";
+      if (graphicSourcesRef.current.has(gr.id)) {
+        (map.getSource(gr.id) as maplibregl.GeoJSONSource)?.setData(geoData);
+        const vis = gr.visible ? "visible" : "none";
         if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
         if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
       } else {
-        map.addSource(layer.id, { type: "geojson", data: geoData });
+        map.addSource(gr.id, { type: "geojson", data: geoData });
 
-        if (src.geometryType === "Polygon") {
+        if (gr.geometryType === "Polygon") {
           map.addLayer({
             id: fillId,
             type: "fill",
-            source: layer.id,
+            source: gr.id,
             paint: {
               "fill-color":   color,
-              "fill-opacity": (layer.opacity ?? 1) * 0.15,
+              "fill-opacity": gr.layerOpacity * 0.15,
             },
-            layout: { visibility: layer.visible ? "visible" : "none" },
+            layout: { visibility: gr.visible ? "visible" : "none" },
           });
         }
 
         map.addLayer({
           id: lineId,
           type: "line",
-          source: layer.id,
+          source: gr.id,
           paint: {
             "line-color":     color,
             "line-width":     2.5,
-            "line-opacity":   layer.opacity ?? 1,
+            "line-opacity":   gr.layerOpacity,
             "line-dasharray": [6, 3],
           },
-          layout: { visibility: layer.visible ? "visible" : "none" },
+          layout: { visibility: gr.visible ? "visible" : "none" },
         });
 
-        graphicSourcesRef.current.add(layer.id);
+        graphicSourcesRef.current.add(gr.id);
       }
     }
-  }, [layers, mapControllerRef]);
+  }, [milLayers, mapControllerRef]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────────
   useEffect(() => {
