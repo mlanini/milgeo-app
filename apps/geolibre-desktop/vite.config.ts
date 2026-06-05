@@ -297,6 +297,7 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
+    outDir: "build",
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     // Skip gzip-size calculation — saves ~200 MB of peak heap during bundling.

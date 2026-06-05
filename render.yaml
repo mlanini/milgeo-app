@@ -15,7 +15,7 @@ services:
     # npm install (not npm ci) so a stale or absent lock file never aborts
     # the build. Render caches node_modules between builds automatically.
     buildCommand: npm install && npm run build:render
-    staticPublishPath: apps/geolibre-desktop/dist
+    staticPublishPath: apps/geolibre-desktop/build
 
     # ── Environment ────────────────────────────────────────────────────────
     envVars:
