@@ -38,7 +38,7 @@ import {
   sidcWithAffiliation,
   type CatalogEntry,
 } from "../../lib/milsymbol-catalog";
-import { parseSidc, buildSidc, ECHELON_OPTIONS } from "../../lib/mil-sidc";
+import { parseSidc, buildSidc, ECHELON_OPTIONS, getModifierSet } from "../../lib/mil-sidc";
 import { exportMilGeoJson, readMilGeoJsonFile } from "../../lib/mil-export-json";
 import { exportMilGeoKmz } from "../../lib/mil-export-kmz";
 import { exportMilGeoMilX } from "../../lib/mil-export-milx";
@@ -255,6 +255,8 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   const [category,    setCategory]    = useState("All");
   const [affiliation, setAffiliation] = useState<MilAffiliation>("FRIENDLY");
   const [echelon,     setEchelon]     = useState("00");
+  const [mod1,        setMod1]        = useState("00");
+  const [mod2,        setMod2]        = useState("00");
   const [placingSidc, setPlacingSidc] = useState<string | null>(null);
   const [pendingEntry, setPendingEntry] = useState<CatalogEntry | null>(null);
 
@@ -263,11 +265,41 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     [search, category]
   );
 
-  // Applies echelon to the SIDC before placing
+  // Derive the active symbol set from the selected entry (or first visible entry)
+  // to show the correct Modifier 1 / Modifier 2 options.
+  const activeSymbolSet = useMemo(() => {
+    if (pendingEntry) return parseSidc(pendingEntry.baseSidc).symbolSet;
+    if (filtered.length > 0) return parseSidc(filtered[0].baseSidc).symbolSet;
+    return "10";
+  }, [pendingEntry, filtered]);
+
+  const catalogMods = useMemo(() => getModifierSet(activeSymbolSet), [activeSymbolSet]);
+  const mod1Options = useMemo(
+    () => Object.entries(catalogMods.m1).map(([code, label]) => ({ code, label })),
+    [catalogMods]
+  );
+  const mod2Options = useMemo(
+    () => Object.entries(catalogMods.m2).map(([code, label]) => ({ code, label })),
+    [catalogMods]
+  );
+
+  // Reset mods when symbol set changes so invalid codes are cleared.
+  const prevSymbolSetRef = useRef(activeSymbolSet);
+  if (prevSymbolSetRef.current !== activeSymbolSet) {
+    prevSymbolSetRef.current = activeSymbolSet;
+    if (!(mod1 in catalogMods.m1)) setMod1("00");
+    if (!(mod2 in catalogMods.m2)) setMod2("00");
+  }
+
+  // Applies echelon + modifiers to the SIDC before placing.
   function applyEchelon(baseSidc: string): string {
-    if (echelon === "00") return baseSidc;
     const p = parseSidc(baseSidc);
-    return buildSidc({ ...p, echelon });
+    return buildSidc({
+      ...p,
+      echelon:   echelon !== "00" ? echelon : p.echelon,
+      modifier1: mod1    !== "00" ? mod1    : p.modifier1,
+      modifier2: mod2    !== "00" ? mod2    : p.modifier2,
+    });
   }
 
   const { enable: enableClick, disable: disableClick } = useMapClick(
@@ -288,7 +320,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       setPlacingSidc(null);
       setPendingEntry(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pendingEntry, selectedLayerId, layers, affiliation, echelon]),
+    }, [pendingEntry, selectedLayerId, layers, affiliation, echelon, mod1, mod2]),
     true,
   );
 
@@ -325,17 +357,48 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
         ))}
       </div>
 
-      {/* Echelon selector */}
-      <div className="px-3 pb-1">
-        <select
-          className="w-full h-6 rounded border border-input bg-background px-1.5 text-xs focus:outline-none"
-          value={echelon}
-          onChange={(e) => setEchelon(e.target.value)}
-        >
-          {ECHELON_OPTIONS.map((o) => (
-            <option key={o.code} value={o.code}>{o.label}</option>
-          ))}
-        </select>
+      {/* Echelon + Modifier selectors */}
+      <div className="px-3 pb-1 grid grid-cols-3 gap-1.5">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-medium text-muted-foreground">Echelon</span>
+          <select
+            className="h-6 rounded border border-input bg-background px-1 text-xs focus:outline-none"
+            value={echelon}
+            onChange={(e) => setEchelon(e.target.value)}
+          >
+            {ECHELON_OPTIONS.map((o) => (
+              <option key={o.code} value={o.code}>{o.code === "00" ? "—" : o.label}</option>
+            ))}
+          </select>
+        </label>
+        {mod1Options.length > 1 ? (
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-medium text-muted-foreground">Mod 1</span>
+            <select
+              className="h-6 rounded border border-input bg-background px-1 text-xs focus:outline-none"
+              value={mod1}
+              onChange={(e) => setMod1(e.target.value)}
+            >
+              {mod1Options.map((o) => (
+                <option key={o.code} value={o.code}>{o.code === "00" ? "—" : o.label}</option>
+              ))}
+            </select>
+          </label>
+        ) : <div />}
+        {mod2Options.length > 1 ? (
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-medium text-muted-foreground">Mod 2</span>
+            <select
+              className="h-6 rounded border border-input bg-background px-1 text-xs focus:outline-none"
+              value={mod2}
+              onChange={(e) => setMod2(e.target.value)}
+            >
+              {mod2Options.map((o) => (
+                <option key={o.code} value={o.code}>{o.code === "00" ? "—" : o.label}</option>
+              ))}
+            </select>
+          </label>
+        ) : <div />}
       </div>
 
       {/* Search + category */}
