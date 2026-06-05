@@ -157,8 +157,9 @@ interface OrbatSubTreeProps {
 }
 
 function OrbatSubTree(props: OrbatSubTreeProps) {
-  const unit     = useMilLayerStore((s) => s.orbatUnits.find((u) => u.id === props.unitId));
-  const children = useMilLayerStore((s) => s.orbatUnits.filter((u) => u.parentId === props.unitId));
+  const orbatUnits = useMilLayerStore((s) => s.orbatUnits);
+  const unit     = useMemo(() => orbatUnits.find((u) => u.id === props.unitId), [orbatUnits, props.unitId]);
+  const children = useMemo(() => orbatUnits.filter((u) => u.parentId === props.unitId), [orbatUnits, props.unitId]);
   if (!unit) return null;
   return (
     <TreeNode

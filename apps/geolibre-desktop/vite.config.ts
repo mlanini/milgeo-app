@@ -316,7 +316,7 @@ export default defineConfig({
     } satisfies RollupOptions,
   },
   resolve: {
-    dedupe: ["react", "react-dom", "maplibre-gl"],
+    dedupe: ["react", "react-dom", "maplibre-gl", "three"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
       module: path.resolve(__dirname, "./src/lib/browser-node-module.ts"),

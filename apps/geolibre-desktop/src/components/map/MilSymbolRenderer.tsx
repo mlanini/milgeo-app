@@ -18,14 +18,14 @@
  * Reference: https://github.com/orbat-mapper/orbat-mapper MlMapLogic.vue
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import type { MapController } from "@geolibre/map";
 import ms from "milsymbol";
 import type { SymbolOptions } from "milsymbol";
 import type { FeatureCollection, Feature, Point } from "geojson";
-import { useMilLayerStore, selectAllSymbols } from "../../hooks/useMilLayerStore";
+import { useMilLayerStore } from "../../hooks/useMilLayerStore";
 import type { MilGraphicItem } from "@geolibre/core";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -161,8 +161,14 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendererProps) {
-  const symbols  = useMilLayerStore(selectAllSymbols);
+  // Read the layers array — Zustand returns the same reference when nothing changes.
   const milLayers = useMilLayerStore((s) => s.layers);
+  // Derive visible symbols via useMemo so the derived array is only recreated
+  // when milLayers actually changes, not on every render.
+  const symbols = useMemo(
+    () => milLayers.filter((l) => l.visible).flatMap((l) => l.symbols),
+    [milLayers]
+  );
 
   /** symbol key → { sidc, options } — read by the styleimagemissing handler. */
   const symbolCacheRef = useRef<Map<string, SymbolCacheEntry>>(new Map());
