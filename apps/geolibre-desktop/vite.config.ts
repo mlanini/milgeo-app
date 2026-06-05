@@ -297,7 +297,10 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
-    outDir: "build",
+    // Output to the monorepo root's build/ dir so Render's dashboard
+    // "Publish directory: build" resolves correctly from the repo root.
+    outDir: path.resolve(__dirname, "../../build"),
+    emptyOutDir: true,
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     // Skip gzip-size calculation — saves ~200 MB of peak heap during bundling.
