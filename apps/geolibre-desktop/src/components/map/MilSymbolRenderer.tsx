@@ -39,8 +39,16 @@ function symbolAnchorOffset(sidc: string, size = 38): [number, number] {
     const sym = new MilSymbol(sidc, { size });
     const anchor = sym.getAnchor();
     const sz = sym.getSize();
-    // MapLibre marker offset: [x - width/2, y - height/2] relative to top-left
-    return [anchor.x - sz.width / 2, anchor.y - sz.height / 2];
+    // MapLibre Marker with anchor:"center" places the element CENTER at the
+    // coordinate. We need the milsymbol anchor point (ax, ay) to land on the
+    // coordinate instead.
+    //
+    // With anchor:"center" and offset [dx, dy]:
+    //   element_center = coordinate + [dx, dy]
+    //   milsymbol_anchor_on_screen = element_center + [ax - w/2, ay - h/2]
+    //   We want milsymbol_anchor_on_screen = coordinate
+    //   => dx = w/2 - ax,  dy = h/2 - ay
+    return [sz.width / 2 - anchor.x, sz.height / 2 - anchor.y];
   } catch {
     return [0, 0];
   }
@@ -101,18 +109,35 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       const existing = markersRef.current.get(layer.id);
       if (existing) {
         existing.setLngLat([src.lon, src.lat]);
+        // Recompute offset in case SIDC/size changed
+        existing.setOffset(offset);
         const el = existing.getElement();
         el.style.display = layer.visible ? "" : "none";
         el.style.opacity = String(layer.opacity ?? 1);
         el.innerHTML = svgStr;
+        // Keep element size in sync with new SVG
+        try {
+          const sym2 = new MilSymbol(src.SIDC, { size: 38 });
+          const sz2 = sym2.getSize();
+          el.style.width = `${sz2.width}px`;
+          el.style.height = `${sz2.height}px`;
+        } catch { /* fallthrough */ }
       } else {
         const el = document.createElement("div");
         el.style.cursor = "pointer";
         el.style.userSelect = "none";
+        el.style.lineHeight = "0"; // prevent extra inline-block spacing
         el.style.display = layer.visible ? "" : "none";
         el.style.opacity = String(layer.opacity ?? 1);
         el.title = layer.name;
         el.innerHTML = svgStr;
+        // Set explicit element dimensions so MapLibre measures it correctly
+        try {
+          const sym2 = new MilSymbol(src.SIDC, { size: 38 });
+          const sz2 = sym2.getSize();
+          el.style.width = `${sz2.width}px`;
+          el.style.height = `${sz2.height}px`;
+        } catch { /* fallthrough */ }
 
         const marker = new maplibregl.Marker({
           element: el,
@@ -130,7 +155,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
   // ── Tactical graphics (line / area) ──────────────────────────────────
   useEffect(() => {
     const map = mapControllerRef.current?.getMap();
-    if (!map) return;
+    if (!map || !map.isStyleLoaded()) return;
 
     const graphicLayers = layers.filter((l) => l.type === "mil-graphic");
     const graphicIds = new Set(graphicLayers.map((l) => l.id));
