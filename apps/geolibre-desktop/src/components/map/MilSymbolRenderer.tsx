@@ -117,7 +117,9 @@ function buildMilSymbolImageData(
 function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
   map.addSource(SYM_SOURCE_ID, { type: "geojson", data: fc });
 
-  // Icon layer — WebGL composited, rotates with map, correct HiDPI rendering.
+  // Icon layer — viewport-aligned: stays upright regardless of map rotation,
+  // pitch, or globe mode. icon-rotate still applies the symbol's direction of
+  // movement in screen space (clockwise from up).
   map.addLayer({
     id:     SYM_LAYER_ID,
     type:   "symbol",
@@ -125,7 +127,8 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
     layout: {
       "icon-image":              ["get", "symbolKey"],
       "icon-rotate":             ["get", "direction"],
-      "icon-rotation-alignment": "map",
+      "icon-rotation-alignment": "viewport",
+      "icon-pitch-alignment":    "viewport",
       "icon-size":               1,
       "icon-allow-overlap":      true,
       "icon-ignore-placement":   true,
@@ -135,19 +138,21 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
     },
   });
 
-  // Label layer — separate so text-placement rules apply independently.
+  // Label layer — also viewport-aligned so text is always horizontal.
   map.addLayer({
     id:     SYM_LABEL_ID,
     type:   "symbol",
     source: SYM_SOURCE_ID,
     layout: {
-      "text-field":            ["get", "label"],
-      "text-offset":           [0, 2.4],
-      "text-anchor":           "top",
-      "text-size":             11,
-      "text-allow-overlap":    false,
-      "text-ignore-placement": false,
-      "text-font":             ["Noto Sans Regular", "Arial Unicode MS Regular"],
+      "text-field":              ["get", "label"],
+      "text-offset":             [0, 2.4],
+      "text-anchor":             "top",
+      "text-size":               11,
+      "text-rotation-alignment": "viewport",
+      "text-pitch-alignment":    "viewport",
+      "text-allow-overlap":      false,
+      "text-ignore-placement":   false,
+      "text-font":               ["Noto Sans Regular", "Arial Unicode MS Regular"],
     },
     paint: {
       "text-color":      "#111111",
