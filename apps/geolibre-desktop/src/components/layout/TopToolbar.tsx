@@ -342,7 +342,7 @@ export function TopToolbar({
     const content = serializeProject(project);
     const path = await saveProjectFile(
       content,
-      state.projectPath ?? `${defaultProjectName}.geolibre.json`,
+      state.projectPath ?? `${defaultProjectName}.milgeo.json`,
     );
     if (!path) return false;
     setProjectPath(path);
@@ -569,11 +569,11 @@ export function TopToolbar({
         variant="ghost"
         size={toolbarButtonSize}
         onClick={onToggleMilSymbol}
-        aria-label="MilGeo Symbols"
+        aria-label="MilSymb"
         aria-pressed={milSymbolOpen}
       >
         <Shield className={toolbarIconClassName} />
-        {renderToolbarLabel("MilGeo")}
+        {renderToolbarLabel("MilSymb")}
       </Button>
       <Button
         className={toolbarButtonClass}
@@ -873,7 +873,7 @@ export function TopToolbar({
           <DialogHeader>
             <DialogTitle>Open project from URL</DialogTitle>
             <DialogDescription>
-              Load a public `.geolibre.json` project and add it to recent
+              Load a public `.milgeo.json` project and add it to recent
               projects.
             </DialogDescription>
           </DialogHeader>
@@ -882,7 +882,7 @@ export function TopToolbar({
               <Label htmlFor="project-url">Project URL</Label>
               <Input
                 id="project-url"
-                placeholder="https://example.com/project.geolibre.json"
+                placeholder="https://example.com/project.milgeo.json"
                 value={projectUrl}
                 onChange={(event) => {
                   setProjectUrl(event.target.value);

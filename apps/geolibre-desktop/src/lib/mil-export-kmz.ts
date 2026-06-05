@@ -71,7 +71,7 @@ ${placemarks.join("\n")}
   return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
 <Document>
-  <name>MilGeo Export</name>
+  <name>MilSymb Export</name>
 ${folders.join("\n")}
 </Document>
 </kml>`;

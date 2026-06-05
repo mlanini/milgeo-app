@@ -963,7 +963,7 @@ export function SettingsDialog({
                   <div>
                     <h3 className="text-sm font-semibold">Project</h3>
                     <p className="text-xs text-muted-foreground">
-                      Settings are saved with the `.geolibre.json` project.
+                      Settings are saved with the `.milgeo.json` project.
                     </p>
                   </div>
                   <div className="space-y-1.5">

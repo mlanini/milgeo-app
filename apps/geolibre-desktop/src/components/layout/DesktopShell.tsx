@@ -498,7 +498,7 @@ export function DesktopShell({
         {milSymbolOpen && layoutOptions.panelsVisible ? (
           <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-l bg-card">
             <div className="border-b px-3 py-2 text-xs font-semibold flex items-center justify-between">
-              <span>MilGeo Symbols</span>
+              <span>MilSymb</span>
             </div>
             <MilLayerPanel mapControllerRef={mapControllerRef} />
           </aside>

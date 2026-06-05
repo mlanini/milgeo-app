@@ -17,7 +17,7 @@ export function isTauri(): boolean {
 }
 
 function browserSafeFileName(path: string): string {
-  return path.split(/[/\\]/).pop() || "project.geolibre.json";
+  return path.split(/[/\\]/).pop() || "project.milgeo.json";
 }
 
 export interface FileDialogFilter {
@@ -79,9 +79,9 @@ interface BrowserFilePickerWindow extends Window {
 
 const GEOLIBRE_PROJECT_FILE_TYPES: BrowserFilePickerType[] = [
   {
-    description: "GeoLibre Project",
+    description: "MilSymb Project",
     accept: {
-      "application/json": [".geolibre", ".json"],
+      "application/json": [".milgeo", ".json"],
     },
   },
 ];
@@ -146,7 +146,7 @@ function pathWithoutExtension(path: string): string {
 
 function isGeoLibreProjectFile(path: string): boolean {
   const name = browserSafeFileName(path).toLowerCase();
-  return name.endsWith(".geolibre") || name.endsWith(".geolibre.json");
+  return name.endsWith(".milgeo") || name.endsWith(".milgeo.json");
 }
 
 function isVectorFileName(path: string): boolean {
@@ -508,8 +508,8 @@ async function openProjectFileBrowser(): Promise<{
   }
 
   const result = await openLocalDataFileWithFallback({
-    filters: [{ name: "GeoLibre Project", extensions: ["geolibre", "json"] }],
-    accept: ".geolibre,.json,.geolibre.json",
+    filters: [{ name: "MilSymb Project", extensions: ["milgeo", "json"] }],
+    accept: ".milgeo,.json,.milgeo.json",
     readText: true,
   });
   if (!result?.text) return null;
@@ -523,7 +523,7 @@ async function saveProjectFileBrowser(
   content: string,
   defaultName?: string,
 ): Promise<string | null> {
-  const fileName = browserSafeFileName(defaultName ?? "project.geolibre.json");
+  const fileName = browserSafeFileName(defaultName ?? "project.milgeo.json");
   const pickerWindow = window as BrowserFilePickerWindow;
 
   if (pickerWindow.showSaveFilePicker) {
@@ -748,7 +748,7 @@ export async function openProjectFile(): Promise<{
 
   const selected = await open({
     multiple: false,
-    filters: [{ name: "GeoLibre Project", extensions: ["geolibre", "json"] }],
+    filters: [{ name: "MilSymb Project", extensions: ["milgeo", "json"] }],
   });
   if (!selected || typeof selected !== "string") return null;
   const text = await readTextFile(selected);
@@ -847,8 +847,8 @@ export async function saveProjectFile(
   }
 
   const path = await save({
-    filters: [{ name: "GeoLibre Project", extensions: ["geolibre", "json"] }],
-    defaultPath: defaultName ?? "project.geolibre.json",
+    filters: [{ name: "MilSymb Project", extensions: ["milgeo", "json"] }],
+    defaultPath: defaultName ?? "project.milgeo.json",
   });
   if (!path) return null;
   await writeTextFile(path, content);

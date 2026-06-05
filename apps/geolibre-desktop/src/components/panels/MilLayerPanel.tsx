@@ -501,7 +501,7 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
     <div className="flex flex-col h-full bg-background text-foreground text-sm">
       {/* Import/Export toolbar */}
       <div className="flex items-center gap-1 px-3 py-1.5 border-b bg-muted/20">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">MilGeo</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">MilSymb</span>
 
         <button
           title="Importa .milgeo.json"
