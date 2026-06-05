@@ -1,6 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import path from "node:path";
 import type {
   RollupLog,
@@ -190,86 +191,104 @@ function isDuckDbWorkerRequest(pathname: string): boolean {
 /**
  * milsymbolPlugin
  *
- * Vite dev-server middleware that renders APP-6D symbols to SVG on-the-fly,
- * mirroring the standalone `@geolibre/milsymbol-server` package.
+ * Vite dev-server middleware that renders APP-6D symbols to SVG on-the-fly.
+ * Uses a global middleware (no connect path-prefix mounting) so that req.url
+ * is always the full pathname and routing is unambiguous.
  *
- * Endpoint: GET /__milsymbol/symbol?sidc=<20-char>[&size=<px>]
- *                                   [&uniqueDesignation=<text>]
- *                                   [&higherFormation=<text>]
- *           GET /__milsymbol/health
+ * Endpoints (relative to the Vite dev server):
+ *   GET /__milsymbol/health
+ *   GET /__milsymbol/symbol?sidc=<20-char>[&size=<px>]
+ *                                         [&uniqueDesignation=<text>]
+ *                                         [&higherFormation=<text>]
+ *                                         [&outlineColor=<css>]
+ *                                         [&outlineWidth=<n>]
  */
 function milsymbolPlugin(): Plugin {
+  // Load milsymbol once via CJS require so it runs in the Vite/Node.js server
+  // context without any ESM-interop issues.  The package ships a CJS build at
+  // its "main" entry which is always resolvable here.
+  const _require = createRequire(import.meta.url);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const msRaw = _require("milsymbol") as any;
+  const ms = (msRaw.default ?? msRaw) as typeof import("milsymbol").default;
+  ms.setStandard("APP6");
+
   return {
     name: "geolibre-milsymbol",
     configureServer(server) {
-      server.middlewares.use(MILSYMBOL_PATH, async (req, res) => {
-        try {
-          // Dynamic import keeps milsymbol out of the Vite transform pipeline.
-          const { default: ms } = await import("milsymbol");
-          ms.setStandard("APP6");
+      // Register as a global middleware — manually check the path prefix.
+      // This avoids connect's path-prefix mounting which can strip/mangle
+      // req.url in ways that differ between connect versions.
+      server.middlewares.use((req, res, next) => {
+        const raw = req.url ?? "/";
+        if (!raw.startsWith(MILSYMBOL_PATH)) { next(); return; }
 
-          const url = new URL(req.url ?? "/", "http://localhost");
+        (async () => {
+          try {
+            const url     = new URL(raw, "http://localhost");
+            const subpath = url.pathname.slice(MILSYMBOL_PATH.length) || "/";
 
-          // ── /health ──────────────────────────────────────────────────────
-          if (url.pathname === "/health" || url.pathname === "") {
-            res.statusCode = 200;
+            // ── /health ────────────────────────────────────────────────────
+            if (subpath === "/health" || subpath === "/") {
+              res.statusCode = 200;
+              res.setHeader("content-type",                "application/json");
+              res.setHeader("access-control-allow-origin", "*");
+              res.end(JSON.stringify({ status: "ok", standard: "APP6" }));
+              return;
+            }
+
+            // ── /symbol ────────────────────────────────────────────────────
+            if (subpath === "/symbol") {
+              const sidc = url.searchParams.get("sidc") ?? "";
+              if (!sidc) {
+                res.statusCode = 400;
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify({ error: "Missing required parameter: sidc" }));
+                return;
+              }
+
+              const size              = parseInt(url.searchParams.get("size") ?? "40", 10);
+              const uniqueDesignation = url.searchParams.get("uniqueDesignation") ?? undefined;
+              const higherFormation   = url.searchParams.get("higherFormation")   ?? undefined;
+              const outlineColor      = url.searchParams.get("outlineColor")      ?? "white";
+              const outlineWidth      = parseInt(url.searchParams.get("outlineWidth") ?? "6", 10);
+
+              const sym = new ms.Symbol(sidc, {
+                size,
+                uniqueDesignation,
+                higherFormation,
+                outlineColor,
+                outlineWidth,
+              });
+
+              if (!sym.isValid()) {
+                res.statusCode = 422;
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify({ error: `Invalid SIDC: "${sidc}"` }));
+                return;
+              }
+
+              const svg = sym.asSVG();
+              const buf = Buffer.from(svg, "utf8");
+              res.statusCode = 200;
+              res.setHeader("content-type",                "image/svg+xml; charset=utf-8");
+              res.setHeader("access-control-allow-origin", "*");
+              res.setHeader("cache-control",               "public, max-age=86400, immutable");
+              res.setHeader("content-length",              buf.byteLength);
+              res.end(buf);
+              return;
+            }
+
+            res.statusCode = 404;
             res.setHeader("content-type", "application/json");
-            res.setHeader("access-control-allow-origin", "*");
-            res.end(JSON.stringify({ status: "ok", standard: "APP6" }));
-            return;
+            res.end(JSON.stringify({ error: `Unknown milsymbol endpoint: ${subpath}` }));
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Milsymbol render error";
+            res.statusCode = 500;
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ error: message }));
           }
-
-          // ── /symbol ──────────────────────────────────────────────────────
-          if (url.pathname === "/symbol") {
-            const sidc = url.searchParams.get("sidc") ?? "";
-            if (!sidc) {
-              res.statusCode = 400;
-              res.setHeader("content-type", "application/json");
-              res.end(JSON.stringify({ error: "Missing required parameter: sidc" }));
-              return;
-            }
-
-            const size              = parseInt(url.searchParams.get("size") ?? "40", 10);
-            const uniqueDesignation = url.searchParams.get("uniqueDesignation") ?? undefined;
-            const higherFormation   = url.searchParams.get("higherFormation")   ?? undefined;
-            const outlineColor      = url.searchParams.get("outlineColor")      ?? "white";
-            const outlineWidth      = parseInt(url.searchParams.get("outlineWidth") ?? "6", 10);
-
-            const sym = new ms.Symbol(sidc, {
-              size,
-              uniqueDesignation,
-              higherFormation,
-              outlineColor,
-              outlineWidth,
-            });
-
-            if (!sym.isValid()) {
-              res.statusCode = 422;
-              res.setHeader("content-type", "application/json");
-              res.end(JSON.stringify({ error: `Invalid SIDC: "${sidc}"` }));
-              return;
-            }
-
-            const svg = sym.asSVG();
-            const buf = Buffer.from(svg, "utf8");
-            res.statusCode = 200;
-            res.setHeader("content-type",                "image/svg+xml; charset=utf-8");
-            res.setHeader("access-control-allow-origin", "*");
-            res.setHeader("cache-control",               "public, max-age=86400, immutable");
-            res.setHeader("content-length",              buf.byteLength);
-            res.end(buf);
-            return;
-          }
-
-          res.statusCode = 404;
-          res.setHeader("content-type", "application/json");
-          res.end(JSON.stringify({ error: `Unknown path: ${url.pathname}` }));
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Milsymbol render error";
-          res.statusCode = 500;
-          res.setHeader("content-type", "application/json");
-          res.end(JSON.stringify({ error: message }));
-        }
+        })();
       });
     },
   };
