@@ -67,7 +67,6 @@ import {
   Info,
   Layers,
   Link2,
-  Map,
   MessageSquare,
   Moon,
   Puzzle,
@@ -476,7 +475,7 @@ export function TopToolbar({
       )}
     >
       <span className="mr-1 flex shrink-0 items-center gap-1.5 text-sm font-semibold text-primary md:mr-2">
-        <Map className="h-4 w-4" />
+        <img src="/favicon.svg" alt="MilGeo" className="h-4 w-4" />
         {showProjectInfo ? (
           <span className="hidden sm:inline">MilGeo.app</span>
         ) : null}

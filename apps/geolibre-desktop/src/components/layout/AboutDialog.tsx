@@ -9,7 +9,7 @@ import {
   DialogTrigger,
 } from "@geolibre/ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { CheckCircle2, ExternalLink, Info, Map, RefreshCw } from "lucide-react";
+import { CheckCircle2, ExternalLink, Info, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const LINKS = [
@@ -212,7 +212,7 @@ export function AboutDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Map className="h-5 w-5 text-primary" />
+            <img src="/favicon.svg" alt="MilGeo" className="h-5 w-5" />
             About MilGeo.app
           </DialogTitle>
           <DialogDescription>
