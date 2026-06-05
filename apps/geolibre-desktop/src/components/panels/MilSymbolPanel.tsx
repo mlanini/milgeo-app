@@ -88,12 +88,10 @@ interface MilSymbolPanelProps {
 type ActiveTab = "units" | "graphics";
 
 export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
-  const { layers, addLayer, removeLayer, updateLayer } = useAppStore((s) => ({
-    layers: s.layers,
-    addLayer: s.addLayer,
-    removeLayer: s.removeLayer,
-    updateLayer: s.updateLayer,
-  }));
+  const layers = useAppStore((s) => s.layers);
+  const addLayer = useAppStore((s) => s.addLayer);
+  const removeLayer = useAppStore((s) => s.removeLayer);
+  const updateLayer = useAppStore((s) => s.updateLayer);
 
   const milSymbolLayers = layers.filter((l) => l.type === "mil-symbol");
   const milGraphicLayers = layers.filter((l) => l.type === "mil-graphic");
