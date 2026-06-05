@@ -142,7 +142,7 @@ const PLUGIN_POSITION_ITEMS: Array<{
   { value: "bottom-right", label: "Bottom right" },
 ];
 
-const FEEDBACK_URL = "https://github.com/opengeos/GeoLibre/issues";
+const FEEDBACK_URL = "https://github.com/mlanini/milgeo-app/issues";
 
 async function openExternalLink(url: string): Promise<void> {
   if (isTauri()) {

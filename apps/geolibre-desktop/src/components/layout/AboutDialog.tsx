@@ -14,18 +14,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const LINKS = [
   {
-    label: "Home page",
-    href: "https://geolibre.app",
+    label: "GitHub repository",
+    href: "https://github.com/mlanini/milgeo-app",
   },
   {
-    label: "GitHub repository",
-    href: "https://github.com/opengeos/GeoLibre",
+    label: "Issues & feedback",
+    href: "https://github.com/mlanini/milgeo-app/issues",
   },
 ];
 
-const UPDATE_URL = "https://geolibre.app/downloads/";
+const UPDATE_URL = "https://github.com/mlanini/milgeo-app/releases/latest";
 const LATEST_RELEASE_URL =
-  "https://api.github.com/repos/opengeos/GeoLibre/releases/latest";
+  "https://api.github.com/repos/mlanini/milgeo-app/releases/latest";
 const APP_VERSION = __GEOLIBRE_VERSION__;
 
 type UpdateStatus = "idle" | "checking" | "current" | "available" | "error";
@@ -213,10 +213,10 @@ export function AboutDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Map className="h-5 w-5 text-primary" />
-            About GeoLibre
+            About MilGeo.app
           </DialogTitle>
           <DialogDescription>
-            GeoLibre is a lightweight cloud-native desktop GIS.
+            MilGeo.app is a web GIS with APP-6D military tactical symbology tools.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-sm">
