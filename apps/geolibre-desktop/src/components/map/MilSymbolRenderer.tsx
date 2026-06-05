@@ -1,212 +1,314 @@
+/**
+ * MilSymbolRenderer
+ *
+ * Render-less component that keeps the MapLibre map in sync with mil-symbol
+ * and mil-graphic layers stored in the Zustand store.
+ *
+ * ## Symbol rendering (mil-symbol)
+ * Uses the orbat-mapper technique:
+ *   1. Build a GeoJSON FeatureCollection from all visible mil-symbol layers.
+ *   2. Store (sidc + options) in a symbol cache keyed by a hash.
+ *   3. Add/update a single MapLibre `symbol` source + layer.
+ *   4. On `styleimagemissing`, rasterize the milsymbol to a padded ImageData
+ *      (anchor at canvas centre) and register it via `map.addImage()`.
+ *
+ * This gives: WebGL compositing, native rotation, HiDPI, text labels, and
+ * correct rendering of all APP-6D symbol sets — without any DOM markers.
+ *
+ * Reference: https://github.com/orbat-mapper/orbat-mapper MlMapLogic.vue
+ */
+
 import { useEffect, useRef } from "react";
-import maplibregl, { type Marker } from "maplibre-gl";
+import maplibregl from "maplibre-gl";
+import type { GeoJSONSource } from "maplibre-gl";
 import { useAppStore } from "@geolibre/core";
 import type { MapController } from "@geolibre/map";
 import ms from "milsymbol";
+import type { SymbolOptions } from "milsymbol";
 import type { MilSymbolLayerSource, MilGraphicLayerSource } from "@geolibre/core";
+import type { FeatureCollection, Feature, Point } from "geojson";
+
+// ─── Constants ─────────────────────────────────────────────────────────────
 
 const MilSymbol = ms.Symbol;
+
+const SYM_SOURCE_ID = "mil-symbol-source";
+const SYM_LAYER_ID  = "mil-symbol-layer";
+const SYM_LABEL_ID  = "mil-symbol-labels";
+
+/** Image-id prefix — prevents collisions with basemap sprites. */
+const IMG_PREFIX = "ms-";
+
+/** Symbol size (CSS px) at 1× DPR. milsymbol scales internally via asCanvas(). */
+const SYMBOL_SIZE = 38;
+
+/** Capture DPR once; constant for the component lifetime. */
+const PIXEL_RATIO = window.devicePixelRatio || 1;
+
+const GRAPHIC_COLORS: Record<string, string> = {
+  FRIENDLY: "#4A7FCE",
+  HOSTILE:  "#CE4A4A",
+  NEUTRAL:  "#4ACE8C",
+  UNKNOWN:  "#999999",
+};
+
+// ─── Types ─────────────────────────────────────────────────────────────────
+
+interface SymbolCacheEntry {
+  sidc: string;
+  options: SymbolOptions;
+}
 
 interface MilSymbolRendererProps {
   mapControllerRef: React.RefObject<MapController | null>;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────
 
-function buildSymbolSVG(
-  sidc: string,
-  opts: { uniqueDesignation?: string; higherFormation?: string; size?: number },
-): string {
-  try {
-    const sym = new MilSymbol(sidc, {
-      size: opts.size ?? 38,
-      uniqueDesignation: opts.uniqueDesignation,
-      higherFormation: opts.higherFormation,
-    });
-    if (sym.isValid()) return sym.asSVG();
-  } catch {
-    /* fall through */
-  }
-  // Fallback: colored square with SIDC snippet
-  return `<svg width="38" height="38" viewBox="0 0 38 38" xmlns="http://www.w3.org/2000/svg">
-    <rect x="2" y="2" width="34" height="34" rx="3" fill="#4A7FCE" stroke="#fff" stroke-width="1.5"/>
-    <text x="19" y="24" text-anchor="middle" font-size="8" fill="#fff" font-family="monospace">${sidc.slice(4, 10)}</text>
-  </svg>`;
+/** djb2 hash → 8-char base-36 string, safe as a MapLibre image id. */
+function hashStr(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+  return (h >>> 0).toString(36).padStart(7, "0");
 }
 
-function symbolAnchorOffset(sidc: string, size = 38): [number, number] {
-  try {
-    const sym = new MilSymbol(sidc, { size });
-    const anchor = sym.getAnchor();
-    const sz = sym.getSize();
-    // MapLibre Marker with anchor:"center" places the element CENTER at the
-    // coordinate. We need the milsymbol anchor point (ax, ay) to land on the
-    // coordinate instead.
-    //
-    // With anchor:"center" and offset [dx, dy]:
-    //   element_center = coordinate + [dx, dy]
-    //   milsymbol_anchor_on_screen = element_center + [ax - w/2, ay - h/2]
-    //   We want milsymbol_anchor_on_screen = coordinate
-    //   => dx = w/2 - ax,  dy = h/2 - ay
-    return [sz.width / 2 - anchor.x, sz.height / 2 - anchor.y];
-  } catch {
-    return [0, 0];
-  }
+function makeSymbolKey(sidc: string, opts: SymbolOptions): string {
+  return IMG_PREFIX + hashStr(JSON.stringify({ sidc, ...opts }));
 }
-
-// Mil-graphic: constant line colour per affiliation
-const GRAPHIC_COLORS: Record<string, string> = {
-  FRIENDLY: "#4A7FCE",
-  HOSTILE: "#CE4A4A",
-  NEUTRAL: "#4ACE8C",
-  UNKNOWN: "#999999",
-};
-
-// ─── Component ───────────────────────────────────────────────────────────────
 
 /**
- * MilSymbolRenderer
+ * Rasterize a milsymbol SIDC to padded ImageData so the anchor point lands
+ * exactly at the canvas centre — the position MapLibre uses as icon origin.
  *
- * A render-less component that:
- *  • Keeps MapLibre HTML markers in sync with "mil-symbol" layers in the store.
- *  • Keeps GeoJSON sources + line/fill layers in sync with "mil-graphic" layers.
- *
- * Must be mounted inside DesktopShell (after MapCanvas is initialised).
+ * Technique from orbat-mapper MlMapLogic.vue L494–514.
  */
+function buildMilSymbolImageData(
+  sidc: string,
+  opts: SymbolOptions,
+  pixelRatio: number,
+): ImageData | null {
+  try {
+    const symb = new MilSymbol(sidc, opts);
+    if (!symb.isValid()) return null;
+
+    const { width, height } = symb.getSize();
+    const anchor = symb.getAnchor();
+    const srcCanvas = symb.asCanvas(pixelRatio);
+    if (!srcCanvas) return null;
+
+    // Pad so the anchor sits at the padded canvas centre.
+    // halfW/H = distance from anchor to the farthest edge in each axis.
+    const halfW = Math.max(anchor.x, width  - anchor.x);
+    const halfH = Math.max(anchor.y, height - anchor.y);
+    const pw = Math.ceil(2 * halfW * pixelRatio);
+    const ph = Math.ceil(2 * halfH * pixelRatio);
+    const dx = Math.round((halfW - anchor.x) * pixelRatio);
+    const dy = Math.round((halfH - anchor.y) * pixelRatio);
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = pw;
+    canvas.height = ph;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(srcCanvas, dx, dy);
+    return ctx.getImageData(0, 0, pw, ph);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create the MapLibre source + two symbol layers (icon + label).
+ * Called once on first use, and again after any style.load that wipes sources.
+ */
+function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
+  map.addSource(SYM_SOURCE_ID, { type: "geojson", data: fc });
+
+  // Icon layer — WebGL composited, rotates with map, correct HiDPI rendering.
+  map.addLayer({
+    id:     SYM_LAYER_ID,
+    type:   "symbol",
+    source: SYM_SOURCE_ID,
+    layout: {
+      "icon-image":              ["get", "symbolKey"],
+      "icon-rotate":             ["get", "direction"],
+      "icon-rotation-alignment": "map",
+      "icon-size":               1,
+      "icon-allow-overlap":      true,
+      "icon-ignore-placement":   true,
+    },
+    paint: {
+      "icon-opacity": ["coalesce", ["get", "opacity"], 1],
+    },
+  });
+
+  // Label layer — separate so text-placement rules apply independently.
+  map.addLayer({
+    id:     SYM_LABEL_ID,
+    type:   "symbol",
+    source: SYM_SOURCE_ID,
+    layout: {
+      "text-field":            ["get", "label"],
+      "text-offset":           [0, 2.4],
+      "text-anchor":           "top",
+      "text-size":             11,
+      "text-allow-overlap":    false,
+      "text-ignore-placement": false,
+      "text-font":             ["Noto Sans Regular", "Arial Unicode MS Regular"],
+    },
+    paint: {
+      "text-color":      "#111111",
+      "text-halo-color": "rgba(255,255,255,0.9)",
+      "text-halo-width": 1.5,
+      "text-opacity":    ["coalesce", ["get", "opacity"], 1],
+    },
+  });
+}
+
+// ─── Component ─────────────────────────────────────────────────────────────
+
 export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendererProps) {
   const layers = useAppStore((s) => s.layers);
-  const markersRef = useRef<Map<string, Marker>>(new Map());
+
+  /** symbol key → { sidc, options } — read by the styleimagemissing handler. */
+  const symbolCacheRef = useRef<Map<string, SymbolCacheEntry>>(new Map());
+
+  /** Last GeoJSON snapshot — used to rebuild source after style.load. */
+  const lastFcRef = useRef<FeatureCollection<Point>>({
+    type: "FeatureCollection",
+    features: [],
+  });
+
+  /** Already-tracked mil-graphic source ids. */
   const graphicSourcesRef = useRef<Set<string>>(new Set());
 
-  // ── Symbol markers ────────────────────────────────────────────────────
+  // ── One-time map event wiring ─────────────────────────────────────────
+  //
+  // styleimagemissing is registered once; it closes over symbolCacheRef so it
+  // always sees the latest cache entries without needing re-registration.
+  useEffect(() => {
+    const map = mapControllerRef.current?.getMap();
+    if (!map) return;
+
+    // Lazy rasterize: MapLibre calls this when it first needs a sprite image.
+    const onImageMissing = (e: { id: string }) => {
+      if (!e.id.startsWith(IMG_PREFIX)) return;
+      if (map.hasImage(e.id)) return;
+      const entry = symbolCacheRef.current.get(e.id);
+      if (!entry) return;
+      const data = buildMilSymbolImageData(entry.sidc, entry.options, PIXEL_RATIO);
+      if (data) map.addImage(e.id, data, { pixelRatio: PIXEL_RATIO });
+    };
+
+    // After a basemap style reload all sources/layers are cleared — recreate.
+    const onStyleLoad = () => {
+      if (!map.getSource(SYM_SOURCE_ID)) {
+        addSymbolLayers(map, lastFcRef.current);
+      }
+    };
+
+    map.on("styleimagemissing", onImageMissing);
+    map.on("style.load", onStyleLoad);
+
+    return () => {
+      map.off("styleimagemissing", onImageMissing);
+      map.off("style.load", onStyleLoad);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Sync mil-symbol layers → GeoJSON source ───────────────────────────
   useEffect(() => {
     const map = mapControllerRef.current?.getMap();
     if (!map) return;
 
     const milLayers = layers.filter((l) => l.type === "mil-symbol");
-    const milIds = new Set(milLayers.map((l) => l.id));
+    const features: Feature<Point>[] = [];
 
-    // Remove stale markers
-    for (const [id, marker] of markersRef.current.entries()) {
-      if (!milIds.has(id)) {
-        marker.remove();
-        markersRef.current.delete(id);
-      }
-    }
-
-    // Add / update markers
     for (const layer of milLayers) {
+      if (!layer.visible) continue;
       const src = layer.source as unknown as MilSymbolLayerSource;
       if (!src.SIDC || src.lon === undefined || src.lat === undefined) continue;
 
-      const svgStr = buildSymbolSVG(src.SIDC, {
+      const opts: SymbolOptions = {
+        size:              SYMBOL_SIZE,
         uniqueDesignation: src.uniqueDesignation,
-        higherFormation: src.higherFormation,
-        size: 38,
+        higherFormation:   src.higherFormation,
+        outlineColor:      "white",
+        outlineWidth:      6,
+      };
+      const key = makeSymbolKey(src.SIDC, opts);
+      symbolCacheRef.current.set(key, { sidc: src.SIDC, options: opts });
+
+      features.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [src.lon, src.lat] },
+        properties: {
+          id:        layer.id,
+          symbolKey: key,
+          direction: src.direction ?? 0,
+          label:     src.uniqueDesignation ?? "",
+          opacity:   layer.opacity ?? 1,
+        },
       });
-      const offset = symbolAnchorOffset(src.SIDC, 38);
+    }
 
-      const existing = markersRef.current.get(layer.id);
-      if (existing) {
-        existing.setLngLat([src.lon, src.lat]);
-        // Recompute offset in case SIDC/size changed
-        existing.setOffset(offset);
-        const el = existing.getElement();
-        el.style.display = layer.visible ? "" : "none";
-        el.style.opacity = String(layer.opacity ?? 1);
-        el.innerHTML = svgStr;
-        // Keep element size in sync with new SVG
-        try {
-          const sym2 = new MilSymbol(src.SIDC, { size: 38 });
-          const sz2 = sym2.getSize();
-          el.style.width = `${sz2.width}px`;
-          el.style.height = `${sz2.height}px`;
-        } catch { /* fallthrough */ }
-      } else {
-        const el = document.createElement("div");
-        el.style.cursor = "pointer";
-        el.style.userSelect = "none";
-        el.style.lineHeight = "0"; // prevent extra inline-block spacing
-        el.style.display = layer.visible ? "" : "none";
-        el.style.opacity = String(layer.opacity ?? 1);
-        el.title = layer.name;
-        el.innerHTML = svgStr;
-        // Set explicit element dimensions so MapLibre measures it correctly
-        try {
-          const sym2 = new MilSymbol(src.SIDC, { size: 38 });
-          const sz2 = sym2.getSize();
-          el.style.width = `${sz2.width}px`;
-          el.style.height = `${sz2.height}px`;
-        } catch { /* fallthrough */ }
+    const fc: FeatureCollection<Point> = { type: "FeatureCollection", features };
+    lastFcRef.current = fc;
 
-        const marker = new maplibregl.Marker({
-          element: el,
-          anchor: "center",
-          offset,
-        })
-          .setLngLat([src.lon, src.lat])
-          .addTo(map);
-
-        markersRef.current.set(layer.id, marker);
-      }
+    if (map.getSource(SYM_SOURCE_ID)) {
+      (map.getSource(SYM_SOURCE_ID) as GeoJSONSource).setData(fc);
+    } else if (map.isStyleLoaded()) {
+      addSymbolLayers(map, fc);
     }
   }, [layers, mapControllerRef]);
 
-  // ── Tactical graphics (line / area) ──────────────────────────────────
+  // ── Sync mil-graphic layers → GeoJSON sources/layers ─────────────────
   useEffect(() => {
     const map = mapControllerRef.current?.getMap();
     if (!map || !map.isStyleLoaded()) return;
 
     const graphicLayers = layers.filter((l) => l.type === "mil-graphic");
-    const graphicIds = new Set(graphicLayers.map((l) => l.id));
+    const graphicIds    = new Set(graphicLayers.map((l) => l.id));
 
-    // Remove stale sources/layers
+    // Remove stale graphic sources
     for (const id of graphicSourcesRef.current) {
       if (!graphicIds.has(id)) {
         const lineId = `mg-line-${id}`;
         const fillId = `mg-fill-${id}`;
         if (map.getLayer(lineId)) map.removeLayer(lineId);
         if (map.getLayer(fillId)) map.removeLayer(fillId);
-        if (map.getSource(id)) map.removeSource(id);
+        if (map.getSource(id))    map.removeSource(id);
         graphicSourcesRef.current.delete(id);
       }
     }
 
-    // Add / update graphic sources
     for (const layer of graphicLayers) {
       const src = layer.source as unknown as MilGraphicLayerSource;
       if (!src.SIDC || !src.coordinates?.length) continue;
 
-      const color = GRAPHIC_COLORS[src.affiliation] ?? "#4A7FCE";
+      const color  = GRAPHIC_COLORS[src.affiliation] ?? "#4A7FCE";
       const lineId = `mg-line-${layer.id}`;
       const fillId = `mg-fill-${layer.id}`;
 
-      const geojsonGeom =
+      const geom =
         src.geometryType === "Polygon"
-          ? { type: "Polygon" as const, coordinates: [src.coordinates] }
+          ? { type: "Polygon"    as const, coordinates: [src.coordinates] }
           : { type: "LineString" as const, coordinates: src.coordinates };
 
-      const geojsonSource = {
-        type: "geojson" as const,
-        data: {
-          type: "Feature" as const,
-          geometry: geojsonGeom,
-          properties: { name: layer.name, sidc: src.SIDC },
-        },
+      const geoData = {
+        type:       "Feature"  as const,
+        geometry:   geom,
+        properties: { name: layer.name, sidc: src.SIDC },
       };
 
       if (graphicSourcesRef.current.has(layer.id)) {
-        // Update existing source data
-        (map.getSource(layer.id) as maplibregl.GeoJSONSource)?.setData(
-          geojsonSource.data,
-        );
-        // Sync visibility
+        (map.getSource(layer.id) as maplibregl.GeoJSONSource)?.setData(geoData);
         const vis = layer.visible ? "visible" : "none";
         if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
         if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
       } else {
-        // Add new source and layers
-        map.addSource(layer.id, geojsonSource);
+        map.addSource(layer.id, { type: "geojson", data: geoData });
 
         if (src.geometryType === "Polygon") {
           map.addLayer({
@@ -214,7 +316,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
             type: "fill",
             source: layer.id,
             paint: {
-              "fill-color": color,
+              "fill-color":   color,
               "fill-opacity": (layer.opacity ?? 1) * 0.15,
             },
             layout: { visibility: layer.visible ? "visible" : "none" },
@@ -226,10 +328,10 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
           type: "line",
           source: layer.id,
           paint: {
-            "line-color": color,
-            "line-width": 2,
-            "line-opacity": layer.opacity ?? 1,
-            "line-dasharray": [4, 2],
+            "line-color":     color,
+            "line-width":     2.5,
+            "line-opacity":   layer.opacity ?? 1,
+            "line-dasharray": [6, 3],
           },
           layout: { visibility: layer.visible ? "visible" : "none" },
         });
@@ -242,9 +344,13 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
   // ── Cleanup on unmount ────────────────────────────────────────────────
   useEffect(() => {
     return () => {
-      for (const marker of markersRef.current.values()) marker.remove();
-      markersRef.current.clear();
+      const map = mapControllerRef.current?.getMap();
+      if (!map) return;
+      if (map.getLayer(SYM_LABEL_ID))   map.removeLayer(SYM_LABEL_ID);
+      if (map.getLayer(SYM_LAYER_ID))   map.removeLayer(SYM_LAYER_ID);
+      if (map.getSource(SYM_SOURCE_ID)) map.removeSource(SYM_SOURCE_ID);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return null;
