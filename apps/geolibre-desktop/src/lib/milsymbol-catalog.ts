@@ -483,9 +483,9 @@ export const SYMBOL_CATALOG: CatalogEntry[] = [
   },
   {
     baseSidc: "10030100110101000000",
-    name: "Medical Evacuation",
+    name: "Medical Evacuation (Fixed Wing)",
     category: "Air",
-    subcategory: "Rotary Wing",
+    subcategory: "Fixed Wing",
   },
   {
     baseSidc: "10030100110300000000",
@@ -619,44 +619,44 @@ export const SYMBOL_CATALOG: CatalogEntry[] = [
     subcategory: "Threat",
   },
 
-  // ── Dismounted Individual (SymSet 80) ─────────────────────────────────
+  // ── Dismounted Individual (SymSet 27) ────────────────────────────────
   {
-    baseSidc: "10038000110000000000",
+    baseSidc: "10032700110000000000",
     name: "Dismounted Individual (generic)",
     category: "Dismounted",
   },
   {
-    baseSidc: "10038000110101000000",
+    baseSidc: "10032700110101000000",
     name: "Dismounted Infantry",
     category: "Dismounted",
   },
   {
-    baseSidc: "10038000110102000000",
+    baseSidc: "10032700110102000000",
     name: "Dismounted Medic",
     category: "Dismounted",
   },
   {
-    baseSidc: "10038000110103000000",
+    baseSidc: "10032700110103000000",
     name: "Dismounted Reconnaissance",
     category: "Dismounted",
   },
   {
-    baseSidc: "10038000110209000000",
+    baseSidc: "10032700110209000000",
     name: "Dismounted Sniper",
     category: "Dismounted",
   },
   {
-    baseSidc: "10038000110210000000",
+    baseSidc: "10032700110210000000",
     name: "Dismounted Special Operations",
     category: "Dismounted",
   },
   {
-    baseSidc: "10038000110206000000",
+    baseSidc: "10032700110206000000",
     name: "Dismounted Military Police",
     category: "Dismounted",
   },
   {
-    baseSidc: "10038000110202000000",
+    baseSidc: "10032700110202000000",
     name: "Dismounted Fire Observer",
     category: "Dismounted",
   },
