@@ -69,10 +69,18 @@ const GRAPHIC_TYPES: { sidc: string; label: string; geometryType: "LineString" |
 function SymbolPreview({ sidc, size = 36 }: { sidc: string; size?: number }) {
   const { renderSVG } = useMilSymbol();
   const svg = renderSVG(sidc, { size });
-  if (!svg) return <div style={{ width: size, height: size }} className="rounded bg-muted" />;
-  return (
+  if (!svg) return (
     <div
-      className="flex-shrink-0"
+      className="flex-shrink-0 rounded bg-muted"
+      style={{ width: size, height: size }}
+    />
+  );
+  return (
+    // overflow-hidden + [&>svg]:w-full [&>svg]:h-full forces the milsymbol SVG
+    // (which carries its own width/height attrs) to scale into the container
+    // instead of overflowing onto the adjacent text label.
+    <div
+      className="flex-shrink-0 overflow-hidden [&>svg]:w-full [&>svg]:h-full [&>svg]:block"
       style={{ width: size, height: size }}
       dangerouslySetInnerHTML={{ __html: svg }}
     />
@@ -370,8 +378,8 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
                   </select>
                 </div>
 
-                {/* Symbol grid */}
-                <div className="grid grid-cols-2 gap-1 max-h-52 overflow-y-auto pr-0.5">
+                {/* Symbol list — single column to avoid label/icon overlap */}
+                <div className="flex flex-col gap-0.5 max-h-52 overflow-y-auto pr-0.5">
                   {results.map((entry) => {
                     const sidc = sidcWithAffiliation(entry.baseSidc, affiliation);
                     const isSelected = selectedEntry?.baseSidc === entry.baseSidc;
@@ -380,16 +388,23 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
                         key={entry.baseSidc + entry.name}
                         onClick={() => setSelectedEntry(isSelected ? null : entry)}
                         className={cn(
-                          "flex items-center gap-1.5 p-1.5 rounded border text-left transition-colors",
+                          "flex items-center gap-2 px-2 py-1 rounded border text-left transition-colors w-full",
                           isSelected
                             ? "border-primary bg-primary/10"
                             : "border-border hover:bg-muted",
                         )}
                       >
-                        <SymbolPreview sidc={sidc} size={28} />
-                        <span className="text-[10px] leading-tight line-clamp-2 flex-1">
-                          {entry.name}
-                        </span>
+                        <SymbolPreview sidc={sidc} size={36} />
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <span className="text-[11px] font-medium leading-tight truncate">
+                            {entry.name}
+                          </span>
+                          {entry.subcategory && (
+                            <span className="text-[9px] text-muted-foreground leading-tight">
+                              {entry.subcategory}
+                            </span>
+                          )}
+                        </div>
                       </button>
                     );
                   })}
