@@ -14,7 +14,7 @@
   ],
   "scripts": {
     "dev": "npm run dev -w milgeo-app",
-    "build": "npm run build -w milgeo-app",
+    "build": "npm run build:render -w milgeo-app",
     "build:render": "npm run build:render -w milgeo-app",
     "tauri": "npm run tauri -w milgeo-app",
     "tauri:dev": "npm run tauri dev -w milgeo-app",

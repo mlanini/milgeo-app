@@ -14,7 +14,7 @@ services:
     # ── Build ──────────────────────────────────────────────────────────────
     # npm install (not npm ci) so a stale or absent lock file never aborts
     # the build. Render caches node_modules between builds automatically.
-    buildCommand: npm install && NODE_OPTIONS=--max-old-space-size=4096 npm run build:render
+    buildCommand: npm install && npm run build:render
     staticPublishPath: apps/geolibre-desktop/dist
 
     # ── Environment ────────────────────────────────────────────────────────
@@ -23,8 +23,11 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
-      # NODE_OPTIONS is set inline in buildCommand above (--max-old-space-size=4096)
-      # so the heap limit applies to the exact node process running Vite.
+      # Hard cap the V8 heap for the Render build process.
+      # The app's build:render script also passes --max-old-space-size=4096
+      # directly to `node` as a flag, so both mechanisms apply.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=4096"
 
     # ── SPA routing ────────────────────────────────────────────────────────
     # All paths fall back to index.html so React Router / query-param project

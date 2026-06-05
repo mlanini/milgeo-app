@@ -47,6 +47,17 @@ function manualChunks(id: string): string | undefined {
   if (id.includes("mapillary-js")) return "mapillary";
   if (id.includes("@geoman-io/maplibre-geoman-free")) return "maplibre-geoman";
   if (id.includes("maplibre-gl")) return "maplibre";
+  if (id.includes("@turf/") || id.includes("turf")) return "turf";
+  if (id.includes("proj4")) return "proj4";
+  if (id.includes("geotiff") || id.includes("@developmentseed")) return "geotiff";
+  if (id.includes("@radix-ui/")) return "radix-ui";
+  if (id.includes("lucide-react")) return "lucide";
+  if (id.includes("milsymbol")) return "milsymbol";
+  if (
+    id.includes("react-dom") ||
+    id.includes("react/") ||
+    id.includes("/react/")
+  ) return "react";
   // Returning undefined hands remaining node_modules back to Rollup's default
   // chunking. We intentionally do not group them into a single "vendor" chunk:
   // that produced a circular manual-chunks warning. Do not re-add a catch-all
@@ -288,9 +299,13 @@ export default defineConfig({
     target: "esnext",
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
+    // Skip gzip-size calculation — saves ~200 MB of peak heap during bundling.
+    reportCompressedSize: false,
     chunkSizeWarningLimit: GIS_CHUNK_WARNING_LIMIT_KB,
     rollupOptions: {
       onwarn,
+      // Limit parallel file processing to reduce peak memory.
+      maxParallelFileOps: 3,
       output: {
         manualChunks,
       },
