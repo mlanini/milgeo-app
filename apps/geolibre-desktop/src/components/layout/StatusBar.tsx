@@ -1,7 +1,8 @@
 import { useAppStore } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
-import { Bug } from "lucide-react";
+import { Bug, Shield } from "lucide-react";
 import { toMgrs } from "../../lib/mgrs";
+import { PrivacyNoticeDialog } from "./PrivacyNoticeDialog";
 
 interface StatusBarProps {
   compact?: boolean;
@@ -51,6 +52,17 @@ export function StatusBar({
       {compact ? null : (
         <span className="min-w-0 flex-1 truncate">BBox: {bboxText}</span>
       )}
+      {/* Privacy notice trigger */}
+      <PrivacyNoticeDialog
+        triggerVariant="ghost"
+        triggerSize="sm"
+        triggerClassName={cn(
+          "inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 h-auto font-mono text-xs",
+          "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+        )}
+        triggerLabel={compact ? "" : "Privacy"}
+      />
+
       <button
         type="button"
         className={cn(

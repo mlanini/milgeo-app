@@ -10,6 +10,7 @@ import {
 } from "@geolibre/ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { CheckCircle2, ExternalLink, Info, RefreshCw } from "lucide-react";
+import { PrivacyNoticeDialog } from "./PrivacyNoticeDialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const LINKS = [
@@ -312,6 +313,16 @@ export function AboutDialog({
               </span>
             </a>
           ))}
+
+          {/* Privacy notice */}
+          <div className="rounded-md border">
+            <PrivacyNoticeDialog
+              triggerVariant="ghost"
+              triggerSize="sm"
+              triggerClassName="w-full justify-start gap-2 px-3 py-2 h-auto rounded-md text-sm font-normal text-foreground hover:bg-accent hover:text-accent-foreground"
+              triggerLabel="Privacy &amp; Data Protection Notice"
+            />
+          </div>
         </div>
       </DialogContent>
     </Dialog>

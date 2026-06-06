@@ -38,7 +38,18 @@ import {
   importMilSymbolsFromGeoJSON,
   importMilSymbolsFromKML,
 } from "../../lib/milsymbol-import";
+import {
+  importKadasMilSymbFile,
+  isMilsymbDocument,
+  isOrbatDocument,
+} from "../../lib/milsymbol-import-milsymb";
+import { importMilX, isMilXDocument } from "../../lib/milsymbol-import-milx";
 import { downloadMilLayersAsGeoJSON } from "../../lib/milsymbol-export";
+import {
+  exportToOrbatJson,
+  exportToMilsymbJson,
+  exportToMilX,
+} from "../../lib/milsymbol-export-formats";
 import type { FeatureCollection } from "geojson";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -119,6 +130,9 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
   const [placing, setPlacing] = useState(false);
   const [unitDesig, setUnitDesig] = useState("");
   const [higherForm, setHigherForm] = useState("");
+
+  // ── Export format ────────────────────────────────────────────────────
+  const [exportFormat, setExportFormat] = useState<"geojson" | "orbat" | "milsymb" | "milx">("geojson");
 
   // ── Edit state ──────────────────────────────────────────────────────
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
@@ -276,15 +290,44 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
   const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const sourceName = file.name.replace(/\.[^.]+$/, "");
     try {
       const text = await file.text();
       let imported: GeoLibreLayer[];
-      if (file.name.toLowerCase().endsWith(".kml")) {
-        imported = importMilSymbolsFromKML(text, file.name.replace(/\.kml$/i, ""));
+      const nameLower = file.name.toLowerCase();
+
+      if (nameLower.endsWith(".kml")) {
+        // ── KML ──────────────────────────────────────────────────────
+        imported = importMilSymbolsFromKML(text, sourceName);
+
+      } else if (nameLower.endsWith(".milxly") || nameLower.endsWith(".milx")) {
+        // ── MilX (gs-soft XML) ────────────────────────────────────────
+        imported = importMilX(text, sourceName);
+
+      } else if (
+        nameLower.endsWith(".milsymb.json") ||
+        nameLower.endsWith(".orbat.json")
+      ) {
+        // ── KADAS MilSymb / ORBAT (explicit extension) ────────────────
+        imported = importKadasMilSymbFile(text, sourceName);
+
       } else {
-        const fc = JSON.parse(text) as FeatureCollection;
-        imported = importMilSymbolsFromGeoJSON(fc, file.name.replace(/\.geojson$/i, ""));
+        // ── Generic JSON: probe content before falling back to GeoJSON ─
+        let raw: unknown;
+        try { raw = JSON.parse(text); } catch { raw = null; }
+
+        if (raw && isMilXDocument(text)) {
+          imported = importMilX(text, sourceName);
+        } else if (raw && isMilsymbDocument(raw)) {
+          imported = importKadasMilSymbFile(text, sourceName);
+        } else if (raw && isOrbatDocument(raw)) {
+          imported = importKadasMilSymbFile(text, sourceName);
+        } else {
+          const fc = raw as FeatureCollection;
+          imported = importMilSymbolsFromGeoJSON(fc, sourceName);
+        }
       }
+
       for (const layer of imported) addLayer(layer);
     } catch (err) {
       console.error("MilSymbol import failed", err);
@@ -295,7 +338,13 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
 
   // ── Export ────────────────────────────────────────────────────────
   const handleExport = () => {
-    downloadMilLayersAsGeoJSON(allMilLayers, "milgeo-symbols");
+    const stem = "milgeo-export";
+    switch (exportFormat) {
+      case "geojson":  downloadMilLayersAsGeoJSON(allMilLayers, stem);             break;
+      case "orbat":    exportToOrbatJson(allMilLayers, undefined, stem);           break;
+      case "milsymb":  exportToMilsymbJson(allMilLayers, undefined, stem);        break;
+      case "milx":     exportToMilX(allMilLayers, stem);                           break;
+    }
   };
 
   // ─────────────────────────────────────────────────────────────────────
@@ -641,22 +690,33 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".geojson,.json,.kml"
+          accept=".geojson,.json,.kml,.milxly,.milx,.milsymb.json,.orbat.json"
           className="hidden"
           onChange={handleImportFile}
         />
         <button
-          className="flex-1 flex items-center justify-center gap-1 py-1 rounded border text-[11px] hover:bg-muted transition-colors"
+          className="flex items-center justify-center gap-1 px-2 py-1 rounded border text-[11px] hover:bg-muted transition-colors"
           onClick={() => fileInputRef.current?.click()}
-          title="Import GeoJSON or KML with SIDC field"
+          title="Import: GeoJSON, KML, MilX (.milxly), MilSymb, ORBAT"
         >
           <Upload size={12} /> Import
         </button>
+        <select
+          value={exportFormat}
+          onChange={(e) => setExportFormat(e.target.value as typeof exportFormat)}
+          className="flex-1 rounded border bg-background text-[10px] px-1 focus:outline-none focus:ring-1 focus:ring-ring"
+          title="Export format"
+        >
+          <option value="geojson">GeoJSON</option>
+          <option value="orbat">ORBAT (.orbat.json)</option>
+          <option value="milsymb">MilSymb (.milsymb.json)</option>
+          <option value="milx">MilX (.milxly)</option>
+        </select>
         <button
-          className="flex-1 flex items-center justify-center gap-1 py-1 rounded border text-[11px] hover:bg-muted transition-colors"
+          className="flex items-center justify-center gap-1 px-2 py-1 rounded border text-[11px] hover:bg-muted transition-colors"
           onClick={handleExport}
           disabled={allMilLayers.length === 0}
-          title="Export all mil-symbols as GeoJSON"
+          title={`Export as ${exportFormat.toUpperCase()}`}
         >
           <Download size={12} /> Export
         </button>

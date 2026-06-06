@@ -656,11 +656,11 @@ export function TopToolbar({
         variant="ghost"
         size={toolbarButtonSize}
         onClick={onToggleMilSymbol}
-        aria-label="APP-6(D)"
+        aria-label="MilSymb"
         aria-pressed={milSymbolOpen}
       >
         <Shield className={toolbarIconClassName} />
-        {renderToolbarLabel("APP-6(D)")}
+        {renderToolbarLabel("MilSymb")}
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

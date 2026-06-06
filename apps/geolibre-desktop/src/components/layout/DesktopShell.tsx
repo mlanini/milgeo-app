@@ -476,7 +476,7 @@ export function DesktopShell({
         onOpenDiagnostics={() => setDiagnosticsOpen(true)}
         onToggleThemeMode={onToggleThemeMode}
       />
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className="flex min-h-0 flex-1 overflow-hidden flex-col md:flex-row">
         {layoutOptions.panelsVisible ? (
           <LayerPanel
             mapControllerRef={mapControllerRef}
@@ -498,7 +498,7 @@ export function DesktopShell({
         {milSymbolOpen && layoutOptions.panelsVisible ? (
           <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-l bg-card">
             <div className="border-b px-3 py-2 text-xs font-semibold flex items-center justify-between">
-              <span>APP-6(D)</span>
+              <span>MilSymb</span>
             </div>
             <MilLayerPanel mapControllerRef={mapControllerRef} />
           </aside>
