@@ -74,7 +74,12 @@ export function useMilSymbol() {
   const getAnchor = useCallback(
     (sidc: string, options: SymbolOptions = {}): { x: number; y: number } => {
       try {
-        return new MilSymbol(sidc, { size: 40, ...options }).getAnchor();
+        const sym = new MilSymbol(sidc, { size: 40, ...options });
+        // milsymbol 3.x does not expose a public getAnchor(); use symbolAnchor.
+        const s3 = sym as unknown as { symbolAnchor?: { x: number; y: number } };
+        if (s3.symbolAnchor) return s3.symbolAnchor;
+        const { width, height } = sym.getSize();
+        return { x: width / 2, y: height / 2 };
       } catch {
         return { x: 0, y: 0 };
       }
@@ -109,7 +114,10 @@ export function sidcToSVG(sidc: string, options: SymbolOptions = {}): string {
  */
 export function sidcAnchor(sidc: string, size = 40): { x: number; y: number } {
   try {
-    return new MilSymbol(sidc, { size }).getAnchor();
+    const sym = new MilSymbol(sidc, { size });
+    // milsymbol 3.x does not expose a public getAnchor(); use symbolAnchor.
+    const s3 = sym as unknown as { symbolAnchor?: { x: number; y: number } };
+    return s3.symbolAnchor ?? { x: size / 2, y: size / 2 };
   } catch {
     return { x: size / 2, y: size / 2 };
   }

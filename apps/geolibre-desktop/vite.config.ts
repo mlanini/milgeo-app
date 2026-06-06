@@ -261,14 +261,18 @@ function milsymbolPlugin(): Plugin {
                 outlineWidth,
               });
 
-              if (!sym.isValid()) {
+              // Do NOT gate on sym.isValid() — milsymbol 3.x returns falsy for
+              // valid-but-partially-specified SIDCs (high echelon codes such as
+              // Army/Corps/Army Group, and generic frame-only entities with
+              // entity code 000000).  asSVG() is the authoritative render path:
+              // if it produces a non-empty string the symbol can be displayed.
+              const svg = sym.asSVG();
+              if (!svg || svg.length < 10) {
                 res.statusCode = 422;
                 res.setHeader("content-type", "application/json");
-                res.end(JSON.stringify({ error: `Invalid SIDC: "${sidc}"` }));
+                res.end(JSON.stringify({ error: `SIDC rendered empty: "${sidc}"` }));
                 return;
               }
-
-              const svg = sym.asSVG();
               const buf = Buffer.from(svg, "utf8");
               res.statusCode = 200;
               res.setHeader("content-type",                "image/svg+xml; charset=utf-8");

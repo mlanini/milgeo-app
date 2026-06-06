@@ -100,8 +100,13 @@ function buildMilSymbolImageDataLocal(
     if (!srcCanvas || srcCanvas.width === 0 || srcCanvas.height === 0) return null;
 
     const { width, height } = symb.getSize();
-    const anchor = symb.getAnchor();
-    if (!anchor || width <= 0 || height <= 0) return null;
+    if (width <= 0 || height <= 0) return null;
+
+    // milsymbol 3.x does not expose a public getAnchor() method; the anchor is
+    // stored as the internal `symbolAnchor` property set during updateSymbol().
+    // Fall back to the geometric centre when the property is absent.
+    const sym3 = symb as unknown as { symbolAnchor?: { x: number; y: number } };
+    const anchor = sym3.symbolAnchor ?? { x: width / 2, y: height / 2 };
 
     // Pad so the anchor sits at the padded canvas centre.
     const halfW = Math.max(anchor.x, width  - anchor.x);
@@ -143,6 +148,8 @@ function svgStringToImageData(
       img.onload = () => {
         const w = Math.ceil(img.naturalWidth  * pixelRatio);
         const h = Math.ceil(img.naturalHeight * pixelRatio);
+        // SVGs without explicit width/height may report 0 — treat as failure.
+        if (!w || !h) { URL.revokeObjectURL(url); resolve(null); return; }
         const canvas = document.createElement("canvas");
         canvas.width  = w;
         canvas.height = h;
@@ -182,7 +189,10 @@ async function buildMilSymbolImageData(
       const res = await fetch(`${MILSYMBOL_SERVER_PATH}/symbol?${params.toString()}`);
       if (res.ok) {
         const svg = await res.text();
-        return svgStringToImageData(svg, pixelRatio);
+        const data = await svgStringToImageData(svg, pixelRatio);
+        // If the SVG→ImageData conversion produced a non-empty result, use it.
+        // Otherwise fall through to the local canvas renderer below.
+        if (data && data.width > 0 && data.height > 0) return data;
       }
     } catch {
       // Dev server not available — fall through to local rendering.
