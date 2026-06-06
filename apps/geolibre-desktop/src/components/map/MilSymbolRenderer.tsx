@@ -160,20 +160,25 @@ async function buildMilSymbolImageData(
   opts: SymbolOptions,
   pixelRatio: number,
 ): Promise<ImageData | null> {
-  try {
-    const params = new URLSearchParams({ sidc, size: String(opts.size ?? SYMBOL_SIZE) });
-    if (opts.uniqueDesignation) params.set("uniqueDesignation", opts.uniqueDesignation);
-    if (opts.higherFormation)   params.set("higherFormation",   opts.higherFormation);
+  // The milsymbol server middleware only runs inside the Vite dev server.
+  // In production (Render, Tauri, …) there is no /__milsymbol handler, so
+  // skip the network round-trip entirely and render client-side.
+  if (import.meta.env.DEV) {
+    try {
+      const params = new URLSearchParams({ sidc, size: String(opts.size ?? SYMBOL_SIZE) });
+      if (opts.uniqueDesignation) params.set("uniqueDesignation", opts.uniqueDesignation);
+      if (opts.higherFormation)   params.set("higherFormation",   opts.higherFormation);
 
-    const res = await fetch(`${MILSYMBOL_SERVER_PATH}/symbol?${params.toString()}`);
-    if (res.ok) {
-      const svg = await res.text();
-      return svgStringToImageData(svg, pixelRatio);
+      const res = await fetch(`${MILSYMBOL_SERVER_PATH}/symbol?${params.toString()}`);
+      if (res.ok) {
+        const svg = await res.text();
+        return svgStringToImageData(svg, pixelRatio);
+      }
+    } catch {
+      // Dev server not available — fall through to local rendering.
     }
-  } catch {
-    // Server not available — fall through to local rendering.
   }
-  // Fallback: render in browser via the milsymbol package.
+  // Production path (and dev fallback): render in-browser via milsymbol.
   return buildMilSymbolImageDataLocal(sidc, opts, pixelRatio);
 }
 
