@@ -44,6 +44,7 @@ export interface AppState {
     attributeTableOpen: boolean;
     zoomToSelectedFeature: boolean;
     analysisOpen: boolean;
+    sillagesOpen: boolean;
   };
 
   setPointerCoords: (coords: [number, number] | null) => void;
@@ -62,6 +63,7 @@ export interface AppState {
   setAttributeFilter: (filter: string) => void;
   setProcessingOpen: (open: boolean) => void;
   setAnalysisOpen: (open: boolean) => void;
+  setSillagesOpen: (open: boolean) => void;
   setAttributeTableOpen: (open: boolean) => void;
   setZoomToSelectedFeature: (enabled: boolean) => void;
 
@@ -148,6 +150,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     attributeTableOpen: false,
     zoomToSelectedFeature: false,
     analysisOpen: false,
+    sillagesOpen: false,
   },
 
   setPointerCoords: (coords) => set({ pointerCoords: coords }),
@@ -177,6 +180,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ ui: { ...s.ui, processingOpen: open } })),
   setAnalysisOpen: (open) =>
     set((s) => ({ ui: { ...s.ui, analysisOpen: open } })),
+  setSillagesOpen: (open) =>
+    set((s) => ({ ui: { ...s.ui, sillagesOpen: open } })),
   setAttributeTableOpen: (open) =>
     set((s) => ({ ui: { ...s.ui, attributeTableOpen: open } })),
   setZoomToSelectedFeature: (enabled) =>

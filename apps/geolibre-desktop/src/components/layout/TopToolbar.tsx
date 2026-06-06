@@ -71,6 +71,7 @@ import {
   MessageSquare,
   Moon,
   Puzzle,
+  Radio,
   RefreshCw,
   Save,
   Shield,
@@ -178,6 +179,7 @@ export function TopToolbar({
 }: TopToolbarProps) {
   const loadProject = useAppStore((s) => s.loadProject);
   const setAnalysisOpen = useAppStore((s) => s.setAnalysisOpen);
+  const setSillagesOpen = useAppStore((s) => s.setSillagesOpen);
   const projectName = useAppStore((s) => s.projectName);
   const projectPath = useAppStore((s) => s.projectPath);
   const recentProjects = useAppStore((s) => s.recentProjects);
@@ -671,6 +673,16 @@ export function TopToolbar({
       >
         <Activity className={toolbarIconClassName} />
         {renderToolbarLabel("Analysis")}
+      </Button>
+      <Button
+        className={toolbarButtonClass}
+        variant="ghost"
+        size={toolbarButtonSize}
+        onClick={() => setSillagesOpen(true)}
+        aria-label="Sillages"
+      >
+        <Radio className={toolbarIconClassName} />
+        {renderToolbarLabel("Sillages")}
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

@@ -1,5 +1,6 @@
 import { DesktopShell } from "./components/layout/DesktopShell";
 import { useDesktopSettingsPersistence } from "./hooks/useDesktopSettings";
+import { useSillagesSettingsPersistence } from "./hooks/useSillagesSettings";
 import { useLayoutOptions } from "./hooks/useLayoutOptions";
 import { useProjectUrlLoader } from "./hooks/useProjectUrlLoader";
 import { useRecentProjectsPersistence } from "./hooks/useRecentProjectsPersistence";
@@ -12,6 +13,7 @@ export default function App() {
   const projectUrlLoadState = useProjectUrlLoader();
 
   useDesktopSettingsPersistence();
+  useSillagesSettingsPersistence();
   useRecentProjectsPersistence();
   useRuntimeEnvironmentVariables();
   return (
