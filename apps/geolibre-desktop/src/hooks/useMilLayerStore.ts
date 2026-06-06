@@ -61,7 +61,7 @@ export interface MilLayerState {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeLayer(name: string): MilLayer {
-  return { id: uuidv4(), name, visible: true, opacity: 1, symbols: [], graphics: [] };
+  return { id: uuidv4(), name, visible: true, opacity: 1, showLabels: false, symbols: [], graphics: [] };
 }
 
 function findSymbol(layers: MilLayer[], symbolId: string): [MilLayer | null, MilSymbolItem | null] {

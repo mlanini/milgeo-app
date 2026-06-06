@@ -24,7 +24,7 @@ import { cn } from "@geolibre/ui";
 import ms from "milsymbol";
 import {
   Plus, Trash2, Eye, EyeOff, Pencil, Upload, Download,
-  ChevronDown, ChevronRight, X, MapPin, Check,
+  ChevronDown, ChevronRight, X, MapPin, Check, Tag, TagOff,
 } from "lucide-react";
 import type { MapController } from "@geolibre/map";
 import type { MilLayer, MilSymbolItem } from "@geolibre/core";
@@ -174,8 +174,16 @@ function LayersTab({ mapControllerRef }: LayersTabProps) {
                 <button
                   onClick={(e) => { e.stopPropagation(); updateLayer(layer.id, { visible: !layer.visible }); }}
                   className="text-muted-foreground"
+                  title={layer.visible ? "Nascondi layer" : "Mostra layer"}
                 >
                   {layer.visible ? <Eye size={13} /> : <EyeOff size={13} />}
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); updateLayer(layer.id, { showLabels: !layer.showLabels }); }}
+                  className={cn("text-muted-foreground", layer.showLabels && "text-primary")}
+                  title={layer.showLabels ? "Nascondi etichette" : "Mostra etichette"}
+                >
+                  {layer.showLabels ? <Tag size={13} /> : <TagOff size={13} />}
                 </button>
                 {renamingId === layer.id ? (
                   <input

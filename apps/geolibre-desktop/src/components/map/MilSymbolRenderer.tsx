@@ -250,7 +250,14 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
       "text-color":      "#111111",
       "text-halo-color": "rgba(255,255,255,0.9)",
       "text-halo-width": 1.5,
-      "text-opacity":    ["coalesce", ["get", "opacity"], 1],
+      // Show label only when the parent layer has showLabels === true.
+      // data-driven: feature property showLabels (bool) * layer opacity.
+      "text-opacity": [
+        "case",
+        ["==", ["get", "showLabels"], true],
+        ["coalesce", ["get", "opacity"], 1],
+        0,
+      ],
     },
   });
 }
@@ -344,11 +351,12 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
         type: "Feature",
         geometry: { type: "Point", coordinates: [sym.lon, sym.lat] },
         properties: {
-          id:        sym.id,
-          symbolKey: key,
-          direction: sym.direction ?? 0,
-          label:     sym.uniqueDesignation ?? "",
+          id:         sym.id,
+          symbolKey:  key,
+          direction:  sym.direction ?? 0,
+          label:      sym.uniqueDesignation ?? "",
           opacity,
+          showLabels: parentLayer?.showLabels ?? false,
         },
       });
     }

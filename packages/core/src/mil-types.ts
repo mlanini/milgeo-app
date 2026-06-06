@@ -72,6 +72,8 @@ export interface MilLayer {
   visible: boolean;
   /** 0–1 */
   opacity: number;
+  /** Whether to show text labels (uniqueDesignation) on the map. Default: false */
+  showLabels?: boolean;
   symbols: MilSymbolItem[];
   graphics: MilGraphicItem[];
 }
