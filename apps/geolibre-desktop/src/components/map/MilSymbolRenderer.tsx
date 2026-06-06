@@ -90,18 +90,28 @@ function buildMilSymbolImageDataLocal(
 ): ImageData | null {
   try {
     const symb = new MilSymbol(sidc, opts);
-    if (!symb.isValid()) return null;
+
+    // Do NOT gate on symb.isValid() — milsymbol 3.x returns falsy for valid
+    // but partially-specified SIDCs: high echelon codes (21 Corps, 22 Army,
+    // 23 Army Group…), generic "frame-only" units (entity "000000"), and
+    // certain symbol-set entries. asCanvas() is the authoritative check:
+    // if it produces a non-empty canvas the symbol can be rendered.
+    const srcCanvas = symb.asCanvas(pixelRatio);
+    if (!srcCanvas || srcCanvas.width === 0 || srcCanvas.height === 0) return null;
 
     const { width, height } = symb.getSize();
     const anchor = symb.getAnchor();
-    const srcCanvas = symb.asCanvas(pixelRatio);
-    if (!srcCanvas) return null;
+    if (!anchor || width <= 0 || height <= 0) return null;
 
     // Pad so the anchor sits at the padded canvas centre.
     const halfW = Math.max(anchor.x, width  - anchor.x);
     const halfH = Math.max(anchor.y, height - anchor.y);
+    if (halfW <= 0 || halfH <= 0) return null;
+
     const pw = Math.ceil(2 * halfW * pixelRatio);
     const ph = Math.ceil(2 * halfH * pixelRatio);
+    if (pw <= 0 || ph <= 0) return null;
+
     const dx = Math.round((halfW - anchor.x) * pixelRatio);
     const dy = Math.round((halfH - anchor.y) * pixelRatio);
 

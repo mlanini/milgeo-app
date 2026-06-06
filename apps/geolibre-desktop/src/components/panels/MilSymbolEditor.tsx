@@ -28,7 +28,7 @@ import {
 } from "../../lib/mil-sidc";
 
 const MilSymbol = ms.Symbol;
-const PREVIEW_SIZE = 80;
+const PREVIEW_SIZE = 60;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -134,8 +134,8 @@ function SymbolPreview({ sidc, uniqueDesignation, higherFormation }: {
         outlineColor: "white",
         outlineWidth: 6,
       });
-      if (!sym.isValid()) return null;
-      return sym.asSVG();
+      const rendered = sym.asSVG();
+      return rendered && rendered.length > 0 ? rendered : null;
     } catch {
       return null;
     }
@@ -145,8 +145,8 @@ function SymbolPreview({ sidc, uniqueDesignation, higherFormation }: {
     <div className="flex items-center justify-center w-full py-2">
       {svg ? (
         <div
-          className="overflow-hidden [&>svg]:block"
-          style={{ width: PREVIEW_SIZE + 40, height: PREVIEW_SIZE + 40 }}
+          className="[&>svg]:block [&>svg]:max-w-full [&>svg]:h-auto"
+          style={{ maxWidth: PREVIEW_SIZE + 40 }}
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : (

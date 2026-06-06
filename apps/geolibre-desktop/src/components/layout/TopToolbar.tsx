@@ -59,6 +59,7 @@ import {
   Label,
 } from "@geolibre/ui";
 import {
+  Activity,
   Bug,
   CircleHelp,
   Database,
@@ -75,7 +76,6 @@ import {
   Shield,
   SlidersHorizontal,
   Sun,
-  Wrench,
   X,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -177,7 +177,7 @@ export function TopToolbar({
   onToggleThemeMode,
 }: TopToolbarProps) {
   const loadProject = useAppStore((s) => s.loadProject);
-  const setProcessingOpen = useAppStore((s) => s.setProcessingOpen);
+  const setAnalysisOpen = useAppStore((s) => s.setAnalysisOpen);
   const projectName = useAppStore((s) => s.projectName);
   const projectPath = useAppStore((s) => s.projectPath);
   const recentProjects = useAppStore((s) => s.recentProjects);
@@ -662,31 +662,16 @@ export function TopToolbar({
         <Shield className={toolbarIconClassName} />
         {renderToolbarLabel("MilSymb")}
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className={toolbarButtonClass}
-            variant="ghost"
-            size={toolbarButtonSize}
-            aria-label="Processing"
-          >
-            <Wrench className={toolbarIconClassName} />
-            {renderToolbarLabel("Processing")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuLabel>Processing</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>Whitebox</DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
-              <DropdownMenuItem onSelect={() => setProcessingOpen(true)}>
-                Toolbox
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <Button
+        className={toolbarButtonClass}
+        variant="ghost"
+        size={toolbarButtonSize}
+        onClick={() => setAnalysisOpen(true)}
+        aria-label="Analysis"
+      >
+        <Activity className={toolbarIconClassName} />
+        {renderToolbarLabel("Analysis")}
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button

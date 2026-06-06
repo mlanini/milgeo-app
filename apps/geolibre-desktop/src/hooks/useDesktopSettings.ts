@@ -8,6 +8,7 @@ const DESKTOP_SETTINGS_STORAGE_KEY = "geolibre.desktopSettings";
 export interface DesktopSettings {
   additionalPluginDirectories: string[];
   pluginManifestUrls: string[];
+  openTopographyApiKey: string;
 }
 
 interface DesktopSettingsState {
@@ -18,6 +19,7 @@ interface DesktopSettingsState {
 const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   additionalPluginDirectories: [],
   pluginManifestUrls: [],
+  openTopographyApiKey: "",
 };
 
 function normalizeDesktopSettings(settings: unknown): DesktopSettings {
@@ -35,6 +37,10 @@ function normalizeDesktopSettings(settings: unknown): DesktopSettings {
     pluginManifestUrls: normalizeStringList(candidate.pluginManifestUrls).filter(
       isAllowedPluginManifestUrl,
     ),
+    openTopographyApiKey:
+      typeof candidate.openTopographyApiKey === "string"
+        ? candidate.openTopographyApiKey.trim()
+        : "",
   };
 }
 

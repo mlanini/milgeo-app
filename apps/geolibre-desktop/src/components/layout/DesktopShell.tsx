@@ -38,6 +38,7 @@ import { DiagnosticsDialog } from "./DiagnosticsDialog";
 import { StatusBar } from "./StatusBar";
 import { TopToolbar } from "./TopToolbar";
 import { PrivacyNoticeDialog, hasAcceptedPrivacy } from "./PrivacyNoticeDialog";
+import { AnalysisPanel } from "../analysis/AnalysisPanel";
 import type { LayoutOptions } from "../../hooks/useLayoutOptions";
 import type { ThemeMode } from "../../hooks/useThemeMode";
 import type { ProjectUrlLoadState } from "../../hooks/useProjectUrlLoader";
@@ -532,6 +533,7 @@ export function DesktopShell({
       <Suspense fallback={null}>
         <ProcessingDialog mapControllerRef={mapControllerRef} />
       </Suspense>
+      <AnalysisPanel mapControllerRef={mapControllerRef} />
       <div
         ref={verticalResizeGuideRef}
         className="pointer-events-none fixed bottom-7 top-11 z-50 hidden w-px bg-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.25)]"

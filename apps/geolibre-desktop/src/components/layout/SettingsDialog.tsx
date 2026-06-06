@@ -95,6 +95,7 @@ interface DraftListEntry {
 interface DraftDesktopSettings {
   additionalPluginDirectories: DraftListEntry[];
   pluginManifestUrls: DraftListEntry[];
+  openTopographyApiKey: string;
 }
 
 function toDraftListEntry(value: string): DraftListEntry {
@@ -128,6 +129,7 @@ function cloneDesktopSettings(
       projectPlugins?.manifestUrls ?? [],
       settings.pluginManifestUrls,
     ).map(toDraftListEntry),
+    openTopographyApiKey: settings.openTopographyApiKey ?? "",
   };
 }
 
@@ -468,6 +470,7 @@ export function SettingsDialog({
         ),
       ),
       pluginManifestUrls,
+      openTopographyApiKey: draftDesktopSettings.openTopographyApiKey.trim(),
     });
     setProjectPlugins({
       ...getPluginManager().getProjectState(),
@@ -698,6 +701,40 @@ export function SettingsDialog({
                     />
                     Render world copies
                   </label>
+                  <div className="space-y-1.5">
+                    <h3 className="text-sm font-semibold">Analysis</h3>
+                    <p className="text-xs text-muted-foreground">
+                      An{" "}
+                      <a
+                        href="https://www.opentopography.org/developers"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline underline-offset-2"
+                      >
+                        OpenTopography API key
+                      </a>{" "}
+                      is required for Slope, Hillshade and Viewshed tools. The
+                      key is stored locally and never shared.
+                    </p>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="settings-opentopo-key">
+                        OpenTopography API Key
+                      </Label>
+                      <Input
+                        id="settings-opentopo-key"
+                        type="password"
+                        autoComplete="off"
+                        placeholder="Paste your key here"
+                        value={draftDesktopSettings.openTopographyApiKey}
+                        onChange={(e) =>
+                          setDraftDesktopSettings((s) => ({
+                            ...s,
+                            openTopographyApiKey: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
                 </div>
               ) : null}
               {section === "environment" ? (
