@@ -1,12 +1,33 @@
 # Render.com Blueprint — https://render.com/docs/blueprint-spec
 # Connect this repo on Render → it auto-detects this file → one-click deploy.
 #
-# Static site: Vite builds the React SPA in apps/geolibre-desktop.
-# The monorepo workspace packages (@geolibre/core, @geolibre/map …) are
-# resolved directly from TypeScript source by Vite path aliases, so no
-# separate package compilation step is required.
+# Services
+# ────────
+#  milgeo-backend  Python FastAPI sidecar (free tier, port 8765 mapped to 443).
+#                  Provides Whitebox processing endpoints consumed by the SPA.
+#  milgeo-app      Vite static SPA.  VITE_SIDECAR_URL points at milgeo-backend.
 
 services:
+
+  # ── Python processing backend ────────────────────────────────────────────────
+  - type: web
+    name: milgeo-backend
+    runtime: python
+    rootDir: backend/geolibre_server
+    buildCommand: pip install -e .
+    startCommand: uvicorn geolibre_server.app.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      # Allow the Render frontend origin in addition to localhost / Tauri.
+      # Set this to the milgeo-app service URL once it is known, e.g.:
+      #   https://milgeo-app.onrender.com
+      # or use a wildcard origin for the whole onrender.com subdomain:
+      - key: GEOLIBRE_CORS_ORIGIN
+        value: "https://milgeo-app.onrender.com"
+
+  # ── Static frontend SPA ──────────────────────────────────────────────────────
   - type: web
     name: milgeo-app
     runtime: static
@@ -22,8 +43,11 @@ services:
       - key: NODE_VERSION
         value: "22"
       - key: NODE_ENV
-        value: production
-      # Hard cap the V8 heap for the Render build process.
+        value: production      # URL of the milgeo-backend Render service — injected at Vite build time
+      # so the compiled SPA bundle points directly at the Python API.
+      # Update this value whenever the backend service URL changes.
+      - key: VITE_SIDECAR_URL
+        value: "https://milgeo-backend.onrender.com"      # Hard cap the V8 heap for the Render build process.
       # The app's build:render script also passes --max-old-space-size=4096
       # directly to `node` as a flag, so both mechanisms apply.
       - key: NODE_OPTIONS

@@ -1,6 +1,19 @@
 import type { FeatureCollection } from "geojson";
 
-const DEFAULT_SIDECAR_URL = "http://127.0.0.1:8765";
+/**
+ * Sidecar base URL.
+ *
+ * - Tauri desktop: always 127.0.0.1:8765 (process started by the Rust shell).
+ * - Render / web production: set VITE_SIDECAR_URL in the Render environment
+ *   to the URL of the deployed Python backend service so the browser can reach
+ *   it directly.  Falls back to localhost so the dev server still works.
+ */
+const DEFAULT_SIDECAR_URL: string =
+  (typeof import.meta !== "undefined" &&
+    // @ts-expect-error — Vite replaces import.meta.env at build time
+    (import.meta.env as Record<string, string>).VITE_SIDECAR_URL) ||
+  "http://127.0.0.1:8765";
+
 const WHITEBOX_CATALOG_SNAPSHOT_URL =
   "https://raw.githubusercontent.com/opengeos/Whitebox-Next-Gen-ArcGIS/main/WNG/data/catalog_snapshot.json";
 

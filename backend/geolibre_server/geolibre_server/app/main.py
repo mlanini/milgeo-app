@@ -12,6 +12,7 @@ Future integrations (v0.9+):
 
 from __future__ import annotations
 
+import os
 import signal
 import threading
 import time
@@ -23,15 +24,25 @@ from pydantic import BaseModel
 from .whitebox import router as whitebox_router
 
 app = FastAPI(title="GeoLibre Server", version="0.8.0")
-# Restrict CORS to the Tauri webview origins and the pinned Vite dev server
-# (vite.config.ts sets strictPort on 5173) rather than any localhost port, so a
-# stray local web app cannot reach the Whitebox endpoints from a browser.
+
+# Base allowed origins: local dev server + Tauri webview.
+_CORS_ORIGINS = [
+    r"http://localhost:\d+",
+    r"http://127\.0\.0\.1:\d+",
+    r"tauri://localhost",
+    r"http://tauri\.localhost",
+    # Any *.onrender.com subdomain (covers both the frontend and preview deploys).
+    r"https://[a-zA-Z0-9-]+\.onrender\.com",
+]
+# Optional extra origin injected via environment variable (e.g. custom domain).
+_extra_origin = os.environ.get("GEOLIBRE_CORS_ORIGIN", "").strip()
+if _extra_origin:
+    import re as _re
+    _CORS_ORIGINS.append(_re.escape(_extra_origin))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=(
-        r"^(http://localhost:5173|http://127\.0\.0\.1:5173"
-        r"|tauri://localhost|http://tauri\.localhost)$"
-    ),
+    allow_origin_regex="^(" + "|".join(_CORS_ORIGINS) + ")$",
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
