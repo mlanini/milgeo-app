@@ -11,7 +11,7 @@
  *
  * Layout: designed to be embedded inside MilLayerPanel as a tab.
  */
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import ms from "milsymbol";
 import { cn } from "@geolibre/ui";
@@ -189,6 +189,17 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [editingId,   setEditingId]   = useState<string | null>(null);
   const [placingId,   setPlacingId]   = useState<string | null>(null);
+
+  // Auto-expand the first level of root nodes when units are first imported.
+  const prevRootCountRef = useRef(0);
+  useEffect(() => {
+    const rootIds = orbatUnits.filter((u) => u.parentId === null).map((u) => u.id);
+    if (rootIds.length > 0 && prevRootCountRef.current === 0) {
+      // First population: expand all root nodes so the hierarchy is visible.
+      setExpandedIds(new Set(rootIds));
+    }
+    prevRootCountRef.current = rootIds.length;
+  }, [orbatUnits]);
 
   const rootUnits = useMemo(
     () => orbatUnits.filter((u) => u.parentId === null),

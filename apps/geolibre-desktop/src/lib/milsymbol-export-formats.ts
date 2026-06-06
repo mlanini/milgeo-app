@@ -3,7 +3,7 @@
  *
  * Export GeoLibre mil layers to standard military exchange formats:
  *
- *   .orbat.json   — KADAS ORBAT flat-unit-tree (https://github.com/kadasroapp/orbat-mapper)
+ *   .orbat.json   — KADAS ORBAT flat-unit-tree (https://github.com/intelligeo/qgis-app6d-plugin)
  *   .milsymb.json — KADAS MilSymb layer document (kadas_milsymb_version 0.2)
  *   .milxly       — gs-soft MilX V3.1 XML (swisstopo KADAS Albireo)
  *

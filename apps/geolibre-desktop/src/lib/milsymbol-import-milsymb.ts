@@ -7,7 +7,7 @@
  *   .orbat.json   — KADAS ORBAT flat-unit-tree export
  *
  * Both formats use the 20-character number-based APP-6D SIDC and originate
- * from the same tool family (https://github.com/kadasroapp/milsymb).
+ * from the same tool family (https://github.com/intelligeo/qgis-app6d-plugin).
  *
  * Only point symbols are imported (symbols without coordinates are silently
  * skipped). Graphics / lines / polygons are not part of these formats.

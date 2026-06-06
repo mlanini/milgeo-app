@@ -238,8 +238,8 @@ export class MapController {
     this.map = new maplibregl.Map({
       container,
       style: resolveMapStyle(this.basemapStyleUrl),
-      center: view?.center ?? [13.4, 48.5],  // Central Europe default
-      zoom: view?.zoom ?? 5,
+      center: view?.center ?? [10.0, 51.5],  // Continental Europe default
+      zoom: view?.zoom ?? 4,
       bearing: view?.bearing ?? 0,
       pitch: view?.pitch ?? 0,
       minZoom,
@@ -426,8 +426,8 @@ export class MapController {
   readView(): MapViewState {
     if (!this.map) {
       return {
-        center: [13.4, 48.5],
-        zoom: 5,
+        center: [10.0, 51.5],
+        zoom: 4,
         bearing: 0,
         pitch: 0,
       };

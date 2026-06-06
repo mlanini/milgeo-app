@@ -37,6 +37,7 @@ import MilSymbolRenderer from "../map/MilSymbolRenderer";
 import { DiagnosticsDialog } from "./DiagnosticsDialog";
 import { StatusBar } from "./StatusBar";
 import { TopToolbar } from "./TopToolbar";
+import { PrivacyNoticeDialog, hasAcceptedPrivacy } from "./PrivacyNoticeDialog";
 import type { LayoutOptions } from "../../hooks/useLayoutOptions";
 import type { ThemeMode } from "../../hooks/useThemeMode";
 import type { ProjectUrlLoadState } from "../../hooks/useProjectUrlLoader";
@@ -112,6 +113,7 @@ export function DesktopShell({
   const [dropError, setDropError] = useState<string | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [milSymbolOpen, setMilSymbolOpen] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(() => hasAcceptedPrivacy());
   const diagnostics = useDiagnosticsSnapshot();
   const externalPluginsReady = useExternalPluginsReady();
   const [layerPanelWidth, setLayerPanelWidth] = useState(
@@ -519,6 +521,14 @@ export function DesktopShell({
         open={diagnosticsOpen}
         onOpenChange={setDiagnosticsOpen}
       />
+      {/* Privacy notice — shown on first launch until user agrees */}
+      {!privacyAccepted && (
+        <PrivacyNoticeDialog
+          startupMode
+          renderTrigger={false}
+          onAccepted={() => setPrivacyAccepted(true)}
+        />
+      )}
       <Suspense fallback={null}>
         <ProcessingDialog mapControllerRef={mapControllerRef} />
       </Suspense>

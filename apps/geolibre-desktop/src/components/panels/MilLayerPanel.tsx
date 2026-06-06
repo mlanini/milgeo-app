@@ -42,6 +42,8 @@ import { parseSidc, buildSidc, ECHELON_OPTIONS, getModifierSet } from "../../lib
 import { exportMilGeoJson, readMilGeoJsonFile } from "../../lib/mil-export-json";
 import { exportMilGeoKmz } from "../../lib/mil-export-kmz";
 import { exportMilGeoMilX } from "../../lib/mil-export-milx";
+import { parseAnyMilFormatForStore } from "../../lib/milsymbol-import-to-store";
+import { MILGEO_FORMAT_VERSION } from "@geolibre/core";
 import type { MilAffiliation } from "@geolibre/core";
 
 const MilSymbol = ms.Symbol;
@@ -471,18 +473,68 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
   const importDoc   = useMilLayerStore((s) => s.importFromMilGeoJson);
   const layers      = useMilLayerStore((s) => s.layers);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   async function handleImport(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setImportError(null);
+    const sourceName = file.name.replace(/\..*$/, "");
+
     try {
-      const doc = await readMilGeoJsonFile(file);
-      importDoc(doc);
+      const text = await file.text();
+      const nameLower = file.name.toLowerCase();
+
+      // .milgeo.json → full project replace (existing behaviour)
+      if (
+        nameLower.endsWith(".milgeo.json") ||
+        (!nameLower.endsWith(".orbat.json") &&
+          !nameLower.endsWith(".milsymb.json") &&
+          !nameLower.endsWith(".milxly") &&
+          !nameLower.endsWith(".milx") &&
+          (() => {
+            try {
+              const p = JSON.parse(text) as Record<string, unknown>;
+              return p.version !== undefined && !("kadas_milsymb_version" in p) && !("units" in p);
+            } catch { return false; }
+          })())
+      ) {
+        const doc = await readMilGeoJsonFile(file);
+        importDoc(doc);
+        return;
+      }
+
+      // All other formats → parse + MERGE into current store
+      let result;
+      try {
+        result = parseAnyMilFormatForStore(text, file.name, sourceName);
+      } catch (e) {
+        if (e instanceof Error && e.message === "__milgeo_json__") {
+          // Detected as milgeo.json via content probe
+          const doc = await readMilGeoJsonFile(file);
+          importDoc(doc);
+          return;
+        }
+        throw e;
+      }
+
+      // Merge: append new layers and orbat units to existing state
+      const current = exportDoc();
+      importDoc({
+        version: MILGEO_FORMAT_VERSION,
+        layers:  [...current.layers,       ...result.layers],
+        orbat:   [...(current.orbat ?? []), ...result.orbat],
+      });
+
+      // After importing an ORBAT file switch to the ORBAT tab so the user
+      // immediately sees the populated hierarchy.
+      if (result.orbat.length > 0) setTab("orbat");
     } catch (err) {
       console.error("[MilLayerPanel] Import failed:", err);
-      alert("Impossibile importare il file: " + (err instanceof Error ? err.message : String(err)));
+      setImportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
-    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function handleExportKmz() {
@@ -504,7 +556,7 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
         <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">MilSymb</span>
 
         <button
-          title="Importa .milgeo.json"
+          title="Importa: .milgeo.json, .orbat.json, .milsymb.json, .milxly, .milx"
           className="flex items-center gap-1 px-1.5 h-6 rounded text-xs hover:bg-muted border border-input"
           onClick={() => fileInputRef.current?.click()}
         >
@@ -513,10 +565,15 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".json,.milgeo.json"
+          accept=".json,.milgeo.json,.orbat.json,.milsymb.json,.milxly,.milx"
           className="hidden"
           onChange={handleImport}
         />
+        {importError && (
+          <span className="ml-1 text-[10px] text-destructive truncate max-w-[140px]" title={importError}>
+            {importError}
+          </span>
+        )}
 
         <div className="ml-auto flex gap-1">
           <button

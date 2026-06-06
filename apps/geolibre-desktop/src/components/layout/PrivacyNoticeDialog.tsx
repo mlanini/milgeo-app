@@ -4,6 +4,14 @@
  * Data protection and privacy notice for MilGeo.app.
  * Covers EU GDPR (Regulation 2016/679) and the Swiss Federal Act on
  * Data Protection (nDSG / LPD, in force since 1 September 2023).
+ *
+ * Startup mode:
+ *   – Dialog opens automatically and cannot be closed until the user
+ *     checks the acknowledgement checkbox and clicks "Agree & Continue".
+ *   – An optional "Remember my choice" checkbox (default: checked) persists
+ *     the consent to localStorage so the dialog is not shown again.
+ *   – The acknowledgement checkbox is only enabled after the user has
+ *     scrolled to at least 90% of the notice content.
  */
 import {
   Button,
@@ -14,10 +22,22 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-  ScrollArea,
 } from "@geolibre/ui";
-import { Shield } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, Shield } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+// ─── Persistence helpers ──────────────────────────────────────────────────────
+
+export const PRIVACY_STORAGE_KEY = "milgeo.privacy.accepted.v1";
+
+/** Returns true if the user has previously accepted and saved their choice. */
+export function hasAcceptedPrivacy(): boolean {
+  try {
+    return localStorage.getItem(PRIVACY_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 
 // ─── Content ─────────────────────────────────────────────────────────────────
 
@@ -203,37 +223,100 @@ This notice was last reviewed: June 2026.`,
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface PrivacyNoticeDialogProps {
-  renderTrigger?: boolean;
+  /**
+   * When true the dialog opens automatically, blocks Escape / outside-click,
+   * and requires the user to scroll through the content and tick the
+   * acknowledgement checkbox before it can be dismissed.
+   */
+  startupMode?: boolean;
+  /** Called when the user agrees (in startup mode only). */
+  onAccepted?: () => void;
+  /** Controlled open state (used when renderTrigger=false). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  /** Visual style of the trigger button */
+  renderTrigger?: boolean;
   triggerVariant?: ButtonProps["variant"];
   triggerSize?: ButtonProps["size"];
   triggerClassName?: string;
-  /** Replace the default "Privacy & Data Protection" label */
   triggerLabel?: string;
 }
 
 export function PrivacyNoticeDialog({
-  renderTrigger = true,
+  startupMode = false,
+  onAccepted,
   open,
   onOpenChange,
+  renderTrigger = true,
   triggerVariant = "ghost",
   triggerSize = "sm",
   triggerClassName,
   triggerLabel = "Privacy & Data Protection",
 }: PrivacyNoticeDialogProps) {
-  const [internalOpen, setInternalOpen] = useState(false);
-  const dialogOpen = open ?? internalOpen;
+  const [internalOpen, setInternalOpen]   = useState(false);
+  const [agreed,       setAgreed]         = useState(false);
+  const [remember,     setRemember]       = useState(true);
+  const [canAgree,     setCanAgree]       = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const dialogOpen = startupMode ? true : (open ?? internalOpen);
+
+  // Reset per-session state whenever the dialog is opened.
+  const prevOpenRef = useRef(dialogOpen);
+  if (prevOpenRef.current !== dialogOpen) {
+    prevOpenRef.current = dialogOpen;
+    if (dialogOpen) {
+      setAgreed(false);
+      setCanAgree(false);
+    }
+  }
+
+  // After the dialog opens, check immediately whether the content is short
+  // enough to be fully visible without scrolling (in which case it is
+  // considered "read" immediately).
+  useEffect(() => {
+    if (!dialogOpen) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const checkInitial = () => {
+      if (el.scrollHeight <= el.clientHeight + 8) setCanAgree(true);
+    };
+    // Give the DOM a frame to render before measuring.
+    const id = requestAnimationFrame(checkInitial);
+    return () => cancelAnimationFrame(id);
+  }, [dialogOpen]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || canAgree) return;
+    const ratio = (el.scrollTop + el.clientHeight) / el.scrollHeight;
+    if (ratio >= 0.9) setCanAgree(true);
+  }, [canAgree]);
+
+  const handleAgree = () => {
+    if (!agreed) return;
+    if (remember) {
+      try { localStorage.setItem(PRIVACY_STORAGE_KEY, "true"); } catch { /* ignore */ }
+    }
+    if (startupMode) {
+      onAccepted?.();
+    } else {
+      setInternalOpen(false);
+      onOpenChange?.(false);
+    }
+  };
 
   const handleOpenChange = (next: boolean) => {
+    // In startup mode the dialog can only be closed via "Agree & Continue".
+    if (startupMode) return;
     setInternalOpen(next);
     onOpenChange?.(next);
+    if (!next) { setAgreed(false); setCanAgree(false); }
   };
 
   return (
     <Dialog open={dialogOpen} onOpenChange={handleOpenChange}>
-      {renderTrigger && (
+      {renderTrigger && !startupMode && (
         <DialogTrigger asChild>
           <Button
             variant={triggerVariant}
@@ -247,20 +330,35 @@ export function PrivacyNoticeDialog({
         </DialogTrigger>
       )}
 
-      <DialogContent className="flex max-h-[85vh] max-w-2xl flex-col gap-0 p-0">
-        <DialogHeader className="border-b px-6 py-4">
+      <DialogContent
+        className={`flex max-h-[90vh] max-w-2xl flex-col gap-0 p-0${startupMode ? " [&>button.absolute]:hidden" : ""}`}
+        // Startup mode: block all implicit close gestures.
+        onInteractOutside={startupMode ? (e) => e.preventDefault() : undefined}
+        onEscapeKeyDown={startupMode ? (e) => e.preventDefault() : undefined}
+      >
+        {/* ── Header ─────────────────────────────────────────────────────── */}
+        <DialogHeader className="border-b px-6 py-4 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <Shield className="h-4 w-4 text-primary" />
             Privacy &amp; Data Protection Notice
           </DialogTitle>
           <DialogDescription className="text-xs">
-            MilGeo.app &mdash; Compliance with EU GDPR (Regulation 2016/679)
-            and Swiss Federal Act on Data Protection (nDSG, in force 1 Sep
-            2023)
+            MilGeo.app &mdash; EU GDPR (Regulation 2016/679) and Swiss nDSG
+            (SR 235.1, in force 1 Sep 2023).
+            {startupMode && (
+              <span className="ml-1 font-medium text-foreground">
+                Please read the notice in full before continuing.
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 px-6 py-4">
+        {/* ── Scrollable body ─────────────────────────────────────────────── */}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="min-h-0 flex-1 overflow-y-auto px-6 py-4"
+        >
           <div className="space-y-5 pb-2 text-sm">
             {/* Preamble */}
             <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
@@ -295,7 +393,63 @@ export function PrivacyNoticeDialog({
               </p>
             </div>
           </div>
-        </ScrollArea>
+        </div>
+
+        {/* ── Acceptance footer (startup mode only) ────────────────────── */}
+        {startupMode && (
+          <div className="shrink-0 space-y-3 border-t bg-muted/20 px-6 py-4">
+            {/* Scroll hint */}
+            {!canAgree && (
+              <p className="text-center text-xs text-muted-foreground animate-pulse">
+                ↓ Scroll to the bottom to read the full notice
+              </p>
+            )}
+
+            {/* Acknowledgement checkbox */}
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 transition-colors ${
+                canAgree
+                  ? "hover:bg-muted/60 border-border"
+                  : "opacity-40 cursor-not-allowed border-border"
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                disabled={!canAgree}
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+              />
+              <span className="text-xs leading-relaxed">
+                I have read and understood the Privacy &amp; Data Protection
+                Notice. I acknowledge that MilGeo.app processes data as
+                described above and that my use of the application is subject
+                to the applicable data-protection regulations.
+              </span>
+            </label>
+
+            {/* Remember checkbox */}
+            <label className="flex cursor-pointer items-center gap-2 px-1 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-primary"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+              Don&apos;t show this notice again on next launch
+            </label>
+
+            {/* Agree button */}
+            <Button
+              className="w-full gap-2"
+              disabled={!agreed}
+              onClick={handleAgree}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Agree &amp; Continue
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

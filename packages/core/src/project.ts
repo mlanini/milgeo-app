@@ -20,8 +20,8 @@ export interface CreateProjectOptions {
 
 export function createDefaultMapView(): MapViewState {
   return {
-    center: [13.4, 48.5],  // Central Europe (Austria / Bavaria)
-    zoom: 5,
+    center: [10.0, 51.5],  // Continental Europe
+    zoom: 4,
     bearing: 0,
     pitch: 0,
   };
