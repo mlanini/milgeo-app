@@ -92,7 +92,71 @@ export async function openTopoDataBatch(
   }
 }
 
+// ─── Local DTM via Python sidecar ─────────────────────────────────────────────
+
+const SIDECAR_BASE_URL: string =
+  (typeof import.meta !== "undefined" &&
+    // @ts-expect-error — Vite replaces import.meta.env at build time
+    (import.meta.env as Record<string, string>).VITE_SIDECAR_URL) ||
+  "http://127.0.0.1:8765";
+
+/**
+ * Query elevations from a local GeoTIFF / DTM raster via the Python sidecar.
+ * The sidecar endpoint reads the raster with rasterio and returns sampled
+ * elevations for each point.
+ *
+ * POST /analysis/elevation_from_raster
+ * Body: { dtm_path: string; points: Array<{lon: number; lat: number}> }
+ * Response: { elevations: Array<number | null> }
+ */
+export async function queryElevationsLocal(
+  points: LonLat[],
+  dtmPath: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<ElevationSample[]> {
+  if (points.length === 0) return [];
+
+  const body = JSON.stringify({
+    dtm_path: dtmPath,
+    points: points.map(([lon, lat]) => ({ lon, lat })),
+  });
+
+  let elevations: Array<number | null>;
+  try {
+    const resp = await fetch(`${SIDECAR_BASE_URL}/analysis/elevation_from_raster`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (resp.ok) {
+      const data = (await resp.json()) as { elevations?: Array<number | null> };
+      elevations = Array.isArray(data.elevations)
+        ? data.elevations
+        : points.map(() => null);
+    } else {
+      elevations = points.map(() => null);
+    }
+  } catch {
+    elevations = points.map(() => null);
+  }
+
+  onProgress?.(points.length, points.length);
+  return points.map(([lon, lat], i) => ({
+    lon,
+    lat,
+    elevationM: elevations[i] ?? null,
+    source: "unknown" as const,
+  }));
+}
+
 // ─── Smart elevation router ───────────────────────────────────────────────────
+
+export interface ElevationQueryOptions {
+  /** "online" = swisstopo + OpenTopoData router (default); "local" = local DTM via sidecar. */
+  source?: "online" | "local";
+  /** Absolute path to local GeoTIFF / ASC DTM raster. Required when source = "local". */
+  localDtmPath?: string;
+}
 
 /**
  * Query elevations for an array of points using the best available source.
@@ -100,11 +164,16 @@ export async function openTopoDataBatch(
  * - OpenTopoData for everything else
  *
  * Batches requests to respect API limits.
+ * Pass `options.source = "local"` and `options.localDtmPath` to use a local raster instead.
  */
 export async function queryElevations(
   points: LonLat[],
   onProgress?: (done: number, total: number) => void,
+  options?: ElevationQueryOptions,
 ): Promise<ElevationSample[]> {
+  if (options?.source === "local") {
+    return queryElevationsLocal(points, options.localDtmPath ?? "", onProgress);
+  }
   const results: ElevationSample[] = [];
 
   const chPoints: Array<{ idx: number; lon: number; lat: number }> = [];

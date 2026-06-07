@@ -13,6 +13,7 @@ import {
   Activity,
   AreaChart,
   Compass,
+  Database,
   Download,
   Eye,
   Layers,
@@ -28,6 +29,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ChangeEvent,
   type RefObject,
 } from "react";
 import {
@@ -53,6 +55,7 @@ import {
   formatTimeUtc,
 } from "../../lib/analysis-ephemeris";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
+import type { DemSource } from "../../hooks/useDesktopSettings";
 
 /** Mirror the sidecar base-URL logic from @geolibre/processing/sidecar-client. */
 const SIDECAR_BASE_URL: string =
@@ -486,6 +489,9 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
   const open = useAppStore((s) => s.ui.analysisOpen);
   const setAnalysisOpen = useAppStore((s) => s.setAnalysisOpen);
   const desktopSettings = useDesktopSettingsStore((s) => s.desktopSettings);
+  const setDesktopSettings = useDesktopSettingsStore((s) => s.setDesktopSettings);
+  const demSource = desktopSettings.demSource;
+  const localDtmPath = desktopSettings.localDtmPath;
 
   const [selectedToolId, setSelectedToolId] = useState<string>("distance");
   const [runState, setRunState] = useState<RunState>("idle");
@@ -498,6 +504,16 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
   );
   // Profile sample count
   const [profileSamples, setProfileSamples] = useState(64);
+  const [demPickerOpen, setDemPickerOpen] = useState(false);
+  // Local file path input (only used inside DEM picker, before save)
+  const [localDtmDraft, setLocalDtmDraft] = useState("");
+
+  // Show DEM picker whenever the panel opens without a source configured
+  useEffect(() => {
+    if (open && demSource === "") {
+      setDemPickerOpen(true);
+    }
+  }, [open, demSource]);
 
   const selectedTool = useMemo(
     () => TOOLS.find((t) => t.id === selectedToolId)!,
@@ -644,9 +660,11 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
           return;
         }
         const samples = samplePolyline(drawnCoords, profileSamples);
-        const elevSamples = await queryElevations(samples, (done, total) => {
-          setProgress(`Querying elevation… ${done}/${total}`);
-        });
+        const elevSamples = await queryElevations(
+          samples,
+          (done, total) => { setProgress(`Querying elevation… ${done}/${total}`); },
+          demSource === "local" ? { source: "local", localDtmPath } : { source: "online" },
+        );
         const distances = cumulativeDistances(samples);
         const elevations = elevSamples.map((s) => s.elevationM ?? NaN);
 
@@ -677,9 +695,11 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
         }
         const gridPts = gridSamplePolygon(drawnCoords, 64);
         setProgress(`Querying ${gridPts.length} sample points…`);
-        const samples = await queryElevations(gridPts, (done, total) => {
-          setProgress(`Querying elevation… ${done}/${total}`);
-        });
+        const samples = await queryElevations(
+          gridPts,
+          (done, total) => { setProgress(`Querying elevation… ${done}/${total}`); },
+          demSource === "local" ? { source: "local", localDtmPath } : { source: "online" },
+        );
         const stats = elevationStats(samples);
         setResult({ toolId: id, elevStats: stats });
         setRunState("done");
@@ -769,7 +789,7 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
       });
       setRunState("error");
     }
-  }, [selectedTool, drawnCoords, ephDate, profileSamples, desktopSettings]);
+  }, [selectedTool, drawnCoords, ephDate, profileSamples, desktopSettings, demSource, localDtmPath]);
 
   // Extra state for elevation profile
   const [storedElevations, setStoredElevations] = useState<number[]>([]);
@@ -813,7 +833,7 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
 
   return (
     <div
-      className="flex flex-col h-full"
+      className="relative flex flex-col h-full"
       role="complementary"
       aria-label="Analysis panel"
     >
@@ -821,6 +841,19 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
         <Activity className="size-4 text-primary" />
         <span className="flex-1 text-sm font-semibold">Analysis</span>
+        {/* DEM source indicator */}
+        <button
+          type="button"
+          onClick={() => {
+            setLocalDtmDraft(localDtmPath);
+            setDemPickerOpen(true);
+          }}
+          className="flex items-center gap-1 rounded border bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          title="Change DEM source"
+        >
+          <Database className="size-3" />
+          {demSource === "local" ? "Local DTM" : "Online API"}
+        </button>
         <Button
           size="icon"
           variant="ghost"
@@ -980,6 +1013,166 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
           Drawing active — click on the map to add points
         </div>
       )}
+
+      {/* DEM picker overlay */}
+      {demPickerOpen && (
+        <DemPickerOverlay
+          currentSource={demSource}
+          currentLocalPath={localDtmPath}
+          localDtmDraft={localDtmDraft}
+          onLocalDtmDraftChange={setLocalDtmDraft}
+          onConfirm={(source, path) => {
+            setDesktopSettings({
+              ...desktopSettings,
+              demSource: source,
+              localDtmPath: path,
+            });
+            setDemPickerOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── DEM Picker Overlay ───────────────────────────────────────────────────────
+
+function DemPickerOverlay({
+  currentSource,
+  currentLocalPath,
+  localDtmDraft,
+  onLocalDtmDraftChange,
+  onConfirm,
+}: {
+  currentSource: DemSource;
+  currentLocalPath: string;
+  localDtmDraft: string;
+  onLocalDtmDraftChange: (v: string) => void;
+  onConfirm: (source: DemSource, localPath: string) => void;
+}) {
+  const [selected, setSelected] = useState<DemSource>(
+    currentSource !== "" ? currentSource : "online",
+  );
+  const [localPath, setLocalPath] = useState(localDtmDraft || currentLocalPath);
+
+  const canConfirm = selected === "online" || (selected === "local" && localPath.trim() !== "");
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    // In a browser context we can only get the file name, not the full path.
+    // The sidecar needs the real FS path, so we show an additional text input.
+    const file = files[0];
+    // Prefer the webkitRelativePath or name as a hint; user can correct it.
+    const name = (file as File & { path?: string }).path ?? file.name;
+    setLocalPath(name);
+    onLocalDtmDraftChange(name);
+  };
+
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/90 backdrop-blur-sm">
+      <div className="mx-4 flex w-full max-w-[340px] flex-col gap-4 rounded-lg border bg-background p-4 shadow-lg">
+        <div className="flex items-center gap-2">
+          <Database className="size-4 text-primary" />
+          <span className="text-sm font-semibold">Choose Elevation Source</span>
+        </div>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          Select which Digital Elevation Model (DEM) to use for profile, line-of-sight and
+          min/max elevation tools.
+        </p>
+
+        {/* Option A — Online */}
+        <label
+          className={cn(
+            "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors hover:bg-accent/50",
+            selected === "online" && "border-primary bg-primary/5",
+          )}
+        >
+          <input
+            type="radio"
+            name="dem-source"
+            value="online"
+            checked={selected === "online"}
+            onChange={() => setSelected("online")}
+            className="mt-0.5 accent-primary"
+          />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium">OpenTopography API (online)</span>
+            <span className="text-[11px] text-muted-foreground">
+              Uses swisstopo (sub-metre, CH only) and OpenTopoData SRTM 90 m (global).
+              No API key required for point queries.
+            </span>
+          </div>
+        </label>
+
+        {/* Option B — Local DTM */}
+        <label
+          className={cn(
+            "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors hover:bg-accent/50",
+            selected === "local" && "border-primary bg-primary/5",
+          )}
+        >
+          <input
+            type="radio"
+            name="dem-source"
+            value="local"
+            checked={selected === "local"}
+            onChange={() => setSelected("local")}
+            className="mt-0.5 accent-primary"
+          />
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium">Local DTM raster file</span>
+            <span className="text-[11px] text-muted-foreground">
+              GeoTIFF, ASCII grid or any GDAL-supported raster. Queries are processed by
+              the local Python sidecar.
+            </span>
+            {selected === "local" && (
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                <input
+                  type="file"
+                  accept=".tif,.tiff,.asc,.img,.hgt"
+                  onChange={handleFileChange}
+                  className="text-[11px] file:mr-2 file:rounded file:border file:border-border file:bg-muted file:px-2 file:py-0.5 file:text-[11px]"
+                />
+                <Input
+                  placeholder="Full path to raster file…"
+                  value={localPath}
+                  onChange={(e) => {
+                    setLocalPath(e.target.value);
+                    onLocalDtmDraftChange(e.target.value);
+                  }}
+                  className="h-7 text-xs font-mono"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Enter or paste the absolute file-system path if the browser cannot
+                  resolve it automatically.
+                </p>
+              </div>
+            )}
+          </div>
+        </label>
+
+        <div className="flex gap-2">
+          {currentSource !== "" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 flex-1 text-xs"
+              onClick={() => onConfirm(currentSource, currentLocalPath)}
+            >
+              Cancel
+            </Button>
+          )}
+          <Button
+            size="sm"
+            className="h-7 flex-1 text-xs"
+            disabled={!canConfirm}
+            onClick={() => onConfirm(selected, selected === "local" ? localPath.trim() : "")}
+          >
+            Confirm
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

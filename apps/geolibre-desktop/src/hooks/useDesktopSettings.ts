@@ -5,10 +5,14 @@ import { normalizeStringList } from "../lib/string-lists";
 
 const DESKTOP_SETTINGS_STORAGE_KEY = "geolibre.desktopSettings";
 
+export type DemSource = "" | "online" | "local";
+
 export interface DesktopSettings {
   additionalPluginDirectories: string[];
   pluginManifestUrls: string[];
   openTopographyApiKey: string;
+  demSource: DemSource;
+  localDtmPath: string;
 }
 
 interface DesktopSettingsState {
@@ -20,6 +24,8 @@ const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   additionalPluginDirectories: [],
   pluginManifestUrls: [],
   openTopographyApiKey: "",
+  demSource: "",
+  localDtmPath: "",
 };
 
 function normalizeDesktopSettings(settings: unknown): DesktopSettings {
@@ -40,6 +46,14 @@ function normalizeDesktopSettings(settings: unknown): DesktopSettings {
     openTopographyApiKey:
       typeof candidate.openTopographyApiKey === "string"
         ? candidate.openTopographyApiKey.trim()
+        : "",
+    demSource:
+      candidate.demSource === "online" || candidate.demSource === "local"
+        ? candidate.demSource
+        : "",
+    localDtmPath:
+      typeof candidate.localDtmPath === "string"
+        ? candidate.localDtmPath.trim()
         : "",
   };
 }
