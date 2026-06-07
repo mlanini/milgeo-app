@@ -24,7 +24,7 @@ import { cn } from "@geolibre/ui";
 import ms from "milsymbol";
 import {
   Plus, Trash2, Eye, EyeOff, Pencil, Upload, Download,
-  ChevronDown, ChevronRight, X, MapPin, Check, Tag, TagOff,
+  ChevronDown, ChevronRight, X, MapPin, Check, Tag,
 } from "lucide-react";
 import type { MapController } from "@geolibre/map";
 import type { MilLayer, MilSymbolItem } from "@geolibre/core";
@@ -183,7 +183,7 @@ function LayersTab({ mapControllerRef }: LayersTabProps) {
                   className={cn("text-muted-foreground", layer.showLabels && "text-primary")}
                   title={layer.showLabels ? "Nascondi etichette" : "Mostra etichette"}
                 >
-                  {layer.showLabels ? <Tag size={13} /> : <TagOff size={13} />}
+                  <Tag size={13} />
                 </button>
                 {renamingId === layer.id ? (
                   <input
