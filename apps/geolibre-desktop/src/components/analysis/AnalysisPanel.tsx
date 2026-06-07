@@ -1124,9 +1124,15 @@ function DemPickerOverlay({
             <span className="text-xs font-medium">Local DTM raster file</span>
             <span className="text-[11px] text-muted-foreground">
               GeoTIFF, ASCII grid or any GDAL-supported raster. Queries are processed by
-              the local Python sidecar.
+              the local Python sidecar at <code>127.0.0.1:8765</code>.
             </span>
             {selected === "local" && (
+              <div className="mt-1 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] text-amber-300 leading-relaxed">
+                ⚠️ Requires the <strong>local sidecar</strong> to be running
+                (<code>geolibre-server</code> on port 8765). Not available in the
+                hosted web version — use <strong>Online API</strong> instead.
+              </div>
+            )}
               <div className="mt-1.5 flex flex-col gap-1.5">
                 <input
                   type="file"

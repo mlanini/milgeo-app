@@ -94,11 +94,12 @@ export async function openTopoDataBatch(
 
 // ─── Local DTM via Python sidecar ─────────────────────────────────────────────
 
-const SIDECAR_BASE_URL: string =
-  (typeof import.meta !== "undefined" &&
-    // @ts-expect-error — Vite replaces import.meta.env at build time
-    (import.meta.env as Record<string, string>).VITE_SIDECAR_URL) ||
-  "http://127.0.0.1:8765";
+/**
+ * The local DTM sidecar ALWAYS runs on the local machine at port 8765.
+ * This is intentionally hardcoded — it must NOT use VITE_SIDECAR_URL which
+ * points at the remote Render backend when deployed.
+ */
+const LOCAL_SIDECAR_URL = "http://127.0.0.1:8765";
 
 /**
  * Query elevations from a local GeoTIFF / DTM raster via the Python sidecar.
@@ -108,6 +109,9 @@ const SIDECAR_BASE_URL: string =
  * POST /analysis/elevation_from_raster
  * Body: { dtm_path: string; points: Array<{lon: number; lat: number}> }
  * Response: { elevations: Array<number | null> }
+ *
+ * ⚠️  ONLY works when the local Python sidecar is running (geolibre-server).
+ *    Not available in the hosted web version — use Online API instead.
  */
 export async function queryElevationsLocal(
   points: LonLat[],
@@ -116,6 +120,12 @@ export async function queryElevationsLocal(
 ): Promise<ElevationSample[]> {
   if (points.length === 0) return [];
 
+  if (!dtmPath.trim()) {
+    throw new Error(
+      "No local DTM path configured. Open the DEM picker in the Analysis panel header and enter the raster file path.",
+    );
+  }
+
   const body = JSON.stringify({
     dtm_path: dtmPath,
     points: points.map(([lon, lat]) => ({ lon, lat })),
@@ -123,7 +133,7 @@ export async function queryElevationsLocal(
 
   let elevations: Array<number | null>;
   try {
-    const resp = await fetch(`${SIDECAR_BASE_URL}/analysis/elevation_from_raster`, {
+    const resp = await fetch(`${LOCAL_SIDECAR_URL}/analysis/elevation_from_raster`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
