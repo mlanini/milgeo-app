@@ -89,12 +89,15 @@ export class TraccarClient {
   readonly serverUrl: string;
   readonly username: string;
   private readonly _password: string;
+  /** Optional backend proxy base URL (e.g. https://milgeo-backend.onrender.com). */
+  private readonly _proxyUrl: string;
   private _loggedIn = false;
 
-  constructor(serverUrl: string, username: string, password: string) {
+  constructor(serverUrl: string, username: string, password: string, proxyUrl = "") {
     this.serverUrl = serverUrl.replace(/\/+$/, "");
     this.username = username;
     this._password = password;
+    this._proxyUrl = proxyUrl.trim().replace(/\/+$/, "");
   }
 
   get isLoggedIn(): boolean {
@@ -105,12 +108,31 @@ export class TraccarClient {
    * POST /api/session — returns the logged-in user object.
    * Stores the session cookie in the browser's cookie jar (credentials:'include').
    *
-   * We bypass _fetch here intentionally:
+   * When a proxy URL is configured we switch to Basic-Auth GET /api/session
+   * (no cookie needed — every subsequent request carries the Authorization header).
+   *
+   * Direct mode bypasses _fetch intentionally:
    * - URLSearchParams body → browser auto-sets Content-Type: application/x-www-form-urlencoded;charset=UTF-8
-   * - No custom headers added → the POST stays a "simple" CORS request (no preflight)
-   *   which works even when Traccar's Access-Control-Allow-Headers is minimal.
+   * - No custom headers added → the POST stays a “simple” CORS request (no preflight).
    */
   async login(): Promise<Record<string, unknown>> {
+    // ─ Proxy mode: Basic Auth GET /api/session ────────────────────────────────
+    if (this._proxyUrl) {
+      const resp = await this._fetch("/api/session");
+      if (resp.status === 401 || resp.status === 403) {
+        throw new TraccarAuthError(
+          `Authentication failed (HTTP ${resp.status}). Check credentials.`,
+        );
+      }
+      if (!resp.ok) {
+        throw new TraccarNetworkError(`Login failed: HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as Record<string, unknown>;
+      this._loggedIn = true;
+      return data;
+    }
+
+    // ─ Direct mode: form-encoded POST (simple CORS request) ────────────────
     const body = new URLSearchParams();
     body.set("email", this.username);
     body.set("password", this._password);
@@ -243,7 +265,21 @@ export class TraccarClient {
   }
 
   private async _fetch(path: string, init: RequestInit = {}): Promise<Response> {
-    const url = this.serverUrl + path;
+    // Route through the CORS proxy when configured.
+    // Proxy expects: X-Traccar-Target = original Traccar base URL.
+    // Basic Auth is included so the proxy can forward credentials without
+    // relying on browser cookie forwarding across origins.
+    const url = this._proxyUrl
+      ? `${this._proxyUrl}/traccar-proxy${path}`
+      : this.serverUrl + path;
+
+    const proxyHeaders: Record<string, string> = this._proxyUrl
+      ? {
+          Authorization: `Basic ${btoa(`${this.username}:${this._password}`)}`,
+          "X-Traccar-Target": this.serverUrl,
+        }
+      : {};
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     // Destructure to merge headers without the spread overwriting the defaults.
@@ -254,6 +290,7 @@ export class TraccarClient {
         ...restInit,
         headers: {
           Accept: "application/json",
+          ...proxyHeaders,
           ...(extraHeaders as Record<string, string> | undefined),
         },
         signal: controller.signal,

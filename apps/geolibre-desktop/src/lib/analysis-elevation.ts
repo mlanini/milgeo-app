@@ -134,10 +134,16 @@ export async function queryElevationsLocal(
         ? data.elevations
         : points.map(() => null);
     } else {
-      elevations = points.map(() => null);
+      const detail = await resp.text().catch(() => resp.statusText);
+      throw new Error(`Sidecar error ${resp.status}: ${detail}`);
     }
-  } catch {
-    elevations = points.map(() => null);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("Sidecar error")) throw err;
+    // Connection refused / network failure — sidecar not running
+    throw new Error(
+      "Local DTM sidecar is not available (connection refused). " +
+        "Start the local sidecar or switch to Online API in Analysis settings.",
+    );
   }
 
   onProgress?.(points.length, points.length);

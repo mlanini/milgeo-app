@@ -19,6 +19,13 @@ export interface SillagesSettings {
   defaultTrackColor: string;
   defaultTrackWidth: number;
   defaultTrackMaxPoints: number;
+  /**
+   * Optional backend proxy URL for CORS-restricted deployments.
+   * When set, all Traccar requests are routed through
+   * `{proxyUrl}/traccar-proxy/{path}` using HTTP Basic Auth.
+   * Example: https://milgeo-backend.onrender.com
+   */
+  proxyUrl: string;
 }
 
 interface SillagesSettingsState {
@@ -34,6 +41,7 @@ export const DEFAULT_SILLAGES_SETTINGS: SillagesSettings = {
   defaultTrackColor: "#0000FF",
   defaultTrackWidth: 2,
   defaultTrackMaxPoints: 500,
+  proxyUrl: "",
 };
 
 function normalize(raw: unknown): SillagesSettings {
@@ -58,6 +66,7 @@ function normalize(raw: unknown): SillagesSettings {
       typeof c.defaultTrackMaxPoints === "number" && c.defaultTrackMaxPoints > 0
         ? c.defaultTrackMaxPoints
         : s.defaultTrackMaxPoints,
+    proxyUrl: typeof c.proxyUrl === "string" ? c.proxyUrl.trim() : s.proxyUrl,
   };
 }
 

@@ -17,7 +17,8 @@ import signal
 import threading
 import time
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -58,6 +59,80 @@ class RunRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ─── Traccar CORS proxy ───────────────────────────────────────────────────────
+
+_SKIP_PROXY_HEADERS = frozenset(
+    [
+        "host",
+        "x-traccar-target",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+    ]
+)
+
+
+@app.api_route(
+    "/traccar-proxy/{path:path}",
+    methods=["GET", "POST", "DELETE", "PUT", "OPTIONS"],
+)
+async def traccar_proxy(request: Request, path: str) -> Response:
+    """
+    CORS proxy for Traccar API.
+
+    The browser-side TraccarClient sends requests here when the Traccar server
+    does not have the required Access-Control-Allow-Origin header.
+    The X-Traccar-Target header must contain the full base URL of the Traccar
+    server (e.g. https://traccar.example.com).
+    """
+    target = request.headers.get("X-Traccar-Target", "").strip().rstrip("/")
+    if not target or not (
+        target.startswith("http://") or target.startswith("https://")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Missing or invalid X-Traccar-Target header",
+        )
+
+    forward_url = f"{target}/{path.lstrip('/')}"
+    forward_headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in _SKIP_PROXY_HEADERS
+    }
+    body = await request.body()
+    params = dict(request.query_params)
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True
+        ) as client:
+            proxy_resp = await client.request(
+                method=request.method,
+                url=forward_url,
+                headers=forward_headers,
+                content=body or None,
+                params=params,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Traccar proxy upstream error: {exc}",
+        ) from exc
+
+    # Strip hop-by-hop headers that must not be forwarded
+    skip_response = frozenset(["content-encoding", "transfer-encoding", "connection"])
+    return Response(
+        content=proxy_resp.content,
+        status_code=proxy_resp.status_code,
+        headers={
+            k: v
+            for k, v in proxy_resp.headers.items()
+            if k.lower() not in skip_response
+        },
+    )
 
 
 @app.post("/shutdown")

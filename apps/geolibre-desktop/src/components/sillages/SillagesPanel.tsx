@@ -264,6 +264,7 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
         settings.serverUrl,
         settings.username,
         settings.password,
+        settings.proxyUrl,
       );
       const userObj = await client.login();
       clientRef.current = client;
@@ -933,6 +934,25 @@ function SettingsView({ draft, onChange, onSave, onCancel }: SettingsViewProps) 
         </div>
 
         <div className="space-y-1">
+          <Label htmlFor="sill-proxy" className="text-[11px]">
+            CORS Proxy URL{" "}
+            <span className="font-normal text-muted-foreground">(optional)</span>
+          </Label>
+          <Input
+            id="sill-proxy"
+            value={draft.proxyUrl}
+            placeholder="https://milgeo-backend.onrender.com"
+            onChange={(e) => onChange({ ...draft, proxyUrl: e.target.value })}
+            className="h-7 text-xs font-mono"
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Set to your backend URL if the Traccar server blocks cross-origin
+            requests. Requests will route through
+            <code> {"<proxy>"}/traccar-proxy/…</code> using HTTP Basic Auth.
+          </p>
+        </div>
+
+        <div className="space-y-1">
           <Label htmlFor="sill-user" className="text-[11px]">
             Username (e-mail)
           </Label>
@@ -1032,11 +1052,11 @@ function SettingsView({ draft, onChange, onSave, onCancel }: SettingsViewProps) 
         </div>
 
         <div className="rounded border border-amber-500/30 bg-amber-500/10 p-2 text-[10px] text-amber-300">
-          <strong>CORS note:</strong> The Traccar server must allow requests from
-          this origin. If the connection fails with a network error, configure{" "}
-          <code>allowedOrigins</code> in your Traccar{" "}
-          <code>conf/traccar.xml</code>, or run Traccar on the same host as this
-          app.
+          <strong>CORS note:</strong> If the Traccar server blocks cross-origin
+          requests, enter your backend URL in the CORS Proxy URL field above
+          (e.g. <code>https://milgeo-backend.onrender.com</code>) or configure
+          <code> allowedOrigins</code> in your Traccar{" "}
+          <code>conf/traccar.xml</code>.
         </div>
 
         <div className="flex gap-2">
