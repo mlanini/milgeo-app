@@ -98,6 +98,8 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
   // ─── Refs: mutable singletons that survive React re-renders ─────────────────
   const clientRef = useRef<TraccarClient | null>(null);
   const trackerRef = useRef<TrackerManager | null>(null);
+  /** Always reflects the current devices state — avoids stale closures in callbacks. */
+  const devicesRef = useRef<TraccarDeviceState[]>([]);
 
   // ─── State ───────────────────────────────────────────────────────────────────
   const [view, setView] = useState<PanelView>("main");
@@ -128,6 +130,9 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
 
   const logBoxRef = useRef<HTMLDivElement>(null);
 
+  // Keep devicesRef in sync with state so stable callbacks always see current devices.
+  useEffect(() => { devicesRef.current = devices; }, [devices]);
+
   // ─── Log helper ──────────────────────────────────────────────────────────────
   const addLog = useCallback((message: string, level: LogEntry["level"] = "info") => {
     const ts = new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -149,25 +154,26 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
     setStatusColor(color);
   }, []);
 
-  // ─── Tracker callbacks ───────────────────────────────────────────────────────
+  // ─── Tracker callbacks (stable — read from devicesRef, not state closure) ────
   const onPositionUpdated = useCallback(
     (_deviceId: number, _lat: number, _lon: number) => {
       const map = mapControllerRef.current?.getMap?.();
       if (map && trackerRef.current) {
-        const allDevs = devices;
-        updateSillagesLayers(map, allDevs, (id) =>
+        updateSillagesLayers(map, devicesRef.current, (id) =>
           trackerRef.current?.getTrack(id) ?? [],
         );
       }
     },
-    [mapControllerRef, devices],
+    [mapControllerRef], // mapControllerRef is a stable ref — no stale closure risk
   );
 
   const onDeviceStatusChanged = useCallback(
     (deviceId: number, status: string) => {
-      setDevices((prev) =>
-        prev.map((d) => (d.id === deviceId ? { ...d, status } : d)),
-      );
+      setDevices((prev) => {
+        const updated = prev.map((d) => (d.id === deviceId ? { ...d, status } : d));
+        devicesRef.current = updated;
+        return updated;
+      });
     },
     [],
   );
@@ -281,6 +287,7 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
         trackMaxPoints: settings.defaultTrackMaxPoints,
         showLabel: true,
       }));
+      devicesRef.current = devStates;
       setDevices(devStates);
       addLog(`↻ ${devStates.length} device(s) loaded.`, "info");
 
@@ -335,7 +342,7 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
     try {
       const rawDevices = await client.getDevices();
       const devStates: TraccarDeviceState[] = rawDevices.map((d) => {
-        const existing = devices.find((e) => e.id === d.id);
+        const existing = devicesRef.current.find((e) => e.id === d.id);
         return existing
           ? { ...existing, ...d }
           : {
@@ -347,20 +354,21 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
               showLabel: true,
             };
       });
+      devicesRef.current = devStates;
       setDevices(devStates);
       trackerRef.current?.updateDevices(devStates);
       addLog(`↻ Device list refreshed: ${devStates.length} found.`, "info");
     } catch (err) {
       addLog(`⚠ Refresh error: ${err instanceof Error ? err.message : String(err)}`, "error");
     }
-  }, [devices, settings, addLog]);
+  }, [settings, addLog]);
 
   const doStartTracking = useCallback(() => {
     const map = mapControllerRef.current?.getMap?.();
     if (!map || !trackerRef.current) return;
     createSillagesLayers(map);
-    trackerRef.current.start(devices);
-  }, [mapControllerRef, devices]);
+    trackerRef.current.start(devicesRef.current);
+  }, [mapControllerRef]);
 
   const doStopTracking = useCallback(() => {
     trackerRef.current?.stop();
@@ -369,44 +377,63 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
   // ─── Device visibility toggle ────────────────────────────────────────────────
   const toggleDeviceVisible = useCallback(
     (deviceId: number, visible: boolean) => {
-      setDevices((prev) =>
-        prev.map((d) => (d.id === deviceId ? { ...d, visible } : d)),
-      );
-      trackerRef.current?.updateDevices(
-        devices.map((d) => (d.id === deviceId ? { ...d, visible } : d)),
-      );
-      // Refresh map
-      const map = mapControllerRef.current?.getMap?.();
-      if (map && trackerRef.current) {
-        const updated = devices.map((d) =>
-          d.id === deviceId ? { ...d, visible } : d,
-        );
-        updateSillagesLayers(map, updated, (id) =>
-          trackerRef.current?.getTrack(id) ?? [],
-        );
-      }
+      setDevices((prev) => {
+        const updated = prev.map((d) => (d.id === deviceId ? { ...d, visible } : d));
+        devicesRef.current = updated;
+        trackerRef.current?.updateDevices(updated);
+        const map = mapControllerRef.current?.getMap?.();
+        if (map && trackerRef.current) {
+          updateSillagesLayers(map, updated, (id) =>
+            trackerRef.current?.getTrack(id) ?? [],
+          );
+        }
+        return updated;
+      });
     },
-    [devices, mapControllerRef],
+    [mapControllerRef],
+  );
+
+  // ─── Per-device colour change ─────────────────────────────────────────────────
+  const changeDeviceColor = useCallback(
+    (deviceId: number, color: string) => {
+      setDevices((prev) => {
+        const updated = prev.map((d) => (d.id === deviceId ? { ...d, trackColor: color } : d));
+        devicesRef.current = updated;
+        trackerRef.current?.updateDevices(updated);
+        const map = mapControllerRef.current?.getMap?.();
+        if (map && trackerRef.current) {
+          updateSillagesLayers(map, updated, (id) =>
+            trackerRef.current?.getTrack(id) ?? [],
+          );
+        }
+        return updated;
+      });
+    },
+    [mapControllerRef],
   );
 
   // ─── Clear device track ──────────────────────────────────────────────────────
   const clearTrack = useCallback(
     (deviceId: number) => {
-      // Re-start the tracker manager's ring buffer for this device by
-      // updating its max to 0 momentarily then back
-      // (simplest: update the devices list to force a map refresh)
+      // Clear the internal ring-buffer in TrackerManager
+      trackerRef.current?.clearTrack(deviceId);
+      // Refresh the map sources (empty track = no line drawn)
       const map = mapControllerRef.current?.getMap?.();
-      if (map && trackerRef.current) {
-        // Overwrite the GeoJSON source with an empty track for this device
+      if (map) {
         updateSillagesLayers(
           map,
-          devices,
+          devicesRef.current,
           (id) => (id === deviceId ? [] : (trackerRef.current?.getTrack(id) ?? [])),
         );
       }
-      addLog(`⌫ Track cleared for device ${devices.find((d) => d.id === deviceId)?.name ?? deviceId}.`, "info");
+      addLog(
+        `⌫ Track cleared for device ${
+          devicesRef.current.find((d) => d.id === deviceId)?.name ?? deviceId
+        }.`,
+        "info",
+      );
     },
-    [devices, mapControllerRef, addLog],
+    [mapControllerRef, addLog],
   );
 
   // ─── Centre map on device ─────────────────────────────────────────────────────
@@ -425,17 +452,20 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
   // ─── Show all / hide all ─────────────────────────────────────────────────────
   const setAllVisible = useCallback(
     (visible: boolean) => {
-      const updated = devices.map((d) => ({ ...d, visible }));
-      setDevices(updated);
-      trackerRef.current?.updateDevices(updated);
-      const map = mapControllerRef.current?.getMap?.();
-      if (map && trackerRef.current) {
-        updateSillagesLayers(map, updated, (id) =>
-          trackerRef.current?.getTrack(id) ?? [],
-        );
-      }
+      setDevices((prev) => {
+        const updated = prev.map((d) => ({ ...d, visible }));
+        devicesRef.current = updated;
+        trackerRef.current?.updateDevices(updated);
+        const map = mapControllerRef.current?.getMap?.();
+        if (map && trackerRef.current) {
+          updateSillagesLayers(map, updated, (id) =>
+            trackerRef.current?.getTrack(id) ?? [],
+          );
+        }
+        return updated;
+      });
     },
-    [devices, mapControllerRef],
+    [mapControllerRef],
   );
 
   // ─── Settings save ───────────────────────────────────────────────────────────
@@ -510,7 +540,7 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
 
   return (
     <div
-      className="fixed right-2 top-12 z-40 flex h-[calc(100vh-56px)] w-[380px] flex-col rounded-lg border bg-background shadow-xl"
+      className="fixed left-2 top-12 z-40 flex h-[calc(100vh-56px)] w-[380px] flex-col rounded-lg border bg-background shadow-xl"
       role="complementary"
       aria-label="Sillages panel"
     >
@@ -663,6 +693,7 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
             onHideAll={() => setAllVisible(false)}
             onClearTrack={clearTrack}
             onCentre={centreOnDevice}
+            onColorChange={changeDeviceColor}
           />
         )}
       </div>
@@ -707,6 +738,7 @@ interface DeviceListViewProps {
   onHideAll: () => void;
   onClearTrack: (id: number) => void;
   onCentre: (id: number) => void;
+  onColorChange: (id: number, color: string) => void;
 }
 
 function DeviceListView({
@@ -717,6 +749,7 @@ function DeviceListView({
   onHideAll,
   onClearTrack,
   onCentre,
+  onColorChange,
 }: DeviceListViewProps) {
   if (!connected || devices.length === 0) {
     return (
@@ -767,6 +800,7 @@ function DeviceListView({
               onToggleVisible={onToggleVisible}
               onClearTrack={onClearTrack}
               onCentre={onCentre}
+              onColorChange={onColorChange}
             />
           ))}
         </div>
@@ -782,6 +816,7 @@ interface DeviceRowProps {
   onToggleVisible: (id: number, visible: boolean) => void;
   onClearTrack: (id: number) => void;
   onCentre: (id: number) => void;
+  onColorChange: (id: number, color: string) => void;
 }
 
 function DeviceRow({
@@ -789,6 +824,7 @@ function DeviceRow({
   onToggleVisible,
   onClearTrack,
   onCentre,
+  onColorChange,
 }: DeviceRowProps) {
   const dotColor = STATUS_DOT[device.status] ?? STATUS_DOT.unknown;
 
@@ -819,12 +855,22 @@ function DeviceRow({
         )}
       </button>
 
-      {/* Track colour swatch */}
-      <span
-        className="size-2.5 shrink-0 rounded-sm border border-white/30"
-        style={{ backgroundColor: device.trackColor }}
-        title="Track colour"
-      />
+      {/* Track colour swatch — click to open native color picker */}
+      <label
+        className="shrink-0 cursor-pointer"
+        title="Change track colour"
+      >
+        <span
+          className="block size-3 rounded-sm border border-white/30"
+          style={{ backgroundColor: device.trackColor }}
+        />
+        <input
+          type="color"
+          className="sr-only"
+          value={device.trackColor}
+          onChange={(e) => onColorChange(device.id, e.target.value)}
+        />
+      </label>
 
       {/* Name */}
       <span

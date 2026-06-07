@@ -336,6 +336,11 @@ export class TrackerManager {
     return this._tracks.get(deviceId) ?? [];
   }
 
+  /** Clear the track ring buffer for a specific device. */
+  clearTrack(deviceId: number): void {
+    this._tracks.delete(deviceId);
+  }
+
   // ─── WebSocket ──────────────────────────────────────────────────────────────
 
   private _openWebSocket(): void {
