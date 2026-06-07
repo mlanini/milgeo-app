@@ -180,6 +180,7 @@ export function TopToolbar({
   const loadProject = useAppStore((s) => s.loadProject);
   const setAnalysisOpen = useAppStore((s) => s.setAnalysisOpen);
   const setSillagesOpen = useAppStore((s) => s.setSillagesOpen);
+  const analysisOpen    = useAppStore((s) => s.ui.analysisOpen);
   const projectName = useAppStore((s) => s.projectName);
   const projectPath = useAppStore((s) => s.projectPath);
   const recentProjects = useAppStore((s) => s.recentProjects);
@@ -668,8 +669,9 @@ export function TopToolbar({
         className={toolbarButtonClass}
         variant="ghost"
         size={toolbarButtonSize}
-        onClick={() => setAnalysisOpen(true)}
+        onClick={() => setAnalysisOpen(!analysisOpen)}
         aria-label="Analysis"
+        aria-pressed={analysisOpen}
       >
         <Activity className={toolbarIconClassName} />
         {renderToolbarLabel("Analysis")}

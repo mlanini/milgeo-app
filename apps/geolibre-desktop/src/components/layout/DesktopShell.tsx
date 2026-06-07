@@ -115,6 +115,7 @@ export function DesktopShell({
   const [dropError, setDropError] = useState<string | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [milSymbolOpen, setMilSymbolOpen] = useState(false);
+  const analysisOpen = useAppStore((s) => s.ui.analysisOpen);
   const [privacyAccepted, setPrivacyAccepted] = useState(() => hasAcceptedPrivacy());
   const diagnostics = useDiagnosticsSnapshot();
   const externalPluginsReady = useExternalPluginsReady();
@@ -507,6 +508,11 @@ export function DesktopShell({
             <MilLayerPanel mapControllerRef={mapControllerRef} />
           </aside>
         ) : null}
+        {analysisOpen && layoutOptions.panelsVisible ? (
+          <aside className="flex w-[400px] shrink-0 flex-col overflow-hidden border-l bg-card">
+            <AnalysisPanel mapControllerRef={mapControllerRef} />
+          </aside>
+        ) : null}
         {layoutOptions.panelsVisible ? (
           <StylePanel onResizeStart={startStylePanelResize} />
         ) : null}
@@ -534,7 +540,6 @@ export function DesktopShell({
       <Suspense fallback={null}>
         <ProcessingDialog mapControllerRef={mapControllerRef} />
       </Suspense>
-      <AnalysisPanel mapControllerRef={mapControllerRef} />
       <SillagesPanel mapControllerRef={mapControllerRef} />
       <div
         ref={verticalResizeGuideRef}

@@ -802,8 +802,6 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
 
   // ─── Render ───────────────────────────────────────────────────────────────────
 
-  if (!open) return null;
-
   const isDrawMode = runState === "drawing";
   const isLoading = runState === "loading";
   const hasDraw = drawnCoords.length > 0;
@@ -815,7 +813,7 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
 
   return (
     <div
-      className="fixed right-2 top-12 z-40 flex h-[calc(100vh-56px)] w-[400px] flex-col rounded-lg border bg-background shadow-xl"
+      className="flex flex-col h-full"
       role="complementary"
       aria-label="Analysis panel"
     >
