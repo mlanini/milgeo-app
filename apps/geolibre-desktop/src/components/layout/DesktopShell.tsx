@@ -116,6 +116,7 @@ export function DesktopShell({
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [milSymbolOpen, setMilSymbolOpen] = useState(false);
   const analysisOpen = useAppStore((s) => s.ui.analysisOpen);
+  const sillagesOpen = useAppStore((s) => s.ui.sillagesOpen);
   const [privacyAccepted, setPrivacyAccepted] = useState(() => hasAcceptedPrivacy());
   const diagnostics = useDiagnosticsSnapshot();
   const externalPluginsReady = useExternalPluginsReady();
@@ -513,6 +514,11 @@ export function DesktopShell({
             <AnalysisPanel mapControllerRef={mapControllerRef} />
           </aside>
         ) : null}
+        {sillagesOpen && layoutOptions.panelsVisible ? (
+          <aside className="flex w-[380px] shrink-0 flex-col overflow-hidden border-l bg-card">
+            <SillagesPanel mapControllerRef={mapControllerRef} />
+          </aside>
+        ) : null}
         {layoutOptions.panelsVisible ? (
           <StylePanel onResizeStart={startStylePanelResize} />
         ) : null}
@@ -540,7 +546,6 @@ export function DesktopShell({
       <Suspense fallback={null}>
         <ProcessingDialog mapControllerRef={mapControllerRef} />
       </Suspense>
-      <SillagesPanel mapControllerRef={mapControllerRef} />
       <div
         ref={verticalResizeGuideRef}
         className="pointer-events-none fixed bottom-7 top-11 z-50 hidden w-px bg-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.25)]"

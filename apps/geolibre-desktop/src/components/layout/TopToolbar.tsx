@@ -181,6 +181,7 @@ export function TopToolbar({
   const setAnalysisOpen = useAppStore((s) => s.setAnalysisOpen);
   const setSillagesOpen = useAppStore((s) => s.setSillagesOpen);
   const analysisOpen    = useAppStore((s) => s.ui.analysisOpen);
+  const sillagesOpen    = useAppStore((s) => s.ui.sillagesOpen);
   const projectName = useAppStore((s) => s.projectName);
   const projectPath = useAppStore((s) => s.projectPath);
   const recentProjects = useAppStore((s) => s.recentProjects);
@@ -677,11 +678,12 @@ export function TopToolbar({
         {renderToolbarLabel("Analysis")}
       </Button>
       <Button
-        className={toolbarButtonClass}
+        className={cn(toolbarButtonClass, sillagesOpen && "bg-primary/10 text-primary")}
         variant="ghost"
         size={toolbarButtonSize}
-        onClick={() => setSillagesOpen(true)}
+        onClick={() => setSillagesOpen(!sillagesOpen)}
         aria-label="Sillages"
+        aria-pressed={sillagesOpen}
       >
         <Radio className={toolbarIconClassName} />
         {renderToolbarLabel("Sillages")}

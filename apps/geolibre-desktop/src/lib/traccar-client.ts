@@ -104,17 +104,38 @@ export class TraccarClient {
   /**
    * POST /api/session — returns the logged-in user object.
    * Stores the session cookie in the browser's cookie jar (credentials:'include').
+   *
+   * We bypass _fetch here intentionally:
+   * - URLSearchParams body → browser auto-sets Content-Type: application/x-www-form-urlencoded;charset=UTF-8
+   * - No custom headers added → the POST stays a "simple" CORS request (no preflight)
+   *   which works even when Traccar's Access-Control-Allow-Headers is minimal.
    */
   async login(): Promise<Record<string, unknown>> {
     const body = new URLSearchParams();
     body.set("email", this.username);
     body.set("password", this._password);
 
-    const resp = await this._fetch("/api/session", {
-      method: "POST",
-      body,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    let resp: Response;
+    try {
+      resp = await fetch(`${this.serverUrl}/api/session`, {
+        method: "POST",
+        body,
+        credentials: "include",
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      const msg =
+        err instanceof Error
+          ? err.name === "AbortError"
+            ? "Request timeout"
+            : err.message
+          : String(err);
+      throw new TraccarNetworkError(`Network error: ${msg}`);
+    }
+    clearTimeout(timer);
 
     if (resp.status === 401 || resp.status === 403) {
       throw new TraccarAuthError(
@@ -225,11 +246,16 @@ export class TraccarClient {
     const url = this.serverUrl + path;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    // Destructure to merge headers without the spread overwriting the defaults.
+    const { headers: extraHeaders, ...restInit } = init;
     try {
       return await fetch(url, {
         credentials: "include",
-        headers: { Accept: "application/json" },
-        ...init,
+        ...restInit,
+        headers: {
+          Accept: "application/json",
+          ...(extraHeaders as Record<string, string> | undefined),
+        },
         signal: controller.signal,
       });
     } catch (err) {

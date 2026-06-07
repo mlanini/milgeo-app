@@ -528,8 +528,6 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
     setExportTo(now.toISOString().slice(0, 16));
   }, []);
 
-  if (!open) return null;
-
   // ─── Render ───────────────────────────────────────────────────────────────────
 
   const sortedDevices = [...devices].sort((a, b) => {
@@ -540,7 +538,7 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
 
   return (
     <div
-      className="fixed left-2 top-12 z-40 flex h-[calc(100vh-56px)] w-[380px] flex-col rounded-lg border bg-background shadow-xl"
+      className="flex flex-col h-full"
       role="complementary"
       aria-label="Sillages panel"
     >
