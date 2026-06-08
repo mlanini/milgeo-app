@@ -1133,6 +1133,7 @@ function DemPickerOverlay({
                 hosted web version — use <strong>Online API</strong> instead.
               </div>
             )}
+            {selected === "local" && (
               <div className="mt-1.5 flex flex-col gap-1.5">
                 <input
                   type="file"
