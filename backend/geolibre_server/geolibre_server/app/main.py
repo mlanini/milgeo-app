@@ -36,6 +36,9 @@ _CORS_ORIGINS = [
     r"https://[a-zA-Z0-9-]+\.onrender\.com",
     # intelligeo.net deployments (Traccar + any co-hosted frontend).
     r"https://[a-zA-Z0-9-]+\.intelligeo\.net",
+    # milgeo.app custom domain (dev / staging / production subdomains).
+    r"https://[a-zA-Z0-9-]+\.milgeo\.app",
+    r"https://milgeo\.app",
 ]
 # Optional extra origin injected via environment variable (e.g. custom domain).
 _extra_origin = os.environ.get("GEOLIBRE_CORS_ORIGIN", "").strip()

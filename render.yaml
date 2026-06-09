@@ -25,7 +25,7 @@ services:
       #   https://milgeo-app.onrender.com
       # or use a wildcard origin for the whole onrender.com subdomain:
       - key: GEOLIBRE_CORS_ORIGIN
-        value: "https://milgeo-app.onrender.com"
+        value: "https://dev.milgeo.app"
       # Comma-separated list of Traccar server base URLs allowed as proxy targets.
       # The default list already includes https://traccar.intelligeo.net.
       # Extend here for additional servers, e.g.:

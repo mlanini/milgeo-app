@@ -244,7 +244,7 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
       "text-pitch-alignment":    "viewport",
       "text-allow-overlap":      false,
       "text-ignore-placement":   false,
-      "text-font":               ["Noto Sans Regular", "Arial Unicode MS Regular"],
+      "text-font":               ["Noto Sans Regular"],
     },
     paint: {
       "text-color":      "#111111",
@@ -286,47 +286,68 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
   /** Already-tracked mil-graphic source ids. */
   const graphicSourcesRef = useRef<Set<string>>(new Set());
 
+  /**
+   * Whether styleimagemissing / style.load handlers have been attached.
+   * Tracked via ref so the source-sync effect can register them on first run
+   * without depending on additional state (map is initialised asynchronously;
+   * a separate useEffect([]) would silently skip registration if the map is
+   * not ready at mount time, which causes ALL symbols to fail in production).
+   */
+  const eventsRegisteredRef = useRef(false);
+
+  /**
+   * Stable handler refs — stored so the unmount effect can call map.off()
+   * with the exact same function references used in map.on().
+   */
+  const onImageMissingRef = useRef<((e: { id: string }) => void) | null>(null);
+  const onStyleLoadRef    = useRef<(() => void) | null>(null);
+
   // ── One-time map event wiring ─────────────────────────────────────────
   //
-  // styleimagemissing is registered once; it closes over symbolCacheRef so it
-  // always sees the latest cache entries without needing re-registration.
-  useEffect(() => {
-    const map = mapControllerRef.current?.getMap();
-    if (!map) return;
-
-    // Lazy rasterize: MapLibre calls this when it first needs a sprite image.
-    // The handler is async: tries the milsymbol server first, then falls back
-    // to client-side rendering so production Tauri builds always work.
-    const onImageMissing = async (e: { id: string }) => {
-      if (!e.id.startsWith(IMG_PREFIX)) return;
-      if (map.hasImage(e.id)) return;
-      const entry = symbolCacheRef.current.get(e.id);
-      if (!entry) return;
-      const data = await buildMilSymbolImageData(entry.sidc, entry.options, PIXEL_RATIO);
-      if (data && !map.hasImage(e.id)) map.addImage(e.id, data, { pixelRatio: PIXEL_RATIO });
-    };
-
-    // After a basemap style reload all sources/layers are cleared — recreate.
-    const onStyleLoad = () => {
-      if (!map.getSource(SYM_SOURCE_ID)) {
-        addSymbolLayers(map, lastFcRef.current);
-      }
-    };
-
-    map.on("styleimagemissing", onImageMissing);
-    map.on("style.load", onStyleLoad);
-
-    return () => {
-      map.off("styleimagemissing", onImageMissing);
-      map.off("style.load", onStyleLoad);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // IMPORTANT: do NOT use a separate useEffect([]) for this.
+  // MilSymbolRenderer is rendered before the map is fully initialised in
+  // production (MapController is set up asynchronously). A stand-alone
+  // useEffect([]) would call mapControllerRef.current?.getMap() while it is
+  // still null, skip registration, and never re-run — causing every
+  // styleimagemissing event to be missed and all ms-* images to fail.
+  //
+  // Instead, event registration is inlined into the source-sync effect below
+  // (guarded by eventsRegisteredRef) so it happens the first time the map is
+  // actually available.
 
   // ── Sync mil-symbol items → GeoJSON source ───────────────────────────
   useEffect(() => {
     const map = mapControllerRef.current?.getMap();
     if (!map) return;
+
+    // ── Register map events once ──────────────────────────────────────────
+    if (!eventsRegisteredRef.current) {
+      eventsRegisteredRef.current = true;
+
+      // Lazy rasterize: MapLibre calls this when it first needs a sprite image.
+      const onImageMissing = async (e: { id: string }) => {
+        if (!e.id.startsWith(IMG_PREFIX)) return;
+        if (map.hasImage(e.id)) return;
+        const entry = symbolCacheRef.current.get(e.id);
+        if (!entry) return;
+        const data = await buildMilSymbolImageData(entry.sidc, entry.options, PIXEL_RATIO);
+        if (data && !map.hasImage(e.id)) map.addImage(e.id, data, { pixelRatio: PIXEL_RATIO });
+      };
+
+      // After a basemap style reload all sources/layers are cleared — recreate.
+      const onStyleLoad = () => {
+        if (!map.getSource(SYM_SOURCE_ID)) {
+          addSymbolLayers(map, lastFcRef.current);
+        }
+      };
+
+      onImageMissingRef.current = onImageMissing;
+      onStyleLoadRef.current    = onStyleLoad;
+
+      map.on("styleimagemissing", onImageMissing);
+      map.on("style.load", onStyleLoad);
+      // Cleanup is handled by the unmount effect which holds the handler refs.
+    }
 
     const features: Feature<Point>[] = [];
 
@@ -457,6 +478,8 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
     return () => {
       const map = mapControllerRef.current?.getMap();
       if (!map) return;
+      if (onImageMissingRef.current) map.off("styleimagemissing", onImageMissingRef.current);
+      if (onStyleLoadRef.current)    map.off("style.load",        onStyleLoadRef.current);
       if (map.getLayer(SYM_LABEL_ID))   map.removeLayer(SYM_LABEL_ID);
       if (map.getLayer(SYM_LAYER_ID))   map.removeLayer(SYM_LAYER_ID);
       if (map.getSource(SYM_SOURCE_ID)) map.removeSource(SYM_SOURCE_ID);
