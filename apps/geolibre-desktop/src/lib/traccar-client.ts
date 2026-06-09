@@ -284,9 +284,15 @@ export class TraccarClient {
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     // Destructure to merge headers without the spread overwriting the defaults.
     const { headers: extraHeaders, ...restInit } = init;
+    // In proxy mode authentication is via Authorization: Basic — cookies are
+    // irrelevant and "include" would trigger a CORS preflight that requires
+    // Access-Control-Allow-Credentials: true from the backend proxy.
+    // In direct mode "include" is needed so the browser forwards the Traccar
+    // JSESSIONID session cookie on subsequent requests after login.
+    const credentials: RequestCredentials = this._proxyUrl ? "omit" : "include";
     try {
       return await fetch(url, {
-        credentials: "include",
+        credentials,
         ...restInit,
         headers: {
           Accept: "application/json",

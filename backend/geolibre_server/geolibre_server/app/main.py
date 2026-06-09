@@ -49,7 +49,13 @@ if _extra_origin:
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex="^(" + "|".join(_CORS_ORIGINS) + ")$",
-    allow_credentials=False,
+    # allow_credentials=True is required for direct-mode Traccar login:
+    # the browser stores a JSESSIONID cookie and resends it on subsequent
+    # cross-origin requests. Without this header the browser silently drops
+    # the Set-Cookie response and every call after login fails with 401.
+    # This is safe here because allow_origin_regex uses explicit patterns
+    # (not a wildcard), which is the required precondition for credentials.
+    allow_credentials=True,
     # PUT and DELETE are required by the Traccar REST API
     # (e.g. update device, delete positions) when routed through this proxy.
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
