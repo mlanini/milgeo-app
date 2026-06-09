@@ -34,6 +34,8 @@ _CORS_ORIGINS = [
     r"http://tauri\.localhost",
     # Any *.onrender.com subdomain (covers both the frontend and preview deploys).
     r"https://[a-zA-Z0-9-]+\.onrender\.com",
+    # intelligeo.net deployments (Traccar + any co-hosted frontend).
+    r"https://[a-zA-Z0-9-]+\.intelligeo\.net",
 ]
 # Optional extra origin injected via environment variable (e.g. custom domain).
 _extra_origin = os.environ.get("GEOLIBRE_CORS_ORIGIN", "").strip()
@@ -45,7 +47,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origin_regex="^(" + "|".join(_CORS_ORIGINS) + ")$",
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    # PUT and DELETE are required by the Traccar REST API
+    # (e.g. update device, delete positions) when routed through this proxy.
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 app.include_router(whitebox_router)
@@ -95,6 +99,34 @@ async def traccar_proxy(request: Request, path: str) -> Response:
             status_code=400,
             detail="Missing or invalid X-Traccar-Target header",
         )
+
+    # Security: only forward to explicitly trusted Traccar origins.
+    # Add more entries via the TRACCAR_ALLOWED_ORIGINS env var (comma-separated).
+    _ALLOWED_TRACCAR_ORIGINS = {
+        "https://traccar.intelligeo.net",
+    }
+    _extra_traccar = os.environ.get("TRACCAR_ALLOWED_ORIGINS", "").strip()
+    if _extra_traccar:
+        _ALLOWED_TRACCAR_ORIGINS.update(
+            o.strip().rstrip("/") for o in _extra_traccar.split(",") if o.strip()
+        )
+    from urllib.parse import urlparse as _urlparse
+    _parsed = _urlparse(target)
+    _origin  = f"{_parsed.scheme}://{_parsed.netloc}"
+
+    if _origin not in _ALLOWED_TRACCAR_ORIGINS:
+        # Still allow any origin when running in dev/local mode
+        # (i.e. when the request comes from localhost).
+        _referer = request.headers.get("origin", request.headers.get("referer", ""))
+        _is_local = any(
+            _referer.startswith(p)
+            for p in ("http://localhost", "http://127.0.0.1", "tauri://")
+        )
+        if not _is_local:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Traccar target not in allowed list: {_origin}",
+            )
 
     forward_url = f"{target}/{path.lstrip('/')}"
     forward_headers = {

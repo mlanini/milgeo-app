@@ -17,7 +17,11 @@
  *   GET /health
  *   GET /symbol?sidc=<20-char>[&size=<px>][&uniqueDesignation=<text>]
  *                             [&higherFormation=<text>][&outlineColor=<css>]
- *                             [&outlineWidth=<n>][&standard=APP6|2525]
+ *                             [&outlineWidth=<n>][&quantity=<text>]
+ *                             [&staffComments=<text>][&additionalInformation=<text>]
+ *                             [&evaluationRating=<text>][&combatEffectiveness=<text>]
+ *                             [&dtg=<text>][&type=<text>][&speed=<text>]
+ *                             [&altitudeDepth=<text>][&standard=APP6|2525]
  *
  * The Vite dev-server already provides the same endpoints via the built-in
  * milsymbolPlugin() middleware in vite.config.ts. Use this script only when
@@ -84,6 +88,28 @@ function parseIntParam(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Post-process a milsymbol SVG — mirrors KADAS milsymbol_engine.py.
+ *  1. stroke-linejoin="round" → removes miter spikes on rectangular frames.
+ *  2. Strip the "?" glyph rendered for unknown entity/modifier codes.
+ *  3. Strip corner filler squares drawn on certain symbol sets.
+ */
+function postProcessMilsymbolSvg(svg) {
+  const firstClose = svg.indexOf(">");
+  if (firstClose !== -1 && !svg.slice(0, firstClose).includes("stroke-linejoin")) {
+    svg = svg.slice(0, firstClose) + ' stroke-linejoin="round"' + svg.slice(firstClose);
+  }
+  svg = svg.replace(
+    /<path\s[^>]*?d="m\s*94\.8206\s*,\s*78\.1372[^"]*"[^>]*>(?:<\/path>)?/g,
+    "",
+  );
+  svg = svg.replace(
+    /<path\s(?:[^>]*?\s)?fill="black"(?:[^>]*?\s)?stroke="none"[^>]*d="[^"]*z[^"]*z[^"]*z[^"]*z[^"]*"[^>]*>(?:<\/path>)?/g,
+    "",
+  );
+  return svg;
+}
+
 // ─── Request handler ─────────────────────────────────────────────────────────
 
 function handleRequest(req, res) {
@@ -120,11 +146,20 @@ function handleRequest(req, res) {
       ms.setStandard(reqStandard);
     }
 
-    const size              = parseIntParam(url.searchParams.get("size"), 40);
-    const uniqueDesignation = url.searchParams.get("uniqueDesignation") ?? undefined;
-    const higherFormation   = url.searchParams.get("higherFormation")   ?? undefined;
-    const outlineColor      = url.searchParams.get("outlineColor")      ?? "white";
-    const outlineWidth      = parseIntParam(url.searchParams.get("outlineWidth"), 6);
+    const size                  = parseIntParam(url.searchParams.get("size"), 40);
+    const uniqueDesignation     = url.searchParams.get("uniqueDesignation")     ?? undefined;
+    const higherFormation       = url.searchParams.get("higherFormation")       ?? undefined;
+    const outlineColor          = url.searchParams.get("outlineColor")          ?? "white";
+    const outlineWidth          = parseIntParam(url.searchParams.get("outlineWidth"), 6);
+    const quantity              = url.searchParams.get("quantity")              ?? undefined;
+    const staffComments         = url.searchParams.get("staffComments")         ?? undefined;
+    const additionalInformation = url.searchParams.get("additionalInformation") ?? undefined;
+    const evaluationRating      = url.searchParams.get("evaluationRating")      ?? undefined;
+    const combatEffectiveness   = url.searchParams.get("combatEffectiveness")   ?? undefined;
+    const dtg                   = url.searchParams.get("dtg")                   ?? undefined;
+    const type                  = url.searchParams.get("type")                  ?? undefined;
+    const speed                 = url.searchParams.get("speed")                 ?? undefined;
+    const altitudeDepth         = url.searchParams.get("altitudeDepth")         ?? undefined;
 
     try {
       const sym = new ms.Symbol(sidc, {
@@ -133,6 +168,15 @@ function handleRequest(req, res) {
         higherFormation,
         outlineColor,
         outlineWidth,
+        quantity,
+        staffComments,
+        additionalInformation,
+        evaluationRating,
+        combatEffectiveness,
+        dtg,
+        type,
+        speed,
+        altitudeDepth,
       });
 
       if (!sym.isValid()) {
@@ -148,7 +192,7 @@ function handleRequest(req, res) {
         });
         res.end();
       } else {
-        sendSvg(res, sym.asSVG());
+        sendSvg(res, postProcessMilsymbolSvg(sym.asSVG()));
       }
     } catch (err) {
       sendJson(res, 500, { error: err?.message ?? "Symbol render error" });

@@ -13,6 +13,9 @@ export {};
  *
  *   GET /symbol?sidc=<20-char SIDC>[&size=<px>][&uniqueDesignation=<text>]
  *              [&higherFormation=<text>][&outlineColor=<css>][&outlineWidth=<n>]
+ *              [&quantity=<text>][&staffComments=<text>][&additionalInformation=<text>]
+ *              [&evaluationRating=<text>][&combatEffectiveness=<text>]
+ *              [&dtg=<text>][&type=<text>][&speed=<text>][&altitudeDepth=<text>]
  *              [&standard=APP6|2525]
  *       Returns: SVG image (image/svg+xml) with CORS and long-term cache headers.
  *
@@ -69,6 +72,28 @@ function parseIntParam(value: string | null, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Post-process a milsymbol SVG — mirrors KADAS milsymbol_engine.py.
+ *  1. stroke-linejoin="round" → removes miter spikes on rectangular frames.
+ *  2. Strip the "?" glyph rendered for unknown entity/modifier codes.
+ *  3. Strip corner filler squares drawn on certain symbol sets.
+ */
+function postProcessMilsymbolSvg(svg: string): string {
+  const firstClose = svg.indexOf(">");
+  if (firstClose !== -1 && !svg.slice(0, firstClose).includes("stroke-linejoin")) {
+    svg = svg.slice(0, firstClose) + ' stroke-linejoin="round"' + svg.slice(firstClose);
+  }
+  svg = svg.replace(
+    /<path\s[^>]*?d="m\s*94\.8206\s*,\s*78\.1372[^"]*"[^>]*>(?:<\/path>)?/g,
+    "",
+  );
+  svg = svg.replace(
+    /<path\s(?:[^>]*?\s)?fill="black"(?:[^>]*?\s)?stroke="none"[^>]*d="[^"]*z[^"]*z[^"]*z[^"]*z[^"]*"[^>]*>(?:<\/path>)?/g,
+    "",
+  );
+  return svg;
+}
+
 // ─── Request handler ───────────────────────────────────────────────────────
 
 function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -107,11 +132,20 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
       ms.setStandard(reqStandard);
     }
 
-    const size               = parseIntParam(url.searchParams.get("size"), 40);
-    const uniqueDesignation  = url.searchParams.get("uniqueDesignation") ?? undefined;
-    const higherFormation    = url.searchParams.get("higherFormation")   ?? undefined;
-    const outlineColor       = url.searchParams.get("outlineColor")      ?? "white";
-    const outlineWidth       = parseIntParam(url.searchParams.get("outlineWidth"), 6);
+    const size                  = parseIntParam(url.searchParams.get("size"), 40);
+    const uniqueDesignation     = url.searchParams.get("uniqueDesignation")     ?? undefined;
+    const higherFormation       = url.searchParams.get("higherFormation")       ?? undefined;
+    const outlineColor          = url.searchParams.get("outlineColor")          ?? "white";
+    const outlineWidth          = parseIntParam(url.searchParams.get("outlineWidth"), 6);
+    const quantity              = url.searchParams.get("quantity")              ?? undefined;
+    const staffComments         = url.searchParams.get("staffComments")         ?? undefined;
+    const additionalInformation = url.searchParams.get("additionalInformation") ?? undefined;
+    const evaluationRating      = url.searchParams.get("evaluationRating")      ?? undefined;
+    const combatEffectiveness   = url.searchParams.get("combatEffectiveness")   ?? undefined;
+    const dtg                   = url.searchParams.get("dtg")                   ?? undefined;
+    const type                  = url.searchParams.get("type")                  ?? undefined;
+    const speed                 = url.searchParams.get("speed")                 ?? undefined;
+    const altitudeDepth         = url.searchParams.get("altitudeDepth")         ?? undefined;
 
     try {
       const sym = new ms.Symbol(sidc, {
@@ -120,6 +154,15 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
         higherFormation,
         outlineColor,
         outlineWidth,
+        quantity,
+        staffComments,
+        additionalInformation,
+        evaluationRating,
+        combatEffectiveness,
+        dtg,
+        type,
+        speed,
+        altitudeDepth,
       });
 
       if (!sym.isValid()) {
@@ -127,7 +170,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
         return;
       }
 
-      const svg = sym.asSVG();
+      const svg = postProcessMilsymbolSvg(sym.asSVG());
       if (req.method === "HEAD") {
         res.writeHead(200, {
           "content-type":                "image/svg+xml",

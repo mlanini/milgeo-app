@@ -64,7 +64,8 @@ function SymPreview({ sidc, size = LIST_ICON }: { sidc: string; size?: number })
   const svg = useMemo(() => {
     try {
       const sym = new MilSymbol(sidc, { size });
-      return sym.isValid() ? sym.asSVG() : null;
+      const s = sym.asSVG();
+      return s && s.length > 10 ? s : null;
     } catch { return null; }
   }, [sidc, size]);
 

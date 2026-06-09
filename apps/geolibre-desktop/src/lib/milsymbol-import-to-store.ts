@@ -14,19 +14,21 @@
  */
 
 import type { MilLayer, MilSymbolItem, MilGraphicItem, OrbatUnit, MilGeometryType } from "@geolibre/core";
-import ms from "milsymbol";
-
-const MilSymbol = ms.Symbol;
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
+/**
+ * Structural SIDC validation — does NOT call milsymbol.isValid().
+ *
+ * milsymbol 3.x returns falsy for many valid APP-6D SIDCs (partially-specified
+ * entity codes, high echelon marks, frame-only generics, …).  Using isValid()
+ * as an import gate silently drops large portions of an ORBAT.  Instead we
+ * accept anything that looks structurally plausible:
+ *   • 20-digit numeric → APP-6D
+ *   • 15-char alphanumeric → MIL-STD-2525C
+ */
 function isValidSIDC(sidc: string): boolean {
-  try {
-    const r = new MilSymbol(sidc).isValid();
-    return r === true || (typeof r === "object" && r !== null);
-  } catch {
-    return false;
-  }
+  return /^\d{20}$/.test(sidc) || /^[A-Z0-9]{15}$/i.test(sidc);
 }
 
 function str(v: unknown): string | undefined {
@@ -147,6 +149,7 @@ export function parseOrbatJsonForStore(
     name: groupName,
     visible: true,
     opacity: 1,
+    showLabels: false,
     symbols,
     graphics: [],
   };
@@ -236,6 +239,7 @@ export function parseMilsymbJsonForStore(
       name: layerName,
       visible: srcLayer.visible !== false,
       opacity: 1,
+      showLabels: false,
       symbols,
       graphics: [],
     });

@@ -29,13 +29,12 @@ function inferAffiliation(sidc: string): MilAffiliation {
   return "FRIENDLY";
 }
 
+/**
+ * Structural SIDC validation — does NOT call milsymbol.isValid().
+ * See milsymbol-import-to-store.ts for rationale.
+ */
 function isValidSIDC(sidc: string): boolean {
-  try {
-    const result = new MilSymbol(sidc).isValid();
-    return result === true || (typeof result === "object" && result !== null);
-  } catch {
-    return false;
-  }
+  return /^\d{20}$/.test(sidc) || /^[A-Z0-9]{15}$/i.test(sidc);
 }
 
 function strOrUndef(v: unknown): string | undefined {

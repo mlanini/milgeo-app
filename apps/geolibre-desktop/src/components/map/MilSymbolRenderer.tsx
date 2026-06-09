@@ -183,8 +183,8 @@ async function buildMilSymbolImageData(
   if (import.meta.env.DEV) {
     try {
       const params = new URLSearchParams({ sidc, size: String(opts.size ?? SYMBOL_SIZE) });
-      if (opts.uniqueDesignation) params.set("uniqueDesignation", opts.uniqueDesignation);
-      if (opts.higherFormation)   params.set("higherFormation",   opts.higherFormation);
+      if (opts.outlineColor)         params.set("outlineColor", String(opts.outlineColor));
+      if (opts.outlineWidth != null) params.set("outlineWidth", String(opts.outlineWidth));
 
       const res = await fetch(`${MILSYMBOL_SERVER_PATH}/symbol?${params.toString()}`);
       if (res.ok) {
@@ -338,11 +338,9 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       const opacity = parentLayer?.opacity ?? 1;
 
       const opts: SymbolOptions = {
-        size:              SYMBOL_SIZE,
-        uniqueDesignation: sym.uniqueDesignation,
-        higherFormation:   sym.higherFormation,
-        outlineColor:      "white",
-        outlineWidth:      6,
+        size:         SYMBOL_SIZE,
+        outlineColor: "white",
+        outlineWidth: 6,
       };
       const key = makeSymbolKey(sym.sidc, opts);
       symbolCacheRef.current.set(key, { sidc: sym.sidc, options: opts });

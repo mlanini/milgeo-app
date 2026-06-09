@@ -34,7 +34,7 @@ interface SillagesSettingsState {
 }
 
 export const DEFAULT_SILLAGES_SETTINGS: SillagesSettings = {
-  serverUrl: "",
+  serverUrl: "https://traccar.intelligeo.net",
   username: "",
   password: "",
   autoConnect: false,

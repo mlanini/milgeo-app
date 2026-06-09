@@ -23,7 +23,10 @@ const GPX_PROXY_PATH = "/__geolibre_gpx_proxy";
 const RASTER_PROXY_PATH = "/__geolibre_raster_proxy";
 /** Milsymbol local render server path (dev only — served by Vite middleware). */
 const MILSYMBOL_PATH = "/__milsymbol";
-const DUCKDB_WORKER_PATH_PART = "/@duckdb/duckdb-wasm/dist/";
+/** Traccar proxy path (dev only — Vite server rewrites to traccar.intelligeo.net). */
+const TRACCAR_DEV_PROXY_PATH = "/_traccar";
+/** Default Traccar server for intelligeo.net deployments. */
+const TRACCAR_INTELLIGEO_URL = "https://traccar.intelligeo.net";const DUCKDB_WORKER_PATH_PART = "/@duckdb/duckdb-wasm/dist/";
 const DUCKDB_WORKER_SOURCE_MAP_RE =
   /\n?\/\/# sourceMappingURL=duckdb-browser-(?:eh|mvp)\.worker\.js\.map\s*$/;
 const RADIX_OPTIMIZE_EXCLUDES = [
@@ -202,7 +205,47 @@ function isDuckDbWorkerRequest(pathname: string): boolean {
  *                                         [&higherFormation=<text>]
  *                                         [&outlineColor=<css>]
  *                                         [&outlineWidth=<n>]
+ *                                         [&quantity=<text>]
+ *                                         [&staffComments=<text>]
+ *                                         [&additionalInformation=<text>]
+ *                                         [&evaluationRating=<text>]
+ *                                         [&combatEffectiveness=<text>]
+ *                                         [&dtg=<text>]
+ *                                         [&type=<text>]
+ *                                         [&speed=<text>]
+ *                                         [&altitudeDepth=<text>]
  */
+
+/**
+ * Post-process a milsymbol SVG string — mirrors KADAS milsymbol_engine.py.
+ *
+ *  1. stroke-linejoin="round" on the root <svg> so rectangular (Friend) frames
+ *     don't show exaggerated miter spikes.
+ *  2. Strip the "?" unknown-icon glyph milsymbol renders when an entity/modifier
+ *     code is absent from its lookup tables.
+ *  3. Strip the four small black corner-filler squares milsymbol draws on
+ *     certain symbol sets (Activities, Installations, …).
+ */
+function postProcessMilsymbolSvg(svg: string): string {
+  // 1. Inject stroke-linejoin="round" before the closing > of the opening <svg tag.
+  const firstClose = svg.indexOf(">");
+  if (firstClose !== -1 && !svg.slice(0, firstClose).includes("stroke-linejoin")) {
+    svg = svg.slice(0, firstClose) + ' stroke-linejoin="round"' + svg.slice(firstClose);
+  }
+  // 2. Remove the "?" glyph (path d starting at m 94.8206,78.1372).
+  svg = svg.replace(
+    /<path\s[^>]*?d="m\s*94\.8206\s*,\s*78\.1372[^"]*"[^>]*>(?:<\/path>)?/g,
+    "",
+  );
+  // 3. Remove corner filler squares: <path> with fill="black", stroke="none",
+  //    whose d attribute contains exactly 4 'z'-closed sub-paths.
+  svg = svg.replace(
+    /<path\s(?:[^>]*?\s)?fill="black"(?:[^>]*?\s)?stroke="none"[^>]*d="[^"]*z[^"]*z[^"]*z[^"]*z[^"]*"[^>]*>(?:<\/path>)?/g,
+    "",
+  );
+  return svg;
+}
+
 function milsymbolPlugin(): Plugin {
   // Load milsymbol once via CJS require so it runs in the Vite/Node.js server
   // context without any ESM-interop issues.  The package ships a CJS build at
@@ -247,11 +290,21 @@ function milsymbolPlugin(): Plugin {
                 return;
               }
 
-              const size              = parseInt(url.searchParams.get("size") ?? "40", 10);
-              const uniqueDesignation = url.searchParams.get("uniqueDesignation") ?? undefined;
-              const higherFormation   = url.searchParams.get("higherFormation")   ?? undefined;
-              const outlineColor      = url.searchParams.get("outlineColor")      ?? "white";
-              const outlineWidth      = parseInt(url.searchParams.get("outlineWidth") ?? "6", 10);
+              const p = url.searchParams;
+              const size                 = parseInt(p.get("size") ?? "40", 10);
+              const uniqueDesignation    = p.get("uniqueDesignation")    ?? undefined;
+              const higherFormation      = p.get("higherFormation")      ?? undefined;
+              const outlineColor         = p.get("outlineColor")         ?? "white";
+              const outlineWidth         = parseInt(p.get("outlineWidth") ?? "6", 10);
+              const quantity             = p.get("quantity")             ?? undefined;
+              const staffComments        = p.get("staffComments")        ?? undefined;
+              const additionalInformation= p.get("additionalInformation")?? undefined;
+              const evaluationRating     = p.get("evaluationRating")     ?? undefined;
+              const combatEffectiveness  = p.get("combatEffectiveness")  ?? undefined;
+              const dtg                  = p.get("dtg")                  ?? undefined;
+              const type                 = p.get("type")                 ?? undefined;
+              const speed                = p.get("speed")                ?? undefined;
+              const altitudeDepth        = p.get("altitudeDepth")        ?? undefined;
 
               const sym = new ms.Symbol(sidc, {
                 size,
@@ -259,6 +312,15 @@ function milsymbolPlugin(): Plugin {
                 higherFormation,
                 outlineColor,
                 outlineWidth,
+                quantity,
+                staffComments,
+                additionalInformation,
+                evaluationRating,
+                combatEffectiveness,
+                dtg,
+                type,
+                speed,
+                altitudeDepth,
               });
 
               // Do NOT gate on sym.isValid() — milsymbol 3.x returns falsy for
@@ -266,7 +328,7 @@ function milsymbolPlugin(): Plugin {
               // Army/Corps/Army Group, and generic frame-only entities with
               // entity code 000000).  asSVG() is the authoritative render path:
               // if it produces a non-empty string the symbol can be displayed.
-              const svg = sym.asSVG();
+              const svg = postProcessMilsymbolSvg(sym.asSVG());
               if (!svg || svg.length < 10) {
                 res.statusCode = 422;
                 res.setHeader("content-type", "application/json");
@@ -398,6 +460,18 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Dev-only transparent proxy for Traccar intelligeo.net so the browser
+    // doesn't hit CORS on direct-mode calls during development.
+    // Requests to /_traccar/… are rewritten to https://traccar.intelligeo.net/…
+    // In production the backend proxy (traccar-proxy endpoint) is used instead.
+    proxy: {
+      [TRACCAR_DEV_PROXY_PATH]: {
+        target:       TRACCAR_INTELLIGEO_URL,
+        changeOrigin: true,
+        secure:       true,
+        rewrite:      (p) => p.replace(new RegExp(`^${TRACCAR_DEV_PROXY_PATH}`), ""),
+      },
+    },
   },
   worker: {
     format: "es",
