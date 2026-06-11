@@ -1,5 +1,3 @@
-import { DEFAULT_PROJECT_NAME } from "@geolibre/core";
-
 export type ShareVisibility = "public" | "unlisted" | "private";
 
 export interface ShareUploadResult {
@@ -24,7 +22,7 @@ export const DEFAULT_SHARE_BASE_URL = "https://share.geolibre.app";
 
 const UPLOAD_TIMEOUT_MS = 30_000;
 
-export const DEFAULT_PROJECT_TITLE = DEFAULT_PROJECT_NAME;
+export const DEFAULT_PROJECT_TITLE = "Untitled Project";
 
 export const MAX_PROJECT_TITLE_LENGTH = 100;
 
