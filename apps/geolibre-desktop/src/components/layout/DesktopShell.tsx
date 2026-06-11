@@ -60,6 +60,17 @@ const ProcessingDialog = lazy(() =>
     }),
 );
 
+const RasterToolsDialog = lazy(() =>
+  import("../processing/RasterToolsDialog")
+    .then((module) => ({ default: module.RasterToolsDialog }))
+    .catch((error) => {
+      console.error("Failed to load RasterToolsDialog", error);
+      const Fallback = (() =>
+        null) as unknown as typeof import("../processing/RasterToolsDialog").RasterToolsDialog;
+      return { default: Fallback };
+    }),
+);
+
 interface DesktopShellProps {
   layoutOptions: LayoutOptions;
   projectUrlLoadState?: ProjectUrlLoadState;
@@ -545,6 +556,9 @@ export function DesktopShell({
       )}
       <Suspense fallback={null}>
         <ProcessingDialog mapControllerRef={mapControllerRef} />
+      </Suspense>
+      <Suspense fallback={null}>
+        <RasterToolsDialog />
       </Suspense>
       <div
         ref={verticalResizeGuideRef}

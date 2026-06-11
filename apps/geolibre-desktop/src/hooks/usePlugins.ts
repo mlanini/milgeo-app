@@ -13,6 +13,7 @@ import {
   maplibreLidarPlugin,
   maplibreStreetViewPlugin,
   maplibreSwipePlugin,
+  maplibreTimeSliderPlugin,
   PluginManager,
 } from "@geolibre/plugins";
 import type { MapController } from "@geolibre/map";
@@ -45,6 +46,7 @@ manager.registerAll([
   maplibreLidarPlugin,
   maplibreStreetViewPlugin,
   maplibreSwipePlugin,
+  maplibreTimeSliderPlugin,
   maplibreComponentsPlugin,
 ]);
 

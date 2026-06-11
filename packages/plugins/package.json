@@ -37,6 +37,7 @@
     "maplibre-gl-lidar": "^0.14.1",
     "maplibre-gl-streetview": "^0.4.0",
     "maplibre-gl-swipe": "^0.7.1",
+    "maplibre-gl-time-slider": "^1.0.3",
     "proj4": "^2.20.8",
     "shpjs": "^6.2.0",
     "three": "^0.178.0"

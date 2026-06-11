@@ -18,13 +18,17 @@
  * Reference: https://github.com/orbat-mapper/orbat-mapper MlMapLogic.vue
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import maplibregl from "maplibre-gl";
-import type { GeoJSONSource } from "maplibre-gl";
+import type { FilterSpecification, GeoJSONSource } from "maplibre-gl";
 import type { MapController } from "@geolibre/map";
 import ms from "milsymbol";
 import type { SymbolOptions } from "milsymbol";
 import type { FeatureCollection, Feature, Point } from "geojson";
+import {
+  getTimeSliderDate,
+  subscribeTimeSliderDate,
+} from "@geolibre/plugins";
 import { useMilLayerStore } from "../../hooks/useMilLayerStore";
 import type { MilGraphicItem } from "@geolibre/core";
 
@@ -74,6 +78,50 @@ function hashStr(s: string): string {
 
 function makeSymbolKey(sidc: string, opts: SymbolOptions): string {
   return IMG_PREFIX + hashStr(JSON.stringify({ sidc, ...opts }));
+}
+
+/** Parse an ISO 8601 string to epoch ms, or null when absent/invalid. */
+function parseIsoMs(value?: string): number | null {
+  if (!value) return null;
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * MapLibre filter that keeps features whose [startMs, endMs] window contains
+ * `timeMs`. Items without temporal properties are always visible — a symbol
+ * only disappears when it carries an explicit start/end outside the window.
+ */
+function buildMilTimeFilter(timeMs: number): FilterSpecification {
+  return [
+    "all",
+    ["any", ["!", ["has", "startMs"]], ["<=", ["get", "startMs"], timeMs]],
+    ["any", ["!", ["has", "endMs"]],   [">=", ["get", "endMs"],   timeMs]],
+  ] as unknown as FilterSpecification;
+}
+
+/**
+ * Apply (or clear, when date is null) the temporal filter on the shared
+ * mil-symbol icon + label layers.
+ */
+function applySymbolTimeFilter(map: maplibregl.Map, date: Date | null): void {
+  const filter = date ? buildMilTimeFilter(date.getTime()) : null;
+  if (map.getLayer(SYM_LAYER_ID)) map.setFilter(SYM_LAYER_ID, filter);
+  if (map.getLayer(SYM_LABEL_ID)) map.setFilter(SYM_LABEL_ID, filter);
+}
+
+/** Whether an item's temporal window contains the given date (null = always). */
+function isInTimeWindow(
+  item: { startDate?: string; endDate?: string },
+  date: Date | null,
+): boolean {
+  if (!date) return true;
+  const t = date.getTime();
+  const start = parseIsoMs(item.startDate);
+  if (start !== null && t < start) return false;
+  const end = parseIsoMs(item.endDate);
+  if (end !== null && t > end) return false;
+  return true;
 }
 
 /**
@@ -267,6 +315,16 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
 export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendererProps) {
   // Read the layers array — Zustand returns the same reference when nothing changes.
   const milLayers = useMilLayerStore((s) => s.layers);
+  // Current date of the map time controller (maplibre-gl-time-slider plugin);
+  // null when the plugin is inactive → no temporal filtering.
+  const timeDate = useSyncExternalStore(
+    subscribeTimeSliderDate,
+    getTimeSliderDate,
+    getTimeSliderDate,
+  );
+  /** Latest time value — read by the once-registered style.load handler. */
+  const timeDateRef = useRef<Date | null>(timeDate);
+  timeDateRef.current = timeDate;
   // Derive visible symbols via useMemo so the derived array is only recreated
   // when milLayers actually changes, not on every render.
   const symbols = useMemo(
@@ -338,6 +396,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       const onStyleLoad = () => {
         if (!map.getSource(SYM_SOURCE_ID)) {
           addSymbolLayers(map, lastFcRef.current);
+          applySymbolTimeFilter(map, timeDateRef.current);
         }
       };
 
@@ -366,6 +425,12 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       const key = makeSymbolKey(sym.sidc, opts);
       symbolCacheRef.current.set(key, { sidc: sym.sidc, options: opts });
 
+      // Temporal visibility window → epoch ms feature properties, read by the
+      // MapLibre filter applied when the time slider is active. Omitted when
+      // absent so symbols without dates stay always visible.
+      const startMs = parseIsoMs(sym.startDate);
+      const endMs   = parseIsoMs(sym.endDate);
+
       features.push({
         type: "Feature",
         geometry: { type: "Point", coordinates: [sym.lon, sym.lat] },
@@ -376,6 +441,8 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
           label:      sym.uniqueDesignation ?? "",
           opacity,
           showLabels: parentLayer?.showLabels ?? false,
+          ...(startMs !== null ? { startMs } : {}),
+          ...(endMs   !== null ? { endMs }   : {}),
         },
       });
     }
@@ -387,8 +454,17 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       (map.getSource(SYM_SOURCE_ID) as GeoJSONSource).setData(fc);
     } else if (map.isStyleLoaded()) {
       addSymbolLayers(map, fc);
+      applySymbolTimeFilter(map, timeDateRef.current);
     }
   }, [symbols, milLayers, mapControllerRef]);
+
+  // ── Apply temporal filter on time-slider changes ────────────────────
+  // setFilter is GPU-side: no FeatureCollection rebuild per playback tick.
+  useEffect(() => {
+    const map = mapControllerRef.current?.getMap();
+    if (!map) return;
+    applySymbolTimeFilter(map, timeDate);
+  }, [timeDate, mapControllerRef]);
 
   // ── Sync mil-graphic items → GeoJSON sources/layers ─────────────────
   useEffect(() => {
@@ -419,6 +495,8 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
     for (const gr of allGraphics) {
       if (!gr.sidc || !gr.coordinates?.length) continue;
 
+      // Combine layer visibility with the temporal window of the graphic.
+      const shown  = gr.visible && isInTimeWindow(gr, timeDate);
       const color  = "#4A7FCE"; // TODO: derive from SIDC identity
       const lineId = `mg-line-${gr.id}`;
       const fillId = `mg-fill-${gr.id}`;
@@ -436,7 +514,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
 
       if (graphicSourcesRef.current.has(gr.id)) {
         (map.getSource(gr.id) as maplibregl.GeoJSONSource)?.setData(geoData);
-        const vis = gr.visible ? "visible" : "none";
+        const vis = shown ? "visible" : "none";
         if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
         if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
       } else {
@@ -451,7 +529,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
               "fill-color":   color,
               "fill-opacity": gr.layerOpacity * 0.15,
             },
-            layout: { visibility: gr.visible ? "visible" : "none" },
+            layout: { visibility: shown ? "visible" : "none" },
           });
         }
 
@@ -465,13 +543,13 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
             "line-opacity":   gr.layerOpacity,
             "line-dasharray": [6, 3],
           },
-          layout: { visibility: gr.visible ? "visible" : "none" },
+          layout: { visibility: shown ? "visible" : "none" },
         });
 
         graphicSourcesRef.current.add(gr.id);
       }
     }
-  }, [milLayers, mapControllerRef]);
+  }, [milLayers, timeDate, mapControllerRef]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────────
   useEffect(() => {

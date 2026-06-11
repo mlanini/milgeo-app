@@ -321,7 +321,30 @@ export function projectFromStore(state: {
   };
 }
 
+// An external native layer can drop its persisted `geojson` only if its
+// features can be reconstructed on reopen, i.e. it has a fetchable source URL.
+// Layers loaded from local files or built in-memory (e.g. by a plugin's
+// drawing/annotation control) have no such URL, so the persisted `geojson`
+// is their ONLY copy and must be kept.
+function hasRestorableSourceUrl(layer: GeoLibreLayer): boolean {
+  const sourceUrl = layer.source.url;
+  const originalUrl = layer.metadata.originalUrl;
+  return (
+    (typeof sourceUrl === "string" && sourceUrl.trim() !== "") ||
+    (typeof originalUrl === "string" && originalUrl.trim() !== "")
+  );
+}
+
 function prepareLayerForSave(layer: GeoLibreLayer): GeoLibreLayer {
+  if (
+    layer.metadata.externalNativeLayer === true &&
+    layer.geojson &&
+    hasRestorableSourceUrl(layer)
+  ) {
+    const { geojson: _geojson, ...rest } = layer;
+    layer = rest;
+  }
+
   if (layer.type !== "xyz") return layer;
 
   const originalUrl =

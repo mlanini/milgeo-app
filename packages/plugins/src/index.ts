@@ -50,6 +50,11 @@ export { maplibreLidarPlugin } from "./plugins/maplibre-lidar";
 export { maplibreStreetViewPlugin } from "./plugins/maplibre-streetview";
 export { maplibreSwipePlugin } from "./plugins/maplibre-swipe";
 export {
+  getTimeSliderDate,
+  maplibreTimeSliderPlugin,
+  subscribeTimeSliderDate,
+} from "./plugins/maplibre-time-slider";
+export {
   sampleGeoJsonPlugin,
   setSampleGeoJson,
 } from "./plugins/sample-geojson";

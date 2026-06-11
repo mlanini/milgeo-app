@@ -13,6 +13,7 @@ export interface DesktopSettings {
   openTopographyApiKey: string;
   demSource: DemSource;
   localDtmPath: string;
+  shareToken: string;
 }
 
 interface DesktopSettingsState {
@@ -26,6 +27,7 @@ const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   openTopographyApiKey: "",
   demSource: "",
   localDtmPath: "",
+  shareToken: "",
 };
 
 function normalizeDesktopSettings(settings: unknown): DesktopSettings {
@@ -54,6 +56,10 @@ function normalizeDesktopSettings(settings: unknown): DesktopSettings {
     localDtmPath:
       typeof candidate.localDtmPath === "string"
         ? candidate.localDtmPath.trim()
+        : "",
+    shareToken:
+      typeof candidate.shareToken === "string"
+        ? candidate.shareToken.trim()
         : "",
   };
 }

@@ -8,6 +8,53 @@ import type { FeatureCollection } from "geojson";
  *   to the URL of the deployed Python backend service so the browser can reach
  *   it directly.  Falls back to localhost so the dev server still works.
  */
+
+// ---------------------------------------------------------------------------
+// Conversion / Raster job types (reuse the same job store as Whitebox)
+// ---------------------------------------------------------------------------
+
+export interface ConversionJob {
+  id: string;
+  status: "pending" | "running" | "succeeded" | "failed" | string;
+  tool_id: string;
+  created_at: string;
+  updated_at: string;
+  messages: string[];
+  outputs: Record<string, unknown>;
+  error?: string | null;
+}
+
+export interface ConversionStatus {
+  available: boolean;
+  message: string;
+}
+
+export interface RasterStatus {
+  available: boolean;
+  message: string;
+}
+
+export interface RasterToolRequest {
+  tool_id: string;
+  input_path: string;
+  output_path: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface VectorStatus {
+  available: boolean;
+  message: string;
+}
+
+export interface VectorToolRequest {
+  tool_id: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface VectorToolResult {
+  geojson?: FeatureCollection;
+  message?: string;
+}
 const DEFAULT_SIDECAR_URL: string =
   (typeof import.meta !== "undefined" &&
     // @ts-expect-error — Vite replaces import.meta.env at build time
@@ -273,4 +320,81 @@ function sidecarConnectionError(baseUrl: string, error: unknown): Error {
     `Could not connect to the GeoLibre sidecar at ${baseUrl}. ` +
       "Start the sidecar to run Whitebox tools.",
   );
+}
+
+// ---------------------------------------------------------------------------
+// Raster processing
+// ---------------------------------------------------------------------------
+
+export async function fetchRasterStatus(
+  baseUrl = DEFAULT_SIDECAR_URL,
+): Promise<RasterStatus> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/raster/status`);
+  } catch (error) {
+    throw sidecarConnectionError(baseUrl, error);
+  }
+  if (!res.ok) {
+    throw new Error(`Raster status failed: HTTP ${res.status}`);
+  }
+  return (await res.json()) as RasterStatus;
+}
+
+export async function runRasterTool(
+  request: RasterToolRequest,
+  baseUrl = DEFAULT_SIDECAR_URL,
+): Promise<ConversionJob> {
+  const res = await fetch(`${baseUrl}/raster/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) {
+    throw new Error(await responseErrorMessage(res, "Could not start raster tool"));
+  }
+  return (await res.json()) as ConversionJob;
+}
+
+export async function fetchConversionJob(
+  jobId: string,
+  baseUrl = DEFAULT_SIDECAR_URL,
+): Promise<ConversionJob> {
+  const res = await fetch(
+    `${baseUrl}/conversion/jobs/${encodeURIComponent(jobId)}`,
+  );
+  if (!res.ok) {
+    throw new Error(await responseErrorMessage(res, "Could not load conversion job"));
+  }
+  return (await res.json()) as ConversionJob;
+}
+
+export async function fetchVectorStatus(
+  baseUrl = DEFAULT_SIDECAR_URL,
+): Promise<VectorStatus> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/vector/status`);
+  } catch (error) {
+    throw sidecarConnectionError(baseUrl, error);
+  }
+  if (!res.ok) {
+    throw new Error(`Vector status failed: HTTP ${res.status}`);
+  }
+  return (await res.json()) as VectorStatus;
+}
+
+export async function runVectorTool(
+  request: VectorToolRequest,
+  baseUrl = DEFAULT_SIDECAR_URL,
+): Promise<VectorToolResult> {
+  const res = await fetch(`${baseUrl}/vector/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) {
+    throw new Error(await responseErrorMessage(res, "Could not run vector tool"));
+  }
+  return (await res.json()) as VectorToolResult;
 }

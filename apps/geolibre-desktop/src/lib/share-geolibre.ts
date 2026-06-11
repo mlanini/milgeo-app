@@ -1,0 +1,151 @@
+import { DEFAULT_PROJECT_NAME } from "@geolibre/core";
+
+export type ShareVisibility = "public" | "unlisted" | "private";
+
+export interface ShareUploadResult {
+  username: string;
+  slug: string;
+  projectUrl: string;
+  viewerUrl: string;
+  rawJsonUrl: string;
+}
+
+export interface ShareUploadOptions {
+  token: string;
+  filename: string;
+  content: string;
+  visibility: ShareVisibility;
+  baseUrl?: string;
+  signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
+}
+
+export const DEFAULT_SHARE_BASE_URL = "https://share.geolibre.app";
+
+const UPLOAD_TIMEOUT_MS = 30_000;
+
+export const DEFAULT_PROJECT_TITLE = DEFAULT_PROJECT_NAME;
+
+export const MAX_PROJECT_TITLE_LENGTH = 100;
+
+export function isShareableTitle(title: string): boolean {
+  const trimmed = title.trim();
+  return (
+    trimmed.length > 0 &&
+    trimmed.length <= MAX_PROJECT_TITLE_LENGTH &&
+    trimmed !== DEFAULT_PROJECT_TITLE
+  );
+}
+
+export function resolveShareBaseUrl(
+  configured: unknown = import.meta.env?.VITE_GEOLIBRE_SHARE_URL,
+): string {
+  if (typeof configured === "string" && configured.trim()) {
+    const trimmed = configured.trim().replace(/\/+$/, "");
+    try {
+      const url = new URL(trimmed);
+      if (
+        url.protocol === "https:" ||
+        (url.protocol === "http:" &&
+          (url.hostname === "localhost" || url.hostname === "127.0.0.1"))
+      ) {
+        return trimmed;
+      }
+    } catch {
+      // fall through to production default
+    }
+  }
+  return DEFAULT_SHARE_BASE_URL;
+}
+
+interface ShareProjectResponse {
+  project?: {
+    username?: string;
+    slug?: string;
+    projectUrl?: string;
+    viewerUrl?: string;
+    rawJsonUrl?: string;
+  };
+}
+
+export async function uploadProjectToShare(
+  options: ShareUploadOptions,
+): Promise<ShareUploadResult> {
+  const token = options.token.trim();
+  if (!token) {
+    throw new Error(
+      "Add a share.geolibre.app API token in Settings before sharing.",
+    );
+  }
+
+  const base = (options.baseUrl ?? resolveShareBaseUrl()).replace(/\/+$/, "");
+  const fetchImpl = options.fetchImpl ?? fetch;
+
+  const timeout = AbortSignal.timeout(UPLOAD_TIMEOUT_MS);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeout])
+    : timeout;
+
+  let response: Response;
+  try {
+    response = await fetchImpl(`${base}/api/projects`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filename: options.filename,
+        content: options.content,
+        visibility: options.visibility,
+      }),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException) {
+      if (error.name === "AbortError") throw error;
+      if (error.name === "TimeoutError") {
+        throw new Error("Upload timed out. Please try again.");
+      }
+    }
+    throw new Error(
+      "Could not reach share.geolibre.app. Check your internet connection.",
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(await uploadErrorMessage(response));
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as ShareProjectResponse;
+  const project = payload.project;
+  if (!project?.projectUrl || !project.rawJsonUrl) {
+    throw new Error("share.geolibre.app returned an unexpected response.");
+  }
+  return {
+    username: project.username ?? "",
+    slug: project.slug ?? "",
+    projectUrl: project.projectUrl,
+    viewerUrl: project.viewerUrl ?? "",
+    rawJsonUrl: project.rawJsonUrl,
+  };
+}
+
+async function uploadErrorMessage(response: Response): Promise<string> {
+  if (response.status === 401) {
+    return "Invalid or expired API token. Update it in Settings.";
+  }
+  if (response.status === 403) {
+    return "This API token is not allowed to upload projects.";
+  }
+  if (response.status === 429) {
+    return "Too many uploads. Please wait a while and try again.";
+  }
+  const body = (await response.json().catch(() => null)) as
+    | { error?: string }
+    | null;
+  if (typeof body?.error === "string" && body.error.trim()) {
+    return [...body.error].slice(0, 300).join("");
+  }
+  return `Upload failed (HTTP ${response.status}).`;
+}

@@ -20,6 +20,17 @@ import {
   type RecentProjectEntry,
 } from "./types";
 
+export type RasterToolKind =
+  | "hillshade"
+  | "slope"
+  | "aspect"
+  | "reproject"
+  | "resample"
+  | "clip-extent"
+  | "clip-mask"
+  | "polygonize"
+  | "contour";
+
 export interface AppState {
   projectName: string;
   projectPath: string | null;
@@ -41,6 +52,7 @@ export interface AppState {
   attributeFilter: string;
   ui: {
     processingOpen: boolean;
+    rasterToolOpen: RasterToolKind | null;
     attributeTableOpen: boolean;
     zoomToSelectedFeature: boolean;
     analysisOpen: boolean;
@@ -62,6 +74,7 @@ export interface AppState {
   setIdentifyLayer: (id: string | null) => void;
   setAttributeFilter: (filter: string) => void;
   setProcessingOpen: (open: boolean) => void;
+  setRasterToolOpen: (kind: RasterToolKind | null) => void;
   setAnalysisOpen: (open: boolean) => void;
   setSillagesOpen: (open: boolean) => void;
   setAttributeTableOpen: (open: boolean) => void;
@@ -147,6 +160,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   attributeFilter: "",
   ui: {
     processingOpen: false,
+    rasterToolOpen: null,
     attributeTableOpen: false,
     zoomToSelectedFeature: false,
     analysisOpen: false,
@@ -178,6 +192,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setAttributeFilter: (filter) => set({ attributeFilter: filter }),
   setProcessingOpen: (open) =>
     set((s) => ({ ui: { ...s.ui, processingOpen: open } })),
+  setRasterToolOpen: (kind) =>
+    set((s) => ({ ui: { ...s.ui, rasterToolOpen: kind } })),
   setAnalysisOpen: (open) =>
     set((s) => ({ ui: { ...s.ui, analysisOpen: open } })),
   setSillagesOpen: (open) =>

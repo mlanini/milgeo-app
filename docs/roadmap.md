@@ -61,7 +61,7 @@
 - [x] Local raster file loading fix
 - [x] Large-file pre-commit guard
 
-## v0.8: Viewer, desktop packaging, plugins, and dynamic layers (current)
+## v0.8: Viewer, desktop packaging, plugins, and dynamic layers
 
 - [x] Cloudflare Worker viewer served from `viewer.geolibre.app`
 - [x] Browser demo links updated to the production viewer
@@ -82,28 +82,88 @@
 - [x] Multiple DuckDB SQL query-result layers
 - [x] Desktop diagnostics panel and improved diagnostics/status bar contrast
 - [x] Toolbar toggles for Colorbar, Legend, and HTML panels
+- [x] **Vector processing tools**: buffer, centroids, convex hull, dissolve, bounding box, simplify, clip, intersection, difference, union (Turf.js + GeoPandas)
+- [x] **Raster processing tools**: hillshade, slope, aspect, reproject, resample, clip by extent, clip by mask, polygonize, contour (rasterio sidecar)
+- [x] **SQL Workspace**: DuckDB Spatial SQL with query history and CSV/GeoParquet export
+- [x] **Data conversion**: GeoParquet, FlatGeobuf, PMTiles, COG format conversion tools
+- [x] **APP-6D Military Symbols**: Tactical symbol placement from searchable catalog with affiliation support
+- [x] **Tactical Graphics**: FLOT, boundaries, fire support areas, objectives with interactive drawing
+- [x] **SIDC Import/Export**: GeoJSON and KML with SIDC field support for interoperability
 
-## v0.9: MilGeo tactical features + SQL sidecar
+## v0.9: Advanced tactical workflows and processing expansion
 
-- [ ] SQL panel workflow for building and managing queries
-- [ ] GDAL / Rasterio / GeoPandas pipelines
-- [ ] Buffer, reproject, and export GeoJSON processing tools
-- [ ] Expanded WhiteboxTools coverage
-- [ ] Leafmap, GeoAI, and SamGeo integrations (selective)
+- [ ] **Enhanced SQL Workspace**: Visual query builder, saved queries, and query templates
+- [ ] **Advanced tactical symbology**: Expanded symbol sets from milsymbol runtime catalog
+- [ ] **Symbol editing**: Drag-and-drop symbol repositioning and attribute editing
+- [ ] **Tactical graphics styling**: Dashed/solid style per SIDC specification
+- [ ] **Dismounted unit symbology**: Support for individuals and activities
+- [ ] **ORBAT management**: Hierarchical unit organization and visualization
+- [ ] **Expanded processing**: GDAL pipelines, advanced GeoPandas operations
+- [ ] **WhiteboxTools expansion**: Additional hydrology, terrain, and LiDAR algorithms
+- [ ] **Export enhancements**: Buffer, reproject, and multi-format export tools
+- [ ] **GeoEditor integration**: Mixed sketch and mil-symbol workflows
 
-## v0.9: MilGeo tactical features (target)
+## v1.0: Enterprise features and ecosystem
 
-- [ ] APP-6D symbol sets expanded from milsymbol `getSymbolSets()` runtime catalog
-- [ ] Edit symbol position via drag-and-drop on the map
-- [ ] Tactical graphics: dashed / solid style per SIDC
-- [ ] Symbology for dismounted individuals and activities
-- [ ] Integration with GeoEditor for mixed sketch + mil-symbol workflows
+- [ ] **Plugin marketplace**: Install, update, and remove plugins from registry
+- [ ] **External plugin distribution**: Package and publish workflow for developers
+- [ ] **Sandboxed plugins**: Worker-based plugin isolation for security
+- [ ] **Advanced ORBAT**: Multi-level hierarchies, unit relations, and time-based states
+- [ ] **Mission planning**: Route planning, viewshed analysis, and temporal planning
+- [ ] **Collaboration features**: Real-time project sharing and multi-user editing
+- [ ] **Performance optimization**: Large dataset handling, streaming, and caching
+- [ ] **Test coverage**: Automated testing suite for core functionality
+- [ ] **Documentation**: Comprehensive user guide, tutorials, and API reference
+- [ ] **Accessibility**: WCAG compliance and keyboard navigation
 
-## v1.0: External plugin system and stable prototype
+## Future Considerations
 
-- [ ] External plugin package distribution workflow
-- [ ] Plugin marketplace / registry (design)
-- [ ] Sandboxed worker plugins
-- [ ] Performance tuning and test suite
-- [ ] Cross-platform installers
-- [ ] Documentation and tutorials
+- **Mobile applications**: Native iOS and Android apps with offline capabilities
+- **Cloud deployment**: Hosted service with authentication and storage
+- **AI/ML integration**: Selective integration with GeoAI, SamGeo, and Leafmap capabilities
+- **Real-time data**: Live sensor feeds, tracking, and telemetry integration
+- **Advanced 3D**: Enhanced 3D Tiles, terrain analysis, and viewshed calculations
+- **Network analysis**: Routing, connectivity, and supply chain optimization
+- **Time series**: Temporal data visualization and animation
+- **Custom projections**: Extended CRS support and datum transformations
+- **Localization**: Multi-language interface and documentation
+
+---
+
+## Release Highlights
+
+### v0.8.0 (Current) - Military GIS Foundation
+
+Major milestone establishing MilGeo as a comprehensive military GIS platform with:
+- Complete APP-6D tactical symbol support with searchable catalog
+- Tactical graphics for operational planning (FLOT, boundaries, objectives)
+- Vector and raster processing tools for geospatial analysis
+- SQL workspace with DuckDB Spatial for advanced queries
+- Data conversion to cloud-native formats (GeoParquet, FlatGeobuf, PMTiles, COG)
+- External plugin architecture with marketplace foundation
+- Cross-platform desktop installers and web viewer deployment
+
+### v0.7.0 - Processing and Integration
+
+Added Whitebox geoprocessing, WFS/delimited text support, WMS identify, inline attribute editing, and comprehensive plugin integrations.
+
+### v0.6.0 - Web Embeds and PostgreSQL
+
+Introduced browser embed parameters, URL-based project loading, PostgreSQL layers, STAC search, and expanded plugin ecosystem.
+
+### v0.5.0 - Advanced Data Formats
+
+Implemented comprehensive Add Data dialogs, MBTiles support, ArcGIS layer integration, and MapLibre Components plugin.
+
+### Earlier Releases
+
+- **v0.4.0**: DuckDB Spatial integration for diverse vector formats
+- **v0.3.0**: Cloud-native formats (GeoParquet, FlatGeobuf, PMTiles, COG)
+- **v0.2.0**: Project persistence and recent projects tracking
+- **v0.1.0**: Initial Tauri + React + MapLibre foundation
+
+---
+
+## Contributing
+
+See planned features you want to help with? Check the [Contributing Guide](https://github.com/opengeos/GeoLibre/blob/main/CONTRIBUTING.md) and open an issue to discuss your approach before starting work.

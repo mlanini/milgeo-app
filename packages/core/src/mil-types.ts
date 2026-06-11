@@ -46,6 +46,17 @@ export interface MilSymbolItem {
   combatEffectiveness?: string;
   /** AP - Evaluation Rating */
   evaluationRating?: string;
+  // ── Temporal visibility window (orbat-mapper style, all optional) ──────────
+  /**
+   * ISO 8601 instant from which the symbol is visible when the map time
+   * controller is active (inclusive). Absent ⇒ visible from the beginning.
+   */
+  startDate?: string;
+  /**
+   * ISO 8601 instant until which the symbol is visible when the map time
+   * controller is active (inclusive). Absent ⇒ visible until the end.
+   */
+  endDate?: string;
 }
 
 // ─── Graphic item (line / area with geometry) ─────────────────────────────────
@@ -62,6 +73,10 @@ export interface MilGraphicItem {
   coordinates: number[][];
   uniqueDesignation?: string;
   additionalInformation?: string;
+  /** ISO 8601 start of the temporal visibility window (inclusive). */
+  startDate?: string;
+  /** ISO 8601 end of the temporal visibility window (inclusive). */
+  endDate?: string;
 }
 
 // ─── Layer ────────────────────────────────────────────────────────────────────

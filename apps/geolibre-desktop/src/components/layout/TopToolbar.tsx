@@ -74,9 +74,11 @@ import {
   Radio,
   RefreshCw,
   Save,
+  Share2,
   Shield,
   SlidersHorizontal,
   Sun,
+  Wrench,
   X,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -102,6 +104,7 @@ import { AddDataDialog, type AddDataKind } from "./AddDataDialog";
 import { AboutDialog } from "./AboutDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { SettingsDialog } from "./SettingsDialog";
+import { ShareProjectDialog } from "./ShareProjectDialog";
 
 interface TopToolbarProps {
   compact?: boolean;
@@ -178,6 +181,7 @@ export function TopToolbar({
   onToggleThemeMode,
 }: TopToolbarProps) {
   const loadProject = useAppStore((s) => s.loadProject);
+  const setRasterToolOpen = useAppStore((s) => s.setRasterToolOpen);
   const setAnalysisOpen = useAppStore((s) => s.setAnalysisOpen);
   const setSillagesOpen = useAppStore((s) => s.setSillagesOpen);
   const analysisOpen    = useAppStore((s) => s.ui.analysisOpen);
@@ -210,6 +214,7 @@ export function TopToolbar({
   const [actionError, setActionError] = useState<string | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [checkForUpdatesRequest, setCheckForUpdatesRequest] = useState(0);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const projectUrlAbortRef = useRef<AbortController | null>(null);
   const recentAbortRef = useRef<AbortController | null>(null);
 
@@ -320,6 +325,38 @@ export function TopToolbar({
         recentAbortRef.current = null;
       }
     }
+  };
+
+  // Build a serializable snapshot of the current project state. Used by both
+  // the save handler and the Project > Share dialog.
+  const buildCurrentProject = (nameOverride?: string) => {
+    const state = useAppStore.getState();
+    const defaultProjectName =
+      nameOverride?.trim() || state.projectName.trim() || "Untitled Project";
+    const pluginManifestUrls = mergeStringLists(
+      state.projectPlugins?.manifestUrls ?? [],
+      useDesktopSettingsStore.getState().desktopSettings.pluginManifestUrls,
+    );
+    const project = projectFromStore({
+      projectName: defaultProjectName,
+      mapView: mapControllerRef.current?.readView() ?? state.mapView,
+      basemapStyleUrl: state.basemapStyleUrl,
+      basemapVisible: state.basemapVisible,
+      basemapOpacity: state.basemapOpacity,
+      layers: state.layers,
+      preferences: state.preferences,
+      plugins: {
+        ...getPluginManager().getProjectState(),
+        manifestUrls: pluginManifestUrls,
+      },
+      metadata: state.metadata,
+    });
+    return {
+      project,
+      defaultProjectName,
+      content: serializeProject(project),
+      projectPath: state.projectPath,
+    };
   };
 
   const handleSave = async (): Promise<boolean> => {
@@ -655,6 +692,70 @@ export function TopToolbar({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      {/* Processing menu — Raster tools (v1.0.0 alignment) */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            className={toolbarButtonClass}
+            variant="ghost"
+            size={toolbarButtonSize}
+            aria-label="Processing"
+          >
+            <Wrench className={toolbarIconClassName} />
+            {renderToolbarLabel("Processing")}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuLabel>Processing</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>Raster</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("hillshade")}>
+                Hillshade
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("slope")}>
+                Slope
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("aspect")}>
+                Aspect
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("reproject")}>
+                Reproject
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("resample")}>
+                Resample
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("clip-extent")}>
+                Clip by extent
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("clip-mask")}>
+                Clip by mask layer
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("polygonize")}>
+                Polygonize
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setRasterToolOpen("contour")}>
+                Contour
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {/* Share button */}
+      <Button
+        className={toolbarButtonClass}
+        variant="ghost"
+        size={toolbarButtonSize}
+        onClick={() => setShareDialogOpen(true)}
+        aria-label="Share"
+      >
+        <Share2 className={toolbarIconClassName} />
+        {renderToolbarLabel("Share")}
+      </Button>
       <Button
         className={cn(toolbarButtonClass, milSymbolOpen && "bg-primary/10 text-primary")}
         variant="ghost"
@@ -973,6 +1074,18 @@ export function TopToolbar({
           </>
         ) : null}
       </div>
+      <ShareProjectDialog
+        open={shareDialogOpen}
+        onOpenChange={setShareDialogOpen}
+        currentTitle={projectName}
+        getProject={(title) => {
+          const { content, defaultProjectName } = buildCurrentProject(title);
+          return {
+            content,
+            filename: `${defaultProjectName.replace(/[^A-Za-z0-9_\-. ]/g, "_")}.geolibre.json`,
+          };
+        }}
+      />
     </header>
   );
 }

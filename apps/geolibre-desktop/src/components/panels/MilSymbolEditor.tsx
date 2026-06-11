@@ -118,6 +118,44 @@ function NumberField({
   );
 }
 
+function DateTimeField({
+  label, value, onChange,
+}: {
+  label: string;
+  /** Value in `datetime-local` format (YYYY-MM-DDTHH:mm) or "". */
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-0.5">
+      <span className="text-xs text-muted-foreground font-medium">{label}</span>
+      <input
+        type="datetime-local"
+        className="h-7 rounded border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
+/** ISO 8601 → `datetime-local` input value (local time), or "" when invalid. */
+function isoToInputValue(iso?: string): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const d = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** `datetime-local` input value → normalized ISO 8601 UTC, or undefined. */
+function inputValueToIso(v: string): string | undefined {
+  if (!v) return undefined;
+  const t = Date.parse(v);
+  return Number.isNaN(t) ? undefined : new Date(t).toISOString();
+}
+
 // ─── Live preview ─────────────────────────────────────────────────────────────
 
 function SymbolPreview({ sidc, uniqueDesignation, higherFormation }: {
@@ -189,6 +227,10 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
   const [combatEffectiveness, setCombatEffectiveness] = useState(initial.combatEffectiveness ?? "");
   const [evaluationRating,    setEvaluationRating]    = useState(initial.evaluationRating ?? "");
 
+  // Temporal visibility window (map time controller)
+  const [startDate, setStartDate] = useState(isoToInputValue(initial.startDate));
+  const [endDate,   setEndDate]   = useState(isoToInputValue(initial.endDate));
+
   // Active tab for amplifiers (SIDC | Amplifiers)
   const [tab, setTab] = useState<"sidc" | "amplifiers">("sidc");
 
@@ -233,6 +275,8 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
       reinforcedReduced:    reinforcedReduced   || undefined,
       combatEffectiveness:  combatEffectiveness || undefined,
       evaluationRating:     evaluationRating    || undefined,
+      startDate:            inputValueToIso(startDate),
+      endDate:              inputValueToIso(endDate),
     });
   }
 
@@ -306,6 +350,20 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
             />
             <TextField     label="Efficacia combattimento (AL)" value={combatEffectiveness} placeholder="" onChange={setCombatEffectiveness} />
             <TextField     label="Indice valutazione (AP)"      value={evaluationRating}    placeholder="" onChange={setEvaluationRating}    />
+
+            <div className="pt-1 border-t">
+              <div className="pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Finestra temporale (Time Slider)
+              </div>
+              <div className="space-y-2.5">
+                <DateTimeField label="Visibile dal"   value={startDate} onChange={setStartDate} />
+                <DateTimeField label="Visibile fino" value={endDate}   onChange={setEndDate}   />
+                <p className="text-[10px] leading-snug text-muted-foreground">
+                  Se vuoti, il simbolo è sempre visibile. I campi hanno effetto
+                  quando il plugin Time Slider è attivo sulla mappa.
+                </p>
+              </div>
+            </div>
           </>
         )}
       </div>

@@ -1,14 +1,14 @@
 site_name: MilGeo.app
-site_description: Lightweight web GIS with APP-6D military tactical tools, built with React, TypeScript, MapLibre GL JS, and milsymbol.
-site_url: https://geolibre.app
-repo_name: opengeos/GeoLibre
-repo_url: https://github.com/opengeos/GeoLibre
+site_description: Professional military GIS platform with APP-6D tactical symbology and operational planning tools, built with React, TypeScript, MapLibre GL JS, and milsymbol.
+site_url: https://milgeo.app
+repo_name: mlanini/milgeo-app
+repo_url: https://github.com/mlanini/milgeo-app
 edit_uri: edit/main/docs/
 
 theme:
   name: material
-  logo: assets/geolibre-icon.png
-  favicon: assets/geolibre-icon.png
+  logo: assets/milgeo-icon.png
+  favicon: assets/milgeo-icon.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -38,6 +38,12 @@ nav:
   - Getting Started: getting-started.md
   - Downloads: downloads.md
   - Live Demo: /demo/
+  - User Guide:
+      - Interface Overview: user-guide/interface.md
+      - Tactical Symbols: user-guide/tactical-symbols.md
+      - Tactical Graphics: user-guide/tactical-graphics.md
+      - Processing Tools: user-guide/processing.md
+      - SQL Workspace: user-guide/sql-workspace.md
   - Documentation:
       - Architecture: architecture.md
       - Project Format: project-format.md
@@ -69,5 +75,5 @@ extra_css:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/opengeos/GeoLibre
+      link: https://github.com/mlanini/milgeo-app
       name: MilGeo.app on GitHub

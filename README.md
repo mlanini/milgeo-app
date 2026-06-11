@@ -1,28 +1,75 @@
 # MilGeo.app
 
-Lightweight web GIS with **APP-6D military tactical tools** built with **React**, **TypeScript**, **MapLibre GL JS**, **DuckDB-WASM Spatial**, **milsymbol**, and **deck.gl**.
+Professional military GIS platform with **APP-6D tactical symbology** and **operational planning tools** built with **React**, **TypeScript**, **MapLibre GL JS**, **DuckDB-WASM Spatial**, **milsymbol**, and **deck.gl**.
+
+Purpose-built for defense and security operations with comprehensive geospatial intelligence capabilities, tactical graphics, ORBAT management, vector/raster analysis, and cloud-native workflows.
 
 [![](https://files.opengeos.org/GeoLibre-demo.webp)](https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json)
 
 ## Features (v0.8.0)
 
-- MapLibre map workspace with OpenFreeMap basemaps, blank background support, and toggleable navigation, fullscreen, geolocation, globe, terrain, scale, attribution, and logo controls
-- Load local vector layers supported by DuckDB-WASM Spatial, including common formats such as GeoJSON, GeoParquet, GeoPackage, Shapefile, FlatGeobuf, KML/KMZ, GML, delimited text, and GPX
-- Reproject vector layers to EPSG:4326 on load and split dragged GPX files into named waypoint, track, and route layers
-- Add Data menu for XYZ tiles, WMS, WFS, GeoJSON URLs, vector tiles, COG and GeoTIFF rasters, MBTiles, ArcGIS FeatureServer and VectorTileServer layers, PMTiles, Zarr, LiDAR, 3D Tiles, and Gaussian splats
+### Military Tactical Capabilities
+
+- **APP-6D / MIL-STD-2525D symbol placement** from searchable catalog with affiliation selector and ORBAT support
+- **Tactical graphics** (FLOT, boundaries, fire support areas, objectives, control measures) with interactive drawing
+- **Import / export** GeoJSON and KML files carrying SIDC codes for interoperability
+- **Unit visualization** and positioning for operational planning
+- **Tactical overlays** with military standard symbology and styling
+
+### Map Workspace
+
+- MapLibre workspace with OpenFreeMap basemaps, blank backgrounds, smooth pan/zoom/rotate
+- Toggleable navigation, fullscreen, geolocation, globe, terrain, scale, attribution, and logo controls
+- Measure tools, bookmarks, minimap, and view state management
+- 3D terrain visualization and globe view for situational awareness
+
+### Data Management
+
+- Load local vector layers: GeoJSON, GeoParquet, GeoPackage, Shapefile, FlatGeobuf, KML/KMZ, GML, delimited text, GPX
+- Reproject vector layers to EPSG:4326 on load with automatic CRS detection
+- Add Data menu: XYZ tiles, WMS, WFS, WMTS, GeoJSON URLs, vector tiles, COG/GeoTIFF rasters, MBTiles
+- Advanced formats: ArcGIS FeatureServer/VectorTileServer, PMTiles, Zarr, LiDAR, 3D Tiles, Gaussian splats
+- Database support: DuckDB Spatial and PostgreSQL (via Martin) layers
 - Manual and automatic refresh for WFS and GeoJSON URL layers
-- Layer panel for visibility, opacity, reordering, zoom-to-layer, identify, labels, and remove actions
-- Live style panel (fill, stroke, opacity, circle radius)
-- Attribute table with filtering, sorting, resize controls, feature highlighting, and optional zoom to selected features
-- Multiple DuckDB SQL query-result layers
-- Save/open `.geolibre.json` projects
-- **APP-6D / MIL-STD-2525D symbol placement** from a searchable catalog with affiliation selector
-- **Tactical graphics** (FLOT, boundaries, fire support areas, objectives) with interactive drawing
-- **Import / export** GeoJSON and KML files carrying a `SIDC` field
-- Desktop diagnostics panel, update check, and MSIX packaging support
-- Plugin system with basemap, layer control, MapLibre components, swipe, street view, LiDAR, GeoAgent, and GeoEditor integrations, including configurable control positions and external plugin manifests
-- External plugin zip loading from the app data plugins directory and local development plugin directories
-- Optional Python FastAPI sidecar for heavier processing workflows
+- Layer panel: visibility, opacity, reordering, zoom-to-layer, identify, labels, remove
+
+### Analysis & Processing
+
+- **Vector tools**: buffer, centroids, convex hull, dissolve, bounding box, simplify, clip, intersection, difference, union (Turf.js + GeoPandas)
+- **Raster tools**: hillshade, slope, aspect, reproject, resample, clip by extent/mask, polygonize, contour (rasterio)
+- **SQL Workspace**: DuckDB Spatial SQL in-browser with query history and CSV/GeoParquet export
+- **Whitebox toolbox**: 500+ geoprocessing algorithms for hydrology, terrain, LiDAR
+- **Conversion tools**: GeoParquet, FlatGeobuf, PMTiles, COG for cloud-native formats
+
+### Visualization & Styling
+
+- Live style panel with data-driven symbology (fill, stroke, opacity, circle radius)
+- Attribute table with filtering, sorting, feature highlighting, zoom to selection
+- Text marker labels on GeoJSON layers
+- WMS GetFeatureInfo identify support with scrollable popups
+- Inline attribute editing with validation
+
+### Project Management
+
+- Save/open/share `.geolibre.json` projects with full state preservation
+- Multiple DuckDB SQL query-result layers per project
+- Project persistence includes layers, styles, symbols, tactical graphics, plugins
+- Load projects by URL for instant sharing and collaboration
+
+### Extensibility
+
+- Plugin system: basemaps, layer control, MapLibre components, swipe, street view, time slider
+- Integrations: Overture Maps, LiDAR viewer, GeoAgent, GeoEditor
+- External plugin marketplace with install/update/remove support
+- Configurable control positions and external plugin manifests
+- Dynamic plugin zip loading from app data directory
+
+### Desktop & Deployment
+
+- Cross-platform: Windows (MSIX), macOS (DMG), Linux (AppImage)
+- Desktop diagnostics panel and automatic update checking
+- Optional Python FastAPI sidecar for heavy processing workflows
+- Browser deployment on GitHub Pages with privacy-first design
 
 ## Prerequisites
 
@@ -54,28 +101,35 @@ The browser demo supports URL parameters for iframe-friendly layouts.
 
 Open a project by URL:
 
-<https://viewer.geolibre.app/?url=https://data.geolibre.app/opera-dswx.geolibre.json>
+<https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json>
 
 Supported query parameters:
 
 | Parameter    | Example                                                  | Description                                                                                                                 |
 | ------------ | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `url`        | `url=https://data.geolibre.app/opera-dswx.geolibre.json` | Loads a `.geolibre.json` project from a public URL.                                                                         |
+| `url`        | `url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json` | Loads a `.geolibre.json` project from a public URL.                                                                         |
 | `layout`     | `layout=compact`                                         | Uses the compact embed layout with icon-only toolbar buttons and hidden project metadata. `embed` and `iframe` are aliases. |
 | `toolbar`    | `toolbar=icons`                                          | Shows icon-only toolbar buttons without enabling the full compact layout.                                                   |
 | `panels`     | `panels=none`                                            | Hides the Layers, Style, and Attribute table panels. `hidden`, `hide`, and `off` are aliases.                               |
 | `hidePanels` | `hidePanels=true`                                        | Alternative way to hide the Layers, Style, and Attribute table panels.                                                      |
+| `maponly`    | `maponly=true`                                           | Hides toolbar menu, all panels, and status bar for a pure map view.                                                         |
 
 Use compact mode for narrow embeds. This shows icon-only toolbar buttons and hides project metadata:
 
 ```text
-https://viewer.geolibre.app/?url=https://data.geolibre.app/opera-dswx.geolibre.json&layout=compact
+https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json&layout=compact
 ```
 
 Hide the Layers, Style, and Attribute table panels for map-focused embeds:
 
 ```text
-https://viewer.geolibre.app/?url=https://data.geolibre.app/opera-dswx.geolibre.json&layout=compact&panels=none
+https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json&layout=compact&panels=none
+```
+
+For a fully chrome-free, map-only embed:
+
+```text
+https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json&maponly
 ```
 
 Use `toolbar=icons` when you only want icon-only toolbar buttons. `panels=hidden`, `panels=hide`, `panels=off`, and `hidePanels=true` are accepted aliases for hiding panels.
