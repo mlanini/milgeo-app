@@ -13,12 +13,29 @@ export class PluginManager {
     string,
     GeoLibreMapControlPosition
   >();
+  private handledUrlParametersByContext = new Map<string, Set<string>>();
+  private inFlightUrlContexts = new Map<string, number>();
+  private urlParameterNamesById = new Map<string, string[]>();
   private listeners = new Set<() => void>();
   private version = 0;
 
   register(plugin: GeoLibrePlugin): void {
     const previous = this.plugins.get(plugin.id);
+    if (previous && previous !== plugin) {
+      // Evict the plugin's dedup entries from every retained context so a
+      // re-registered (e.g. hot-reloaded) plugin can handle the current URL
+      // context again. This intentionally also lets it re-handle older
+      // retained contexts if one of those is ever re-dispatched: the new
+      // plugin instance has fresh state and never saw them.
+      for (const handled of this.handledUrlParametersByContext.values()) {
+        handled.delete(plugin.id);
+      }
+    }
     this.plugins.set(plugin.id, plugin);
+    this.urlParameterNamesById.set(
+      plugin.id,
+      normalizeUrlParameterNames(plugin.urlParameterNames),
+    );
     const defaultPosition = plugin.getMapControlPosition?.();
     if (defaultPosition) {
       this.defaultMapControlPositions.set(plugin.id, defaultPosition);
@@ -38,6 +55,34 @@ export class PluginManager {
 
   registerAll(plugins: GeoLibrePlugin[]): void {
     for (const p of plugins) this.register(p);
+  }
+
+  // Remove a plugin at runtime: deactivate it first (so an active plugin tears
+  // down its map control) and drop all of its tracking state, then notify so
+  // the Plugins menu updates without a reload. Used when an external plugin's
+  // source is removed.
+  unregister(id: string, app: GeoLibreAppAPI): void {
+    const plugin = this.plugins.get(id);
+    if (!plugin) return;
+    if (this.active.has(id)) {
+      try {
+        plugin.deactivate(app);
+      } catch (error) {
+        console.warn(
+          `Plugin '${id}' threw while deactivating during unregister.`,
+          error,
+        );
+      }
+      this.active.delete(id);
+    }
+    this.plugins.delete(id);
+    this.defaultActive.delete(id);
+    this.defaultMapControlPositions.delete(id);
+    this.urlParameterNamesById.delete(id);
+    for (const handled of this.handledUrlParametersByContext.values()) {
+      handled.delete(id);
+    }
+    this.notify();
   }
 
   list(): GeoLibrePlugin[] {
@@ -106,6 +151,109 @@ export class PluginManager {
     else this.activate(id, app);
   }
 
+  async handleUrlParameters(
+    params: URLSearchParams,
+    app: GeoLibreAppAPI,
+    contextKey?: string,
+  ): Promise<void> {
+    // An empty serialization means no parameters. params.size would be more
+    // direct but is unavailable in older webviews (pre-Safari 17 WKWebView).
+    const serialized = params.toString();
+    if (!serialized) return;
+    contextKey ??= serialized;
+
+    // Dedup state is kept per context so overlapping async calls with
+    // different context keys cannot clear each other's in-flight entries.
+    // Only the most recent contexts matter, so older ones are evicted to keep
+    // the map bounded for the lifetime of the page. In-flight contexts are
+    // never evicted, so a suspended dispatch cannot lose its dedup entries
+    // and re-run plugins for the same context; the map can temporarily exceed
+    // MAX_HANDLED_URL_CONTEXTS while that many dispatches overlap.
+    this.inFlightUrlContexts.set(
+      contextKey,
+      (this.inFlightUrlContexts.get(contextKey) ?? 0) + 1,
+    );
+
+    let handledPluginIds = this.handledUrlParametersByContext.get(contextKey);
+    if (!handledPluginIds) {
+      handledPluginIds = new Set();
+      this.handledUrlParametersByContext.set(contextKey, handledPluginIds);
+      for (const key of this.handledUrlParametersByContext.keys()) {
+        if (
+          this.handledUrlParametersByContext.size <= MAX_HANDLED_URL_CONTEXTS
+        ) {
+          break;
+        }
+        if (this.inFlightUrlContexts.has(key)) continue;
+        this.handledUrlParametersByContext.delete(key);
+      }
+    }
+
+    try {
+      for (const [id, plugin] of this.plugins) {
+        if (!plugin.handleUrlParameters) continue;
+
+        const parameterNames = this.urlParameterNamesById.get(id) ?? [];
+        if (
+          parameterNames.length === 0 ||
+          !parameterNames.some((name) => params.has(name))
+        ) {
+          continue;
+        }
+
+        // Skip before activating: a context already handled this plugin, so
+        // re-running activation side-effects (e.g. after a manual deactivate)
+        // would reactivate it without ever dispatching the handler again.
+        if (handledPluginIds.has(id)) continue;
+        // Reserve dedup before activating: activate() notifies listeners
+        // synchronously, and a re-entrant URL dispatch for the same context
+        // must not double-run this plugin. Rolled back on every path that
+        // ends without dispatching the handler.
+        handledPluginIds.add(id);
+
+        // A deep link to a parameter a plugin owns implies the user wants that
+        // plugin: activate it if it is installed (registered) but inactive, so
+        // a parameter a plugin declares brings up that plugin. Only
+        // already-registered (trusted) plugins are activated here; nothing is
+        // loaded from the URL.
+        // If activation is refused or throws, skip dispatch and isolate the
+        // failure to this plugin instead of aborting the whole loop.
+        if (!this.active.has(id)) {
+          try {
+            this.activate(id, app);
+          } catch (error) {
+            handledPluginIds.delete(id);
+            console.warn(
+              `Plugin '${id}' could not be activated from GeoLibre URL parameters.`,
+              error,
+            );
+            continue;
+          }
+          if (!this.active.has(id)) {
+            handledPluginIds.delete(id);
+            continue;
+          }
+        }
+
+        try {
+          await plugin.handleUrlParameters(app, new URLSearchParams(params));
+        } catch (error) {
+          // Unmark so a later dispatch for the same context retries the
+          // plugin instead of silently skipping it after a failure.
+          handledPluginIds.delete(id);
+          console.warn(
+            `Plugin '${id}' could not handle GeoLibre URL parameters.`,
+            error,
+          );
+        }
+      }
+    } finally {
+      const inFlight = this.inFlightUrlContexts.get(contextKey) ?? 0;
+      if (inFlight <= 1) this.inFlightUrlContexts.delete(contextKey);
+      else this.inFlightUrlContexts.set(contextKey, inFlight - 1);
+    }
+  }
+
   setMapControlPosition(
     id: string,
     app: GeoLibreAppAPI,
@@ -121,6 +269,7 @@ export class PluginManager {
   restoreProjectState(
     state: ProjectPluginState | null,
     app: GeoLibreAppAPI,
+    options: { resetMissingSettings?: boolean } = {},
   ): void {
     const targetActive = new Set(
       state?.activePluginIds ?? Array.from(this.defaultActive),
@@ -153,11 +302,17 @@ export class PluginManager {
         }
       }
 
-      // Only apply settings the loaded project actually carries for this
-      // plugin. A missing entry means "no change" rather than "reset", which
-      // avoids clobbering in-memory state for plugins absent from the project.
-      if (plugin.applyProjectState && state?.settings && id in state.settings) {
-        const updated = plugin.applyProjectState(app, state.settings[id]);
+      // Regular project loads apply only the settings present in the file. New
+      // project resets can opt into clearing cached state for every plugin.
+      const hasSetting = state?.settings && id in state.settings;
+      if (
+        plugin.applyProjectState &&
+        (hasSetting || options.resetMissingSettings)
+      ) {
+        const updated = plugin.applyProjectState(
+          app,
+          hasSetting ? state.settings[id] : undefined,
+        );
         if (updated !== false) changed = true;
       }
     }
@@ -179,4 +334,15 @@ export class PluginManager {
     this.version += 1;
     for (const listener of this.listeners) listener();
   }
+}
+
+// Retaining several recent contexts (rather than only the latest) keeps dedup
+// intact when fire-and-forget calls with different context keys overlap.
+const MAX_HANDLED_URL_CONTEXTS = 8;
+
+function normalizeUrlParameterNames(names: string[] | undefined): string[] {
+  if (!names) return [];
+  return Array.from(
+    new Set(names.map((name) => name.trim()).filter((name) => name.length > 0)),
+  );
 }

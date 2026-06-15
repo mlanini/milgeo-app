@@ -1,6 +1,11 @@
-import { useAppStore, type GeoLibreLayer } from "@geolibre/core";
+import {
+  applyGroupEffects,
+  isDuckDBQueryLayer,
+  useAppStore,
+  type GeoLibreLayer,
+} from "@geolibre/core";
 import maplibregl from "maplibre-gl";
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import {
   circleLayerId,
   fillExtrusionLayerId,
@@ -44,6 +49,24 @@ export interface MapDiagnosticEvent {
   source?: string;
   status?: number;
   url?: string;
+}
+
+interface DuckDBIdentifyBridgeResult {
+  coordinate: [number, number] | null;
+  featureId: string;
+  properties: Record<string, unknown>;
+}
+
+interface GeoLibreDuckDBBridge {
+  getFeatureBounds?: (
+    layerId: string,
+    featureId: string,
+  ) => [number, number, number, number] | null;
+  identifyLayerAtPoint?: (
+    layerId: string,
+    point: { x: number; y: number },
+  ) => DuckDBIdentifyBridgeResult | null;
+  setSelectedFeature?: (layerId: string, featureId: string | null) => void;
 }
 
 function stringifyIdentifyValue(value: unknown): string {
@@ -150,6 +173,13 @@ function findFeatureId(
 
 function isWmsLayer(layer: GeoLibreLayer): boolean {
   return layer.type === "wms";
+}
+
+function duckDBBridge(): GeoLibreDuckDBBridge | undefined {
+  return typeof window === "undefined"
+    ? undefined
+    : (window as Window & { __GEOLIBRE_DUCKDB__?: GeoLibreDuckDBBridge })
+        .__GEOLIBRE_DUCKDB__;
 }
 
 function stringSource(value: unknown): string | undefined {
@@ -562,6 +592,7 @@ export const MapCanvas = memo(function MapCanvas({
   const mapPreferences = useAppStore((s) => s.preferences.map);
   const mapView = useAppStore((s) => s.mapView);
   const layers = useAppStore((s) => s.layers);
+  const layerGroups = useAppStore((s) => s.layerGroups);
   const selectedLayerId = useAppStore((s) => s.selectedLayerId);
   const selectedFeatureId = useAppStore((s) => s.selectedFeatureId);
   const identifyLayerId = useAppStore((s) => s.identifyLayerId);
@@ -570,6 +601,7 @@ export const MapCanvas = memo(function MapCanvas({
   const setMapView = useAppStore((s) => s.setMapView);
   const setPointerCoords = useAppStore((s) => s.setPointerCoords);
   const previousSelectedFeatureKey = useRef<string | null>(null);
+  const previousDuckDBSelectionLayerId = useRef<string | null>(null);
   const identifyPopup = useRef<maplibregl.Popup | null>(null);
 
   useEffect(() => {
@@ -595,14 +627,43 @@ export const MapCanvas = memo(function MapCanvas({
       onMapDiagnosticEventRef.current?.(mapErrorDiagnosticEvent(event));
     });
 
-    const updateView = (event?: { originalEvent?: unknown }) =>
+    const updateView = (event?: { originalEvent?: unknown }) => {
+      // While presenting a story map the presenter owns the camera. Syncing its
+      // transient chapter flies and rotations back into the store would both
+      // overwrite the saved project view and, worse, re-enter the applyView
+      // effect below: its jumpTo cancels an in-flight chapter fly, after which
+      // the rotate handler starts orbiting the previous chapter instead of the
+      // one just clicked. Skipping the sync keeps the presenter authoritative.
+      if (useAppStore.getState().ui.storymapPresenting) return;
       setMapView(mc.readView(), Boolean(event?.originalEvent));
+    };
     map.on("moveend", updateView);
+
+    // Persist projection toggles (the GlobeControl) into project preferences so
+    // a project reopens with the projection it was saved in. getProjection()
+    // returns the configured type, so the internal globe→mercator switch at high
+    // zoom (which also fires this event) leaves the stored preference unchanged.
+    const updateProjection = () => {
+      const projection = mc.readProjection();
+      // Functional update so a concurrent preference change (zoom-limit edit,
+      // loadProject) between read and write is not clobbered by a stale snapshot.
+      useAppStore.setState((s) => {
+        if (s.preferences.map.projection === projection) return s;
+        return {
+          preferences: {
+            ...s.preferences,
+            map: { ...s.preferences.map, projection },
+          },
+          isDirty: true,
+        };
+      });
+    };
+    map.on("projectiontransition", updateProjection);
     map.on("load", () => {
-      mc.waitAndSyncLayers(useAppStore.getState().layers);
-      mc.setBasemapVisible(useAppStore.getState().basemapVisible);
-      mc.setBasemapOpacity(useAppStore.getState().basemapOpacity);
       const state = useAppStore.getState();
+      mc.waitAndSyncLayers(applyGroupEffects(state.layers, state.layerGroups));
+      mc.setBasemapVisible(state.basemapVisible);
+      mc.setBasemapOpacity(state.basemapOpacity);
       mc.highlightFeature(
         state.layers.find((layer) => layer.id === state.selectedLayerId),
         state.selectedFeatureId,
@@ -671,14 +732,12 @@ export const MapCanvas = memo(function MapCanvas({
     if (!map || prevBasemap.current === basemapStyleUrl) return;
     prevBasemap.current = basemapStyleUrl;
     map.once("style.load", () => {
-      controller.current?.waitAndSyncLayers(useAppStore.getState().layers);
-      controller.current?.setBasemapVisible(
-        useAppStore.getState().basemapVisible,
-      );
-      controller.current?.setBasemapOpacity(
-        useAppStore.getState().basemapOpacity,
-      );
       const state = useAppStore.getState();
+      controller.current?.waitAndSyncLayers(
+        applyGroupEffects(state.layers, state.layerGroups),
+      );
+      controller.current?.setBasemapVisible(state.basemapVisible);
+      controller.current?.setBasemapOpacity(state.basemapOpacity);
       controller.current?.highlightFeature(
         state.layers.find((layer) => layer.id === state.selectedLayerId),
         state.selectedFeatureId,
@@ -700,9 +759,18 @@ export const MapCanvas = memo(function MapCanvas({
     controller.current?.applyMapPreferences(mapPreferences);
   }, [mapPreferences]);
 
+  // Fold group visibility/opacity into each child layer before syncing so the
+  // map sync keeps treating every layer independently. This also re-runs when
+  // only a group's visibility/opacity changes (the raw `layers` array is then
+  // unchanged), because `renderLayers` depends on `layerGroups`.
+  const renderLayers = useMemo(
+    () => applyGroupEffects(layers, layerGroups),
+    [layers, layerGroups],
+  );
+
   useEffect(() => {
-    controller.current?.waitAndSyncLayers(layers);
-  }, [layers]);
+    controller.current?.waitAndSyncLayers(renderLayers);
+  }, [renderLayers]);
 
   useEffect(() => {
     const layer = layers.find((item) => item.id === selectedLayerId);
@@ -719,6 +787,23 @@ export const MapCanvas = memo(function MapCanvas({
     controller.current?.highlightFeature(layer, selectedFeatureId, {
       fit: shouldFit,
     });
+    if (layer && isDuckDBQueryLayer(layer)) {
+      duckDBBridge()?.setSelectedFeature?.(layer.id, selectedFeatureId);
+      if (shouldFit && selectedFeatureId) {
+        const bounds = duckDBBridge()?.getFeatureBounds?.(
+          layer.id,
+          selectedFeatureId,
+        );
+        if (bounds) controller.current?.fitBounds(bounds);
+      }
+      previousDuckDBSelectionLayerId.current = layer.id;
+    } else if (previousDuckDBSelectionLayerId.current) {
+      duckDBBridge()?.setSelectedFeature?.(
+        previousDuckDBSelectionLayerId.current,
+        null,
+      );
+      previousDuckDBSelectionLayerId.current = null;
+    }
   }, [layers, selectedLayerId, selectedFeatureId, zoomToSelectedFeature]);
 
   useEffect(() => {
@@ -815,6 +900,27 @@ export const MapCanvas = memo(function MapCanvas({
               createIdentifyMessagePopupElement(layer.name, message),
             );
           });
+        return;
+      }
+
+      if (isDuckDBQueryLayer(layer)) {
+        const result = duckDBBridge()?.identifyLayerAtPoint?.(layer.id, {
+          x: event.point.x,
+          y: event.point.y,
+        });
+        if (!result) {
+          clearIdentifyResult();
+          return;
+        }
+
+        selectFeature(result.featureId);
+        showIdentifyPopup(
+          createIdentifyPopupElement(
+            layer.name,
+            result.properties,
+            result.featureId,
+          ),
+        );
         return;
       }
 

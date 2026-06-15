@@ -2,27 +2,58 @@ import { isAllowedPluginManifestUrl } from "@geolibre/core";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { normalizeStringList } from "../lib/string-lists";
-
-const DESKTOP_SETTINGS_STORAGE_KEY = "geolibre.desktopSettings";
+import { DESKTOP_SETTINGS_STORAGE_KEY } from "../lib/storage-keys";
 
 export type DemSource = "" | "online" | "local";
 
 export interface DesktopSettings {
   additionalPluginDirectories: string[];
+  /**
+   * Persisted UI language code (e.g. `"en"`, `"zh"`). Empty string means "follow
+   * automatic detection" (browser/default). The i18n layer reads this directly
+   * from localStorage on startup; a `?locale`/`?lang` query param overrides it
+   * for embeds. See `src/i18n/index.ts`.
+   */
+  language: string;
+  layout: DesktopLayoutSettings;
   pluginManifestUrls: string[];
   openTopographyApiKey: string;
   demSource: DemSource;
   localDtmPath: string;
+  /**
+   * Personal API token for uploading projects to share.geolibre.app. Stored in
+   * the same localStorage-backed settings as everything else, so on the web
+   * build it shares the exposure surface of any other localStorage entry (a
+   * same-origin script could read it). This is the well-understood "PAT in local
+   * storage" trade-off; the token is short-lived/revocable and scoped to one
+   * service. Moving it to OS secure storage on desktop is a possible future
+   * hardening (see PR #190 review).
+   */
   shareToken: string;
 }
+
+export interface DesktopLayoutSettings {
+  layerPanelVisible: boolean;
+  showProjectInfo: boolean;
+  stylePanelVisible: boolean;
+  toolbarLabels: boolean;
 
 interface DesktopSettingsState {
   desktopSettings: DesktopSettings;
   setDesktopSettings: (settings: DesktopSettings) => void;
 }
 
+export const DEFAULT_DESKTOP_LAYOUT_SETTINGS: DesktopLayoutSettings = {
+  layerPanelVisible: true,
+  showProjectInfo: true,
+  stylePanelVisible: true,
+  toolbarLabels: true,
+};
+
 const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   additionalPluginDirectories: [],
+  language: "",
+  layout: DEFAULT_DESKTOP_LAYOUT_SETTINGS,
   pluginManifestUrls: [],
   openTopographyApiKey: "",
   demSource: "",
@@ -40,6 +71,9 @@ function normalizeDesktopSettings(settings: unknown): DesktopSettings {
     additionalPluginDirectories: normalizeStringList(
       candidate.additionalPluginDirectories,
     ),
+    language:
+      typeof candidate.language === "string" ? candidate.language.trim() : "",
+    layout: normalizeDesktopLayoutSettings(candidate.layout),
     // Apply the same scheme rule as project-file loading so stale or edited
     // localStorage values cannot smuggle in disallowed URL schemes.
     pluginManifestUrls: normalizeStringList(candidate.pluginManifestUrls).filter(
@@ -58,9 +92,37 @@ function normalizeDesktopSettings(settings: unknown): DesktopSettings {
         ? candidate.localDtmPath.trim()
         : "",
     shareToken:
-      typeof candidate.shareToken === "string"
-        ? candidate.shareToken.trim()
-        : "",
+      typeof candidate.shareToken === "string" ? candidate.shareToken.trim() : "",
+  };
+}
+
+function normalizeDesktopLayoutSettings(
+  layout: unknown,
+): DesktopLayoutSettings {
+  if (!layout || typeof layout !== "object") {
+    return DEFAULT_DESKTOP_LAYOUT_SETTINGS;
+  }
+
+  // Require strict booleans so tampered localStorage values (e.g. "yes")
+  // cannot smuggle non-boolean values into the layout settings.
+  const candidate = layout as Partial<DesktopLayoutSettings>;
+  return {
+    layerPanelVisible:
+      typeof candidate.layerPanelVisible === "boolean"
+        ? candidate.layerPanelVisible
+        : DEFAULT_DESKTOP_LAYOUT_SETTINGS.layerPanelVisible,
+    showProjectInfo:
+      typeof candidate.showProjectInfo === "boolean"
+        ? candidate.showProjectInfo
+        : DEFAULT_DESKTOP_LAYOUT_SETTINGS.showProjectInfo,
+    stylePanelVisible:
+      typeof candidate.stylePanelVisible === "boolean"
+        ? candidate.stylePanelVisible
+        : DEFAULT_DESKTOP_LAYOUT_SETTINGS.stylePanelVisible,
+    toolbarLabels:
+      typeof candidate.toolbarLabels === "boolean"
+        ? candidate.toolbarLabels
+        : DEFAULT_DESKTOP_LAYOUT_SETTINGS.toolbarLabels,
   };
 }
 

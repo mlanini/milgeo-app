@@ -5,110 +5,125 @@ hide:
 
 <section class="hero">
   <div class="hero__content">
-    <p class="eyebrow">Professional Military GIS Platform</p>
-    <h1>Advanced geospatial intelligence platform with APP-6D tactical symbology and operational planning tools.</h1>
+    <p class="eyebrow">Cloud-native GIS platform</p>
+    <h1>A lightweight, cloud-native GIS platform for visualizing, exploring, and analyzing geospatial data.</h1>
     <p class="hero__lead">
-      MilGeo.app is a powerful military GIS platform built with React,
-      TypeScript, MapLibre GL JS, DuckDB-WASM Spatial, milsymbol, and deck.gl. Purpose-built
-      for defense and security operations with APP-6D tactical symbols, tactical graphics, ORBAT management,
-      fast vector/raster processing, cloud-native data workflows, and extensible plugin architecture.
+      GeoLibre is built with Tauri, React, TypeScript, MapLibre GL JS,
+      DuckDB-WASM Spatial, and deck.gl. The same workspace runs across desktop
+      and web environments, adapting responsively to mobile screens, with fast
+      local and cloud-native data work, project files, styling, plugins, and
+      modern geospatial workflows.
     </p>
     <div class="hero__actions">
       <a class="md-button md-button--primary" href="https://viewer.geolibre.app/">Open live demo</a>
       <a class="md-button" href="getting-started/">Get started</a>
+      <a class="md-button" href="user-guide/interface/">User guide</a>
       <a class="md-button" href="downloads/">Download app</a>
     </div>
   </div>
   <figure class="hero__media">
-    <img src="https://files.opengeos.org/GeoLibre-demo.webp" alt="MilGeo.app map interface showing military tactical workspace">
+    <img src="https://files.opengeos.org/GeoLibre-demo.webp" alt="GeoLibre map interface showing the GIS workspace">
   </figure>
 </section>
 
-## What MilGeo.app does today
+## What GeoLibre does today
 
 <div class="feature-grid" markdown>
 
 <div class="feature-card" markdown>
-### APP-6D Tactical Symbology
+### MapLibre map workspace
 
-Place and manage NATO APP-6D / MIL-STD-2525D military symbols from a searchable catalog with full affiliation support. Import and export GeoJSON and KML with SIDC codes, manage ORBAT data, visualize unit positioning, and maintain tactical overlays.
+Pan, zoom, rotate, and tilt a MapLibre map with OpenFreeMap basemaps or a blank background. Toggle built-in controls for navigation, globe, terrain, geolocation, scale, attribution, and logo, plus on-map tools like Measure, Bookmark, Minimap, and View State.
 </div>
 
 <div class="feature-card" markdown>
-### Tactical Graphics
+### Local and remote data
 
-Create interactive tactical graphics including FLOT (Forward Line of Own Troops), boundaries, fire support areas, objectives, control measures, and other operational graphics. Draw, edit, and style tactical overlays with military standard symbology.
+Load local and remote vector and raster data, inspect and manage attributes in the table (add fields, a field calculator, a Charts panel, a field statistics summary, plus rename, hide, reorder, delete, and export to GeoJSON/GeoParquet/Shapefile/GeoPackage/CSV), style layers with single, categorized, graduated, and expression symbology (plus point heatmap and clustering renderers), organize the layer stack with collapsible groups, reorder, rename, and refresh layers with undo/redo, and save, reopen, or share `.geolibre.json` projects.
 </div>
 
 <div class="feature-card" markdown>
-### MapLibre Workspace
+### Plugins and marketplace
 
-Professional map workspace with OpenFreeMap basemaps or blank backgrounds, smooth pan/zoom/rotate, globe and terrain view, measure tools, bookmarks, minimap, geolocation, and comprehensive control customization.
+Activate built-in plugins for layer control, basemaps, MapLibre components, swipe, street view, time slider, Overture Maps, LiDAR, GeoAgent, GeoEditor, and atmosphere effects, and install, update, or remove external plugins from the built-in marketplace.
 </div>
 
 <div class="feature-card" markdown>
-### Vector Analysis Tools
+### Advanced layer formats
 
-Perform common geometry operations in-browser: buffer, centroids, convex hull, dissolve, bounding box, simplify, clip, intersection, difference, and union. Powered by Turf.js with optional GeoPandas sidecar for heavy operations.
+Add Data covers XYZ, WMS, WFS, WMTS, ArcGIS, and STAC services; GeoParquet, FlatGeobuf, PMTiles, Zarr, and OpenStreetMap PBF; COG and GeoTIFF rasters, Cloud-Optimized NetCDF/HDF, and MBTiles; LiDAR, Gaussian splats, 3D Tiles (including authenticated tilesets), georeferenced video overlays, and deck.gl layers; and DuckDB and PostgreSQL databases.
 </div>
 
 <div class="feature-card" markdown>
-### Raster Processing
+### Conversion and Whitebox
 
-Execute raster analysis with hillshade, slope, aspect, reproject, resample, clip by extent, clip by mask, polygonize, and contour generation. Runs on Python/rasterio sidecar with COG and GeoTIFF support.
-</div>
-
-<div class="feature-card" markdown>
-### Cloud-Native Data
-
-Load local and remote vector/raster data. Add XYZ, WMS, WFS, WMTS, vector tiles, COG/GeoTIFF rasters, MBTiles, ArcGIS services, GeoParquet, FlatGeobuf, PMTiles, Zarr, LiDAR, 3D Tiles, Gaussian splats, and database layers (DuckDB, PostgreSQL).
+Convert data to cloud-native GeoParquet, FlatGeobuf, PMTiles, and COG from the Conversion menu, and run batch geoprocessing with the Whitebox toolbox on the optional Python sidecar.
 </div>
 
 <div class="feature-card" markdown>
 ### SQL Workspace
 
-Run DuckDB Spatial SQL directly in the browser against loaded layers, local files, and remote URLs. Execute spatial queries with auto-wrapping of URLs, streaming over HTTP range requests, query history, and export results as CSV or GeoParquet.
+Run DuckDB Spatial SQL in the browser against loaded layers, local files, and remote URLs, or query with the in-browser PostGIS engine powered by PGlite. Auto-wraps bare URLs into the matching reader and streams remote files over HTTP range requests. Includes sample queries, query history, and adding a result (with an optional layer name) to the map or exporting it as CSV or GeoParquet.
 </div>
 
 <div class="feature-card" markdown>
-### Data Conversion
+### Vector tools
 
-Convert datasets to optimized cloud-native formats: GeoParquet, FlatGeobuf, PMTiles, and COG. Batch process multiple files through the Conversion menu for efficient data distribution and web serving.
+Common geometry tools under Processing → Vector: buffer, centroids, convex hull, dissolve, bounding box, simplify, smooth, regular grid, Voronoi/Delaunay, clip, intersection, difference, union, spatial join, attribute join, select by value, select by location, and H3 hexagonal grids and binning. They run in the browser with Turf.js, with an optional GeoPandas sidecar engine for every tool. A Spatial Statistics toolbox and a batch runner with model/pipeline chaining round out Processing.
 </div>
 
 <div class="feature-card" markdown>
-### Whitebox Geoprocessing
+### Raster tools
 
-Access 500+ geospatial processing tools from the Whitebox toolbox. Run batch geoprocessing workflows on the optional Python sidecar for hydrology, terrain analysis, LiDAR processing, and more.
+Common raster tools under Processing → Raster: hillshade, slope, aspect, reproject, resample, clip by extent, clip by mask layer, polygonize, contour, zonal statistics, raster calculator, reclassify, mosaic, and focal statistics. They run on a rasterio Python sidecar, with a client-side fallback for core tools when no sidecar is available. Style rasters with single-band pseudocolor classification or RGB band combination, and drag a GeoTIFF/COG onto the map to add it as a raster layer.
 </div>
 
 <div class="feature-card" markdown>
-### Project Management
+### Python and Jupyter
 
-Save, open, and share `.geolibre.json` projects with full state preservation including layers, styles, symbols, tactical graphics, plugin configurations, and map view. Load projects by URL for instant sharing.
+Embed the full GeoLibre app in a Jupyter notebook with the [`geolibre`](python.md) Python package. An expanded leafmap-style API (`add_geojson`, `add_tile_layer`, `add_cog`, local raster, marker/cluster, and choropleth layers, plus `split_map`, `add_legend`, `add_colorbar`, and `to_html`) drives the map, and the project syncs both ways so UI edits — including selected and drawn features — are readable back from Python. An in-app Python Console and automation API script the app directly.
 </div>
 
 <div class="feature-card" markdown>
-### Plugin Architecture
+### AI Assistant
 
-Built-in plugins for basemaps, layer control, MapLibre components, swipe comparison, street view, time slider, Overture Maps, LiDAR visualization, GeoAgent, GeoEditor, and marketplace support for external plugin installation.
+Chat with your data: a natural-language [assistant](user-guide/ai-assistant.md) that turns plain-English requests into GeoLibre's own operations — Spatial SQL, symbology, add/remove data, and map control — applied through the app so they stay auditable and undoable. Provider-pluggable (Google Gemini, Anthropic, OpenAI) with your own API key, disabled until configured.
 </div>
 
 <div class="feature-card" markdown>
-### Layer Styling & Inspection
+### Collaboration and story maps
 
-Data-driven symbology with live style panel for fill, stroke, opacity, and radius. Attribute table with filtering, sorting, feature highlighting, and zoom to selection. WMS GetFeatureInfo identify support with popup handling.
+Edit the same project with others in real time ([collaboration](collaboration.md) MVP; requires `VITE_GEOLIBRE_COLLAB_URL`), and build scroll-driven [story maps](user-guide/storymaps.md) with a presenter view and standalone HTML export.
+</div>
+
+<div class="feature-card" markdown>
+### Network analysis and geocoding
+
+Compute isochrones, service areas, and origin–destination cost matrices for network analysis, and run forward, batch, and reverse [geocoding](user-guide/data-integrations.md#geocoding) through a multi-provider abstraction.
 </div>
 
 </div>
+
+## Learn GeoLibre
+
+New to GeoLibre? Start with the [User Guide](user-guide/interface.md) for a feature-by-feature tour of the workspace, menus, panels, and tools, then follow the [Tutorials](tutorials/index.md) for hands-on, end-to-end workflows.
+
+- [Interface Overview](user-guide/interface.md): the toolbar, panels, map, and status bar.
+- [Adding Data](user-guide/adding-data.md): every file, web service, cloud, 3D, and database source.
+- [Processing Tools](user-guide/processing.md) and [SQL Workspace](user-guide/sql-workspace.md): analysis with vector, raster, conversion, Whitebox, and DuckDB Spatial SQL.
+- [AI Assistant](user-guide/ai-assistant.md): chat with your data — natural language to SQL, symbology, and map control.
+- [Plugins & Marketplace](user-guide/plugins.md): activate built-ins and install from the registry.
+- [Your First Map](tutorials/first-map.md): add a layer, style it, inspect it, and share it.
+
+[Read the User Guide](user-guide/interface.md){ .md-button .md-button--primary }
+[Browse the Tutorials](tutorials/index.md){ .md-button }
 
 ## Try it in the browser
 
-The live demo is the browser-capable version of the MilGeo.app interface. It supports exploring the map, loading browser-selected vector data via DuckDB-WASM Spatial, adding URL-based layers, styling layers, placing tactical symbols, and testing plugins. Desktop-only features like filesystem dialogs, local MBTiles, local raster reads, and filesystem save/open operations require the Tauri desktop app.
+The live demo is the browser-capable version of the GeoLibre desktop UI. It is useful for exploring the map, loading browser-selected vector data supported by DuckDB-WASM Spatial, adding URL-based layers, styling layers, and testing plugins. Desktop-only file dialogs, local MBTiles, local raster reads, and filesystem save/open operations still require the installed Tauri app.
 
-**Hosted on GitHub Pages, private by design**
-
-The live demo is a static site deployed on GitHub Pages and runs entirely in your browser. It has no analytics and no server account. Data you load is processed client-side in your browser session. Data leaves your browser only when you explicitly add a remote URL or share a project.
+!!! note "Hosted on GitHub Pages, private by design"
+    The live demo is a static site deployed on GitHub Pages and runs entirely in your browser. It has no analytics and no server account, and the data you load is processed client-side in your browser session. Data leaves your browser only when you choose to add a remote URL or explicitly share a project.
 
 Open a project by passing a public `.geolibre.json` URL with the `url` query parameter:
 
@@ -116,7 +131,7 @@ Open a project by passing a public `.geolibre.json` URL with the `url` query par
 https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json
 ```
 
-For narrow embeds, add `?layout=compact` to use icon-only toolbar buttons and hide project metadata:
+For narrow embeds, add `?layout=compact` to the demo URL to use icon-only toolbar buttons and hide project metadata:
 
 ```text
 https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json&layout=compact
@@ -128,26 +143,19 @@ For map-focused embeds, add `&panels=none` to hide the Layers, Style, and Attrib
 https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json&layout=compact&panels=none
 ```
 
+Use `toolbar=icons` when you only want icon-only toolbar buttons. `panels=hidden`, `panels=hide`, `panels=off`, and `hidePanels=true` are accepted aliases for hiding panels.
+
 For a fully chrome-free, map-only embed, add `&maponly` to hide the toolbar menu, all panels, and the status bar:
 
 ```text
 https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json&maponly
 ```
 
-Use `toolbar=icons` when you only want icon-only toolbar buttons. `panels=hidden`, `panels=hide`, `panels=off`, and `hidePanels=true` are accepted aliases for hiding panels.
-
-| Parameter | Example | Description |
-| --- | --- | --- |
-| `url` | `url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json` | Loads a `.geolibre.json` project from a public URL. |
-| `layout` | `layout=compact` | Uses the compact embed layout with icon-only toolbar buttons and hidden project metadata. `embed` and `iframe` are aliases. |
-| `toolbar` | `toolbar=icons` | Shows icon-only toolbar buttons without enabling the full compact layout. |
-| `panels` | `panels=none` | Hides the Layers, Style, and Attribute table panels. `hidden`, `hide`, and `off` are aliases. |
-| `hidePanels` | `hidePanels=true` | Alternative way to hide the Layers, Style, and Attribute table panels. |
-| `maponly` | `maponly=true` | Hides toolbar menu, all panels, and status bar for a pure map view. |
+Other parameters control the toolbar, panels, and theme. See [Embedding & Sharing](user-guide/embedding.md) for the full parameter reference and `<iframe>` examples.
 
 [Open the live demo](https://viewer.geolibre.app/){ .md-button .md-button--primary }
-[Read the architecture](architecture.md){ .md-button }
+[Embedding & Sharing](user-guide/embedding.md){ .md-button }
 
 ## Project status
 
-MilGeo.app 0.8.0 is an advanced military GIS platform suitable for tactical planning, operational intelligence, and geospatial analysis. The platform includes the MapLibre workspace with full control customization, APP-6D tactical symbology with searchable catalog and ORBAT support, tactical graphics for operational planning, comprehensive data support (vector, raster, 3D, databases), cloud-native format handling (GeoParquet, FlatGeobuf, PMTiles, COG), vector processing tools (buffer, dissolve, clip, union via Turf.js and GeoPandas), raster analysis (hillshade, slope, aspect, clip, contour via rasterio), DuckDB Spatial SQL workspace with query history and export, Whitebox toolbox with 500+ geoprocessing tools, data conversion workflows, plugin architecture with marketplace support, project save/open/share, layer styling with data-driven symbology, attribute table with filtering and editing, WMS/WFS service support, 3D Tiles and LiDAR visualization, desktop installers (MSIX, DMG, AppImage), and comprehensive embed/share parameters including maponly mode. See the [roadmap](roadmap.md) for upcoming tactical workflow enhancements, expanded ORBAT features, and advanced processing pipelines.
+GeoLibre 1.3 is a stable release. It includes the map workspace, the `.geolibre.json` project format with Save, Open, and Share, the plugin API, and the plugin marketplace for installing, updating, and removing external plugins. Data support spans browser vector import, DuckDB-WASM Spatial loading, the full Add Data surface (files, web services, cloud formats, 3D layers, and databases), and cloud integrations through the Planetary Computer and Earth Engine panels, the Overture Maps plugin, and the federal Web Services plugins. Processing covers the vector tools (Turf.js with an optional GeoPandas sidecar), the raster tools (rasterio sidecar with a client-side fallback), a Spatial Statistics toolbox, network analysis (isochrones, service areas, OD cost matrices), the Conversion menu (GeoParquet, FlatGeobuf, PMTiles, COG), the Whitebox toolbox, AI Segmentation via SamGeo/SAM 3, and the SQL Workspace for DuckDB Spatial SQL (with PGlite PostGIS and Apache Sedona engines). The release also ships real-time multi-user collaboration, a scroll-driven story map builder, a natural-language AI assistant and in-app Python Console, multi-provider geocoding, the Time Slider plugin, a Controls menu (Measure, Bookmark, Minimap, View State), a Print menu, Layout settings, runtime environment variables, diagnostics, embed-friendly URL parameters including the `maponly` mode, cross-platform installers (including a macOS Homebrew Cask), and Docker support for the browser app. v1.3 also adds a native **Android** app built from the same codebase via Tauri v2 mobile (see [Android](android.md)), a responsive touch layout for phones, and offline improvements (a Download Offline Area tool plus service-worker caching of the CDN-loaded Pyodide and PGlite/PostGIS engines). See the [roadmap](roadmap.md) for the full release history and what comes next.

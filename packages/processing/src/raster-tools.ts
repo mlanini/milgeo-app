@@ -13,7 +13,13 @@ export type RasterToolId =
   | "clip-extent"
   | "clip-mask"
   | "polygonize"
-  | "contour";
+  | "contour"
+  | "interpolate"
+  | "zonal"
+  | "raster-calc"
+  | "reclassify"
+  | "mosaic"
+  | "focal";
 
 /** A native file-dialog filter (Tauri `open`/`save` shape). */
 export interface FileFilter {
@@ -22,22 +28,43 @@ export interface FileFilter {
 }
 
 /**
- * A raster processing tool. Unlike `ProcessingAlgorithm`, raster tools never
- * run client-side: they always execute on the Python sidecar (rasterio/GDAL)
- * with a file path in and a file path out. The tool only declares its
- * operation parameters; the dialog always renders the primary input/output
- * file pickers from `inputFilters` / `outputFilters` / `defaultOutputName`.
+ * A raster processing tool. Most raster tools execute on the Python sidecar
+ * (rasterio/GDAL) with a file path in and a file path out. A subset also has an
+ * in-browser implementation (`supportsClient`) backed by `geotiff.js`, so the
+ * toolbox degrades gracefully when no sidecar is running, mirroring the vector
+ * tools. The tool only declares its operation parameters; the dialog always
+ * renders the primary input/output file pickers from `inputFilters` /
+ * `outputFilters` / `defaultOutputName`.
  */
 export interface RasterTool {
   id: RasterToolId;
   name: string;
   description: string;
-  group: "Terrain" | "Reproject" | "Clip" | "Raster to Vector";
+  group:
+    | "Terrain"
+    | "Reproject"
+    | "Clip"
+    | "Raster to Vector"
+    | "Vector to Raster"
+    | "Analysis";
   /** Raster output writes a GeoTIFF; vector output writes a GeoJSON. */
   outputKind: "raster" | "vector";
   defaultOutputName: string;
   inputFilters: FileFilter[];
   outputFilters: FileFilter[];
+  /**
+   * i18n key for the primary input file picker label. Defaults to
+   * `toolbar.rasterTool.inputRaster`; tools that take a vector input (e.g.
+   * interpolation reads a point GeoJSON) override it so the dialog reads
+   * correctly.
+   */
+  inputLabel?: string;
+  /**
+   * Whether the tool also runs entirely in the browser (no sidecar required),
+   * via the `geotiff.js` client engine. The dialog shows an engine selector for
+   * these tools and adds the computed raster straight to the map.
+   */
+  supportsClient?: boolean;
   /** Operation knobs (not the primary input/output paths). */
   parameters: AlgorithmParameter[];
 }
@@ -49,6 +76,9 @@ const GEOTIFF_OUTPUT: FileFilter[] = [
   { name: "GeoTIFF", extensions: ["tif", "tiff"] },
 ];
 const GEOJSON_OUTPUT: FileFilter[] = [
+  { name: "GeoJSON", extensions: ["geojson", "json"] },
+];
+const GEOJSON_INPUT: FileFilter[] = [
   { name: "GeoJSON", extensions: ["geojson", "json"] },
 ];
 
@@ -68,6 +98,7 @@ export const hillshadeTool: RasterTool = {
   defaultOutputName: "hillshade.tif",
   inputFilters: GEOTIFF_INPUT,
   outputFilters: GEOTIFF_OUTPUT,
+  supportsClient: true,
   parameters: [
     {
       id: "azimuth",
@@ -107,6 +138,7 @@ export const slopeTool: RasterTool = {
   defaultOutputName: "slope.tif",
   inputFilters: GEOTIFF_INPUT,
   outputFilters: GEOTIFF_OUTPUT,
+  supportsClient: true,
   parameters: [
     {
       id: "units",
@@ -139,6 +171,8 @@ export const aspectTool: RasterTool = {
   defaultOutputName: "aspect.tif",
   inputFilters: GEOTIFF_INPUT,
   outputFilters: GEOTIFF_OUTPUT,
+  supportsClient: true,
+  // Aspect is a direction, so a z_factor would have no effect on the result.
   parameters: [],
 };
 
@@ -208,6 +242,7 @@ export const clipExtentTool: RasterTool = {
   defaultOutputName: "clipped.tif",
   inputFilters: GEOTIFF_INPUT,
   outputFilters: GEOTIFF_OUTPUT,
+  supportsClient: true,
   parameters: [
     { id: "minx", label: "Min X", type: "number", required: true, step: 0.0001 },
     { id: "miny", label: "Min Y", type: "number", required: true, step: 0.0001 },
@@ -261,7 +296,7 @@ export const polygonizeTool: RasterTool = {
   inputFilters: GEOTIFF_INPUT,
   outputFilters: GEOJSON_OUTPUT,
   parameters: [
-    { id: "band", label: "Band", type: "number", default: 1, min: 1, step: 1 },
+    { id: "band", label: "Band", type: "number", default: 1, min: 1, max: 99, step: 1 },
     {
       id: "connectivity",
       label: "Connectivity",
@@ -291,7 +326,7 @@ export const contourTool: RasterTool = {
   inputFilters: GEOTIFF_INPUT,
   outputFilters: GEOJSON_OUTPUT,
   parameters: [
-    { id: "band", label: "Band", type: "number", default: 1, min: 1, step: 1 },
+    { id: "band", label: "Band", type: "number", default: 1, min: 1, max: 99, step: 1 },
     {
       id: "interval",
       label: "Interval",
@@ -311,6 +346,271 @@ export const contourTool: RasterTool = {
   ],
 };
 
+export const interpolateTool: RasterTool = {
+  id: "interpolate",
+  name: "Interpolation (IDW / Kriging)",
+  description:
+    "Interpolate a point layer's numeric attribute into a continuous raster surface using inverse distance weighting or ordinary kriging.",
+  group: "Vector to Raster",
+  outputKind: "raster",
+  defaultOutputName: "interpolated.tif",
+  inputFilters: GEOJSON_INPUT,
+  outputFilters: GEOTIFF_OUTPUT,
+  inputLabel: "toolbar.rasterTool.inputPoints",
+  parameters: [
+    {
+      id: "field",
+      label: "Value field",
+      type: "string",
+      required: true,
+      description:
+        "Name of the numeric point attribute to interpolate (e.g. elevation, temperature).",
+    },
+    {
+      id: "method",
+      label: "Method",
+      type: "select",
+      default: "idw",
+      options: [
+        { value: "idw", label: "Inverse distance weighting (IDW)" },
+        { value: "kriging", label: "Ordinary kriging" },
+      ],
+    },
+    {
+      id: "resolution",
+      label: "Output pixel size",
+      type: "number",
+      required: true,
+      min: 0.000001,
+      step: 0.0001,
+      description:
+        "Cell size in the layer's CRS units (degrees for WGS84). The grid covers the points' extent.",
+    },
+    {
+      id: "power",
+      label: "IDW power",
+      type: "number",
+      default: 2,
+      min: 0.1,
+      step: 0.1,
+      visibleWhen: { param: "method", in: ["idw"] },
+      description: "Higher values give nearby points more influence.",
+    },
+    {
+      id: "variogram_model",
+      label: "Variogram model",
+      type: "select",
+      default: "spherical",
+      options: [
+        { value: "spherical", label: "Spherical" },
+        { value: "exponential", label: "Exponential" },
+        { value: "gaussian", label: "Gaussian" },
+        { value: "linear", label: "Linear" },
+      ],
+      visibleWhen: { param: "method", in: ["kriging"] },
+      description:
+        "Theoretical model fitted to the empirical semivariogram. Kriging is capped at 1500 points.",
+    },
+  ],
+};
+
+export const zonalStatisticsTool: RasterTool = {
+  id: "zonal",
+  name: "Zonal statistics",
+  description:
+    "Summarize raster values within each polygon of a vector layer (count, min, max, mean, sum, std, median).",
+  group: "Analysis",
+  outputKind: "vector",
+  defaultOutputName: "zonal-stats.geojson",
+  inputFilters: GEOTIFF_INPUT,
+  outputFilters: GEOJSON_OUTPUT,
+  parameters: [
+    {
+      id: "zones_path",
+      label: "Zones layer",
+      type: "path",
+      required: true,
+      fileFilters: [{ name: "GeoJSON", extensions: ["geojson", "json"] }],
+      description:
+        "A GeoJSON polygon layer defining the zones. It is reprojected to the raster's CRS automatically (a GeoJSON with no CRS is assumed to be WGS84).",
+    },
+    { id: "band", label: "Band", type: "number", default: 1, min: 1, max: 99, step: 1 },
+    {
+      id: "prefix",
+      label: "Field prefix",
+      type: "string",
+      default: "",
+      description:
+        "Prepended to each statistic field name (e.g. 'dem_' → 'dem_mean'). Leave blank for bare 'mean', 'min', …",
+    },
+  ],
+};
+
+export const rasterCalculatorTool: RasterTool = {
+  id: "raster-calc",
+  name: "Raster calculator",
+  description:
+    "Evaluate a NumPy band-math expression. Reference band 1 of each input as A, B, C and specific bands as A1, A2, …; e.g. NDVI is (A2 - A1) / (A2 + A1).",
+  group: "Analysis",
+  outputKind: "raster",
+  defaultOutputName: "calc.tif",
+  inputFilters: GEOTIFF_INPUT,
+  outputFilters: GEOTIFF_OUTPUT,
+  inputLabel: "toolbar.rasterTool.inputRasterA",
+  supportsClient: true,
+  parameters: [
+    {
+      id: "expression",
+      label: "Expression",
+      type: "string",
+      required: true,
+      description:
+        "A NumPy expression over A, B, C (and A1, A2, …). Functions: where, log, exp, sqrt, abs, clip, minimum, maximum, sin, cos, tan.",
+    },
+    {
+      id: "b_path",
+      label: "Raster B (optional)",
+      type: "path",
+      fileFilters: GEOTIFF_INPUT,
+      description: "A second raster, referenced as B / B1, B2, …. Must match A's dimensions.",
+    },
+    {
+      id: "c_path",
+      label: "Raster C (optional)",
+      type: "path",
+      fileFilters: GEOTIFF_INPUT,
+      description: "A third raster, referenced as C / C1, C2, …. Must match A's dimensions.",
+    },
+  ],
+};
+
+export const reclassifyTool: RasterTool = {
+  id: "reclassify",
+  name: "Reclassify",
+  description: "Remap value ranges to new class values using a rule table.",
+  group: "Analysis",
+  outputKind: "raster",
+  defaultOutputName: "reclassified.tif",
+  inputFilters: GEOTIFF_INPUT,
+  outputFilters: GEOTIFF_OUTPUT,
+  supportsClient: true,
+  parameters: [
+    { id: "band", label: "Band", type: "number", default: 1, min: 1, max: 99, step: 1 },
+    {
+      id: "table",
+      label: "Rules",
+      type: "string",
+      required: true,
+      description:
+        "Comma- or newline-separated 'min:max:newvalue' rules, e.g. '0:10:1, 10:20:2, 20:max:3'. Ranges are half-open [min, max); blank/min/max mean ±∞.",
+    },
+    {
+      id: "unmatched",
+      label: "Unmatched values",
+      type: "select",
+      default: "nodata",
+      options: [
+        { value: "nodata", label: "Set to NoData" },
+        { value: "original", label: "Keep original value" },
+      ],
+    },
+  ],
+};
+
+export const mosaicTool: RasterTool = {
+  id: "mosaic",
+  name: "Mosaic / merge",
+  description:
+    "Combine up to five rasters (sharing a CRS) into a single raster covering their union.",
+  group: "Analysis",
+  outputKind: "raster",
+  defaultOutputName: "mosaic.tif",
+  inputFilters: GEOTIFF_INPUT,
+  outputFilters: GEOTIFF_OUTPUT,
+  inputLabel: "toolbar.rasterTool.inputRaster1",
+  parameters: [
+    {
+      id: "raster_2",
+      label: "Second raster",
+      type: "path",
+      required: true,
+      fileFilters: GEOTIFF_INPUT,
+    },
+    {
+      id: "raster_3",
+      label: "Third raster (optional)",
+      type: "path",
+      fileFilters: GEOTIFF_INPUT,
+    },
+    {
+      id: "raster_4",
+      label: "Fourth raster (optional)",
+      type: "path",
+      fileFilters: GEOTIFF_INPUT,
+    },
+    {
+      id: "raster_5",
+      label: "Fifth raster (optional)",
+      type: "path",
+      fileFilters: GEOTIFF_INPUT,
+    },
+    {
+      id: "method",
+      label: "Overlap method",
+      type: "select",
+      default: "first",
+      options: [
+        { value: "first", label: "First" },
+        { value: "last", label: "Last" },
+        { value: "min", label: "Minimum" },
+        { value: "max", label: "Maximum" },
+      ],
+      description: "Which value wins where inputs overlap.",
+    },
+  ],
+};
+
+export const focalStatisticsTool: RasterTool = {
+  id: "focal",
+  name: "Focal statistics",
+  description:
+    "Apply a moving-window (neighbourhood) statistic to a raster band.",
+  group: "Analysis",
+  outputKind: "raster",
+  defaultOutputName: "focal.tif",
+  inputFilters: GEOTIFF_INPUT,
+  outputFilters: GEOTIFF_OUTPUT,
+  supportsClient: true,
+  parameters: [
+    { id: "band", label: "Band", type: "number", default: 1, min: 1, max: 99, step: 1 },
+    {
+      id: "statistic",
+      label: "Statistic",
+      type: "select",
+      default: "mean",
+      options: [
+        { value: "mean", label: "Mean" },
+        { value: "median", label: "Median" },
+        { value: "min", label: "Minimum" },
+        { value: "max", label: "Maximum" },
+        { value: "sum", label: "Sum" },
+        { value: "std", label: "Standard deviation" },
+        { value: "range", label: "Range (max − min)" },
+      ],
+    },
+    {
+      id: "size",
+      label: "Window size",
+      type: "number",
+      default: 3,
+      min: 3,
+      max: 25,
+      step: 2,
+      description: "Odd neighbourhood size in pixels (3 = 3×3). Capped at 25.",
+    },
+  ],
+};
+
 /** Every raster tool, in display order (grouped by `group`). */
 export const RASTER_TOOLS: RasterTool[] = [
   hillshadeTool,
@@ -322,6 +622,12 @@ export const RASTER_TOOLS: RasterTool[] = [
   clipMaskTool,
   polygonizeTool,
   contourTool,
+  interpolateTool,
+  zonalStatisticsTool,
+  rasterCalculatorTool,
+  reclassifyTool,
+  mosaicTool,
+  focalStatisticsTool,
 ];
 
 export function getRasterTool(id: string): RasterTool | undefined {

@@ -6,11 +6,20 @@ import {
 import {
   maplibreBasemapControlPlugin,
   maplibreComponentsPlugin,
+  maplibreDeckGlVizPlugin,
+  maplibreDirectionsPlugin,
+  maplibreEffectsPlugin,
+  maplibreEnviroAtlasPlugin,
   maplibreEsriWaybackPlugin,
+  maplibreFemaWmsPlugin,
   maplibreGeoAgentPlugin,
   maplibreGeoEditorPlugin,
   maplibreLayerControlPlugin,
   maplibreLidarPlugin,
+  maplibreNasaEarthdataPlugin,
+  maplibreNationalMapPlugin,
+  maplibreOvertureMapsPlugin,
+  maplibreReverseGeocodePlugin,
   maplibreStreetViewPlugin,
   maplibreSwipePlugin,
   maplibreTimeSliderPlugin,
@@ -18,7 +27,9 @@ import {
 } from "@geolibre/plugins";
 import type { MapController } from "@geolibre/map";
 import type {
+  GeoLibreDeckGL,
   GeoLibreExternalNativeLayerRegistration,
+  GeoLibreFileDialogOptions,
   GeoLibreMapControlPosition,
 } from "@geolibre/plugins";
 import { invoke } from "@tauri-apps/api/core";
@@ -26,11 +37,38 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readDir, readFile } from "@tauri-apps/plugin-fs";
 import type { RefObject } from "react";
 import { useEffect, useSyncExternalStore } from "react";
-import { loadExternalPlugins } from "../lib/external-plugins";
+import { bundledPluginManifestPaths } from "virtual:bundled-plugins";
+import {
+  loadExternalPlugins,
+  reloadExternalUrlPlugin,
+  resolvePluginAssetUrlForLoadedPlugin,
+  unloadRemovedUrlPlugins,
+} from "../lib/external-plugins";
+import { appendDiagnostic } from "../lib/diagnostics";
 import { mergeStringLists } from "../lib/string-lists";
+import {
+  openLocalDataFileWithFallback,
+  saveTextFileWithFallback,
+} from "../lib/tauri-io";
 import { useDesktopSettingsStore } from "./useDesktopSettings";
 
 const RASTER_PROXY_PATH = "/__geolibre_raster_proxy";
+
+/** Records a plugin failure in the diagnostics panel without crashing the app. */
+function reportPluginError(
+  pluginId: string,
+  action: string,
+  error: unknown,
+): void {
+  const normalized = error instanceof Error ? error : new Error(String(error));
+  appendDiagnostic({
+    category: "runtime",
+    level: "error",
+    message: `Plugin "${pluginId}" failed to ${action}: ${normalized.message}`,
+    detail: normalized.stack,
+    source: `plugin:${pluginId}`,
+  });
+}
 
 interface TauriRuntimeWindow extends Window {
   __TAURI_INTERNALS__?: unknown;
@@ -40,13 +78,24 @@ const manager = new PluginManager();
 manager.registerAll([
   maplibreLayerControlPlugin,
   maplibreBasemapControlPlugin,
+  // The four web service plugins are grouped into the "Web Services"
+  // submenu, rendered where the first of them appears in this order.
+  maplibreFemaWmsPlugin,
+  maplibreNasaEarthdataPlugin,
+  maplibreEnviroAtlasPlugin,
+  maplibreNationalMapPlugin,
   maplibreEsriWaybackPlugin,
+  maplibreTimeSliderPlugin,
+  maplibreOvertureMapsPlugin,
   maplibreGeoAgentPlugin,
   maplibreGeoEditorPlugin,
   maplibreLidarPlugin,
   maplibreStreetViewPlugin,
   maplibreSwipePlugin,
-  maplibreTimeSliderPlugin,
+  maplibreEffectsPlugin,
+  maplibreDirectionsPlugin,
+  maplibreReverseGeocodePlugin,
+  maplibreDeckGlVizPlugin,
   maplibreComponentsPlugin,
 ]);
 
@@ -100,6 +149,20 @@ export function getPluginManager(): PluginManager {
   return manager;
 }
 
+// Upgrade an installed external plugin in place by re-fetching its manifest URL
+// and re-registering the published version. Used by the marketplace's Update
+// action.
+export async function upgradeExternalPlugin(
+  manifestUrl: string,
+  mapControllerRef: RefObject<MapController | null>,
+): Promise<void> {
+  await reloadExternalUrlPlugin(
+    manager,
+    manifestUrl,
+    createAppAPI(mapControllerRef),
+  );
+}
+
 export function usePluginRegistry() {
   useSyncExternalStore(
     (listener) => manager.subscribe(listener),
@@ -114,7 +177,20 @@ export function usePluginRegistry() {
     getProjectState: () => manager.getProjectState(),
     toggle: (id: string, appApi: ReturnType<typeof createAppAPI>) => {
       const before = JSON.stringify(projectPluginStateSnapshot());
-      manager.toggle(id, appApi);
+      // Plugin controls are imperative MapLibre code, so a throw here escapes
+      // React's error boundaries. Contain it so one bad plugin can't break the
+      // toggle handler — surface it in diagnostics instead. Return without
+      // persisting so a half-applied failure is not written to the project.
+      try {
+        manager.toggle(id, appApi);
+      } catch (error) {
+        // Known limitation: if toggle throws after a partial mutation (e.g. the
+        // control attached but a later step failed), the in-memory PluginManager
+        // state may be inconsistent. Project persistence is protected by the
+        // early return below; in-memory state is not rolled back.
+        reportPluginError(id, "toggle", error);
+        return;
+      }
       persistProjectPluginState(before);
     },
     setMapControlPosition: (
@@ -123,7 +199,12 @@ export function usePluginRegistry() {
       position: GeoLibreMapControlPosition,
     ) => {
       const before = JSON.stringify(projectPluginStateSnapshot());
-      manager.setMapControlPosition(id, appApi, position);
+      try {
+        manager.setMapControlPosition(id, appApi, position);
+      } catch (error) {
+        reportPluginError(id, "reposition", error);
+        return;
+      }
       persistProjectPluginState(before);
     },
   };
@@ -132,7 +213,9 @@ export function usePluginRegistry() {
 // Built-in plugins are registered at module load so the toolbar can render
 // plugin menu items on the first pass. This hook additionally kicks off the
 // external plugin scan and reports whether it has finished.
-export function useExternalPluginsReady(): boolean {
+export function useExternalPluginsReady(
+  mapControllerRef: RefObject<MapController | null>,
+): boolean {
   const desktopSettings = useDesktopSettingsStore(
     (state) => state.desktopSettings,
   );
@@ -141,9 +224,12 @@ export function useExternalPluginsReady(): boolean {
   );
 
   useEffect(() => {
+    // mapControllerRef is a stable ref object, so it is intentionally not a
+    // dependency; createAppAPI dereferences .current lazily.
     void ensureExternalPluginsLoadedWithSettings(
       desktopSettings,
       projectPluginManifestUrls,
+      createAppAPI(mapControllerRef),
     );
   }, [desktopSettings, projectPluginManifestUrls]);
 
@@ -157,13 +243,34 @@ export function useExternalPluginsReady(): boolean {
   );
 }
 
+// Manifest URLs for plugins baked into the build under public/plugins/<id>/.
+// Resolved against the app origin and base so they fetch same-origin on both
+// the web build and the desktop build (which serves the same frontend from
+// tauri://localhost, allowed by `connect-src 'self'`). These are injected at
+// load time rather than stored in Settings, so a baked-in plugin always loads
+// and cannot be removed by the user. The URL loader skips the scheme allow-list
+// applied to user/project URLs, so the desktop tauri:// origin is accepted.
+function bundledPluginManifestUrls(): string[] {
+  if (typeof window === "undefined") return [];
+  // Resolve against a base that always ends in "/" so a non-trailing-slash
+  // BASE_URL (e.g. "/geolibre") cannot mangle the path into "/geolibreplugins".
+  const base = import.meta.env.BASE_URL.endsWith("/")
+    ? import.meta.env.BASE_URL
+    : `${import.meta.env.BASE_URL}/`;
+  return bundledPluginManifestPaths.map(
+    (path) => new URL(path, new URL(base, window.location.href)).href,
+  );
+}
+
 function ensureExternalPluginsLoadedWithSettings(
   desktopSettings: ReturnType<
     typeof useDesktopSettingsStore.getState
   >["desktopSettings"],
   projectPluginManifestUrls: string[],
+  app: ReturnType<typeof createAppAPI>,
 ): Promise<void> {
   const pluginManifestUrls = mergeStringLists(
+    bundledPluginManifestUrls(),
     desktopSettings.pluginManifestUrls,
     projectPluginManifestUrls,
   );
@@ -186,13 +293,24 @@ function ensureExternalPluginsLoadedWithSettings(
   // previous scan (which never rejects) keeps at most one scan running.
   const previousLoad = externalPluginsLoadPromise ?? Promise.resolve();
   const loadPromise = previousLoad
-    .then(() =>
-      loadExternalPlugins(
+    .then(() => {
+      // Unregister URL plugins whose manifest URL was removed from the merged
+      // list (e.g. uninstalled from the marketplace) so the Plugins menu updates
+      // and any active control is torn down without a reload. This runs after
+      // the previous scan settles so a plugin whose load was still in flight is
+      // already recorded and can be removed.
+      const unloaded = unloadRemovedUrlPlugins(manager, pluginManifestUrls, app);
+      if (unloaded.length) {
+        console.info(
+          `Unloaded external GeoLibre plugins: ${unloaded.join(", ")}`,
+        );
+      }
+      return loadExternalPlugins(
         manager,
         desktopSettings.additionalPluginDirectories,
         pluginManifestUrls,
-      ),
-    )
+      );
+    })
     .then((result) => {
       if (result.loadedPluginIds.length) {
         console.info(
@@ -244,10 +362,41 @@ export function createAppAPI(
         }
       }),
     fetchArrayBuffer: fetchRemoteArrayBuffer,
+    resolvePluginAssetUrl: resolvePluginAssetUrlForLoadedPlugin,
     fitBounds: (bounds: [number, number, number, number]) =>
       mapControllerRef?.current?.fitBounds(bounds),
     getMap: () => mapControllerRef?.current?.getMap() ?? null,
     pickLocalDirectoryFiles,
+    exportTextFile: (
+      filename: string,
+      content: string,
+      options?: GeoLibreFileDialogOptions,
+    ) => {
+      const description = options?.description ?? "GeoJSON";
+      const extensions = options?.extensions ?? ["geojson", "json"];
+      const mimeType = options?.mimeType ?? "application/geo+json";
+      void saveTextFileWithFallback(content, {
+        defaultName: filename,
+        filters: [{ name: description, extensions }],
+        browserTypes: [
+          {
+            description,
+            accept: { [mimeType]: extensions.map((ext) => `.${ext}`) },
+          },
+        ],
+        mimeType,
+      }).catch((error) => {
+        console.error(`Could not export ${filename}.`, error);
+      });
+    },
+    importTextFile: (options?: GeoLibreFileDialogOptions) => {
+      const extensions = options?.extensions ?? ["json"];
+      return openLocalDataFileWithFallback({
+        filters: [{ name: options?.description ?? "JSON", extensions }],
+        accept: extensions.map((ext) => `.${ext}`).join(","),
+        readText: true,
+      }).then((result) => result?.text ?? null);
+    },
     registerExternalNativeLayer: (
       registration: GeoLibreExternalNativeLayerRegistration,
     ) => {
@@ -292,6 +441,31 @@ export function createAppAPI(
     ) =>
       mapControllerRef?.current?.setBuiltInControlPosition(control, position) ??
       false,
+    // Hand external plugins GeoLibre's own deck.gl modules so they render on the
+    // host's single deck.gl instance (a bundled second copy throws on the
+    // deck.gl/luma.gl version guards and fails to render). Memoized so repeated
+    // calls reuse one resolved module set.
+    getDeckGL: (() => {
+      let cached: Promise<GeoLibreDeckGL> | undefined;
+      return () =>
+        (cached ??= Promise.all([
+          import("@deck.gl/core"),
+          import("@deck.gl/layers"),
+          import("@deck.gl/aggregation-layers"),
+          import("@deck.gl/geo-layers"),
+          import("@deck.gl/mesh-layers"),
+          import("@deck.gl/mapbox"),
+        ]).then(
+          ([core, layers, aggregationLayers, geoLayers, meshLayers, mapbox]) => ({
+            core,
+            layers,
+            aggregationLayers,
+            geoLayers,
+            meshLayers,
+            mapbox,
+          }),
+        ));
+    })(),
   };
 }
 

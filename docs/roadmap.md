@@ -1,4 +1,4 @@
-# MilGeo.app Roadmap
+# GeoLibre Roadmap
 
 ## v0.1: Map viewer and GeoJSON
 
@@ -36,7 +36,7 @@
 - [x] MapLibre Components plugin with FlatGeobuf, PMTiles, Zarr, LiDAR, and Gaussian splat panels
 - [x] Desktop MBTiles metadata and tile reads through Tauri commands
 - [x] Plugin control position controls in the Plugins menu
-- [x] Layer control integration for MilGeo.app-managed layers
+- [x] Layer control integration for GeoLibre-managed layers
 
 ## v0.6: Project access, web embeds, and expanded integrations
 
@@ -82,88 +82,238 @@
 - [x] Multiple DuckDB SQL query-result layers
 - [x] Desktop diagnostics panel and improved diagnostics/status bar contrast
 - [x] Toolbar toggles for Colorbar, Legend, and HTML panels
-- [x] **Vector processing tools**: buffer, centroids, convex hull, dissolve, bounding box, simplify, clip, intersection, difference, union (Turf.js + GeoPandas)
-- [x] **Raster processing tools**: hillshade, slope, aspect, reproject, resample, clip by extent, clip by mask, polygonize, contour (rasterio sidecar)
-- [x] **SQL Workspace**: DuckDB Spatial SQL with query history and CSV/GeoParquet export
-- [x] **Data conversion**: GeoParquet, FlatGeobuf, PMTiles, COG format conversion tools
-- [x] **APP-6D Military Symbols**: Tactical symbol placement from searchable catalog with affiliation support
-- [x] **Tactical Graphics**: FLOT, boundaries, fire support areas, objectives with interactive drawing
-- [x] **SIDC Import/Export**: GeoJSON and KML with SIDC field support for interoperability
 
-## v0.9: Advanced tactical workflows and processing expansion
+## v0.9: Data integrations, processing, and menu reorganization
 
-- [ ] **Enhanced SQL Workspace**: Visual query builder, saved queries, and query templates
-- [ ] **Advanced tactical symbology**: Expanded symbol sets from milsymbol runtime catalog
-- [ ] **Symbol editing**: Drag-and-drop symbol repositioning and attribute editing
-- [ ] **Tactical graphics styling**: Dashed/solid style per SIDC specification
-- [ ] **Dismounted unit symbology**: Support for individuals and activities
-- [ ] **ORBAT management**: Hierarchical unit organization and visualization
-- [ ] **Expanded processing**: GDAL pipelines, advanced GeoPandas operations
-- [ ] **WhiteboxTools expansion**: Additional hydrology, terrain, and LiDAR algorithms
-- [ ] **Export enhancements**: Buffer, reproject, and multi-format export tools
-- [ ] **GeoEditor integration**: Mixed sketch and mil-symbol workflows
+- [x] SQL Workspace for running DuckDB Spatial SQL against loaded layers, local files, and remote URLs, with sample queries, query history, and adding results to the map or exporting them
+- [x] Planetary Computer panel for browsing and loading STAC data
+- [x] Earth Engine panel for browsing and loading datasets
+- [x] Overture Maps plugin for loading Overture data themes
+- [x] Time Slider plugin for animating time series raster and vector data, powered by `maplibre-gl-time-slider`
+- [x] Web Services menu with four federal data plugins
+- [x] Add Raster Layer powered by the `maplibre-gl-raster` plugin
+- [x] Add Vector Layer powered by the `maplibre-gl-vector` plugin
+- [x] Identify, selection, and attribute table support for DuckDB layers
+- [x] Conversion menu under Processing for Vector to GeoParquet/FlatGeobuf/PMTiles, CSV to GeoParquet, and Raster to COG, backed by a hardened conversion sidecar with a path allowlist
+- [x] Vector menu under Processing with common geometry tools (buffer, centroids, convex hull, dissolve, bounding box, simplify, clip, intersection, difference, union) running client-side with Turf.js, plus an optional GeoPandas sidecar engine
+- [x] Raster menu under Processing with common raster tools (hillshade, slope, aspect, reproject, resample, clip by extent, clip by mask layer, polygonize, contour) backed by a rasterio sidecar, path in and path out
+- [x] Drag and drop vector and GeoTIFF/COG raster files onto the map to add them as layers
+- [x] Whitebox batch tools run against a selected input directory
+- [x] Controls menu with Measure, Bookmark, Minimap, and View State tools
+- [x] Print menu backed by `PrintControl`
+- [x] Project menu consolidating New, Open, Save, and Save As
+- [x] Layout settings with per-panel visibility toggles
+- [x] Insert before dropdown for placing layers in the stack
+- [x] Component panels persisted and controls reset on new project
+- [x] Plugins can declare and handle URL query parameters
+- [x] `maponly` query parameter for chrome-free map embeds
+- [x] `theme` query parameter to set the initial light/dark theme for embeds
+- [x] Docker support for the browser app
+- [x] `VITE_DUCKDB_SPATIAL_EXTENSION_PATH` for offline spatial extension loading
 
-## v1.0: Enterprise features and ecosystem
+## v1.0: Processing pipelines, external plugin system, and stable prototype
 
-- [ ] **Plugin marketplace**: Install, update, and remove plugins from registry
-- [ ] **External plugin distribution**: Package and publish workflow for developers
-- [ ] **Sandboxed plugins**: Worker-based plugin isolation for security
-- [ ] **Advanced ORBAT**: Multi-level hierarchies, unit relations, and time-based states
-- [ ] **Mission planning**: Route planning, viewshed analysis, and temporal planning
-- [ ] **Collaboration features**: Real-time project sharing and multi-user editing
-- [ ] **Performance optimization**: Large dataset handling, streaming, and caching
-- [ ] **Test coverage**: Automated testing suite for core functionality
-- [ ] **Documentation**: Comprehensive user guide, tutorials, and API reference
-- [ ] **Accessibility**: WCAG compliance and keyboard navigation
+- [x] GDAL / Rasterio / GeoPandas pipelines
+- [x] Buffer, reproject, and export GeoJSON processing tools
+- [x] Expanded WhiteboxTools coverage
+- [x] External plugin package distribution workflow
+- [x] Plugin marketplace / registry design (see [Plugin marketplace and registry](#plugin-marketplace-and-registry-design))
+- [x] Plugin marketplace MVP: curated registry plus browse and install UI
+- [x] Plugin update (in-place re-fetch) and uninstall with confirmation
+- [x] Project menu Share action that uploads to share.geolibre.app using a personal API token
+- [x] Python package (`geolibre`) for Jupyter notebooks: embeds the full app as an [anywidget](https://anywidget.dev) with a leafmap-style API (`add_geojson`, `add_tile_layer`, `add_cog`) and two-way `.geolibre.json` project sync
+- [x] Performance tuning and test suite
+- [x] Cross-platform installers
+- [x] Documentation and tutorials
 
-## Future Considerations
+## v1.1: Vector styling, attribute table management, and atmosphere effects
 
-- **Mobile applications**: Native iOS and Android apps with offline capabilities
-- **Cloud deployment**: Hosted service with authentication and storage
-- **AI/ML integration**: Selective integration with GeoAI, SamGeo, and Leafmap capabilities
-- **Real-time data**: Live sensor feeds, tracking, and telemetry integration
-- **Advanced 3D**: Enhanced 3D Tiles, terrain analysis, and viewshed calculations
-- **Network analysis**: Routing, connectivity, and supply chain optimization
-- **Time series**: Temporal data visualization and animation
-- **Custom projections**: Extended CRS support and datum transformations
-- **Localization**: Multi-language interface and documentation
+- [x] In-browser GeoPandas engine for the Vector tools via Pyodide (no server, same results as the optional sidecar)
+- [x] Host deck.gl exposed to external plugins via `app.getDeckGL()`, so plugins render on the shared instance instead of bundling their own copy
+- [x] Style panel support for Add Vector Layer (`maplibre-gl-vector`) layers, including single, categorized, graduated, and expression symbology applied to the control's native layers
+- [x] Rename layers from the layer panel by double-clicking the name or from the layer actions menu
+- [x] Open attribute table and Export actions added to the layer actions menu
+- [x] Manual and automatic (timed) refresh extended to Add Vector Layer URL layers
+- [x] Attribute table column management: rename, delete, hide/show, and reorder fields, persisted with the project
+- [x] Atmosphere Effects plugin: deep-space backdrop, parallax starfield, comets, and a globe atmosphere halo at low zoom (toggled from the Controls menu)
+- [x] conda-forge install instructions and a video tutorial in the documentation
+- [x] MIT license
+- [x] CSP allowance for `cdn.jsdelivr.net` so DuckDB-WASM loads its bundles in the browser build
 
----
+## v1.2: New data sources, attribute analytics, routing, and platform polish
 
-## Release Highlights
+- [x] OpenStreetMap PBF file loading parsed in-browser with osmix
+- [x] Cloud-Optimized NetCDF/HDF layers loaded via kerchunk references
+- [x] Authenticated 3D Tiles tilesets via custom request headers
+- [x] Georeferenced video overlay layers
+- [x] Deck.gl Layer builder for composing deck.gl overlays from uploaded files and remote URLs
+- [x] In-browser PostGIS SQL engine via PGlite, alongside the DuckDB Spatial SQL Workspace
+- [x] Attribute table add-field and field-calculator tools
+- [x] Attribute table Charts panel (histogram, scatter, bar, line, box)
+- [x] Spatial join added to the Vector tools
+- [x] Select by value and Select by location tools
+- [x] H3 tools to create hexagonal grids and bin points into H3 cells
+- [x] Point heatmap renderer and clustering, including for Add Vector Layer point layers
+- [x] Directions plugin for interactive routing via `maplibre-gl-directions`, with a one-time privacy notice before enabling it
+- [x] Undo/redo for layer and style operations
+- [x] Command palette (`Ctrl`/`Cmd` + `K`) and global keyboard shortcuts with a `?` cheat sheet
+- [x] Print layout composer with PNG and PDF export
+- [x] Installable, offline-capable Progressive Web App (PWA) build
+- [x] Internationalization framework (react-i18next) with extracted string catalogs and a `?locale`/`?lang` embed language parameter
+- [x] Accessibility pass with axe checks across key screens
+- [x] App, section, and plugin React error boundaries
+- [x] Playwright end-to-end smoke tests and a CI job
+- [x] Expanded Python `Map` API covering more Add Data layer types
+- [x] CDN-loaded PGlite/PostGIS to shrink the Jupyter wheel and the desktop binary
 
-### v0.8.0 (Current) - Military GIS Foundation
+## v1.3: Analysis depth, real-time collaboration, story maps, scripting, and an AI assistant (current)
 
-Major milestone establishing MilGeo as a comprehensive military GIS platform with:
-- Complete APP-6D tactical symbol support with searchable catalog
-- Tactical graphics for operational planning (FLOT, boundaries, objectives)
-- Vector and raster processing tools for geospatial analysis
-- SQL workspace with DuckDB Spatial for advanced queries
-- Data conversion to cloud-native formats (GeoParquet, FlatGeobuf, PMTiles, COG)
-- External plugin architecture with marketplace foundation
-- Cross-platform desktop installers and web viewer deployment
+### Processing and analysis
 
-### v0.7.0 - Processing and Integration
+- [x] Spatial Statistics toolbox under Processing
+- [x] Vector tools: Smooth, Regular grid, and Voronoi/Delaunay
+- [x] IDW / kriging interpolation (point layer → continuous raster surface)
+- [x] Attribute (table) join vector tool, joining a table's fields by a matching key
+- [x] Raster analysis tools: zonal statistics, raster calculator, reclassify, mosaic, and focal statistics
+- [x] Client-side raster processing fallback that runs in the browser when the Python sidecar is unavailable
+- [x] Single-band pseudocolor with classification and RGB band combination for raster styling
+- [x] Batch run and model/pipeline chaining for processing tools
+- [x] Network analysis: isochrones, service areas, and origin–destination cost matrices
 
-Added Whitebox geoprocessing, WFS/delimited text support, WMS identify, inline attribute editing, and comprehensive plugin integrations.
+### Data, layers, and export
 
-### v0.6.0 - Web Embeds and PostgreSQL
+- [x] Collapsible layer groups/folders in the layer panel
+- [x] glTF/GLB 3D model layers placed at coordinates
+- [x] Client-side vector tiling for large local vector layers
+- [x] Warning before loading very large vector files
+- [x] Transparent rewrite of public S3, GCS, and Azure cloud-storage URLs in SQL queries
+- [x] Shapefile and GeoPackage export
+- [x] Apache Sedona as an additional SQL Workspace engine
+- [x] Batch geocoding and reverse geocoding tools, with a multi-provider geocoding abstraction
 
-Introduced browser embed parameters, URL-based project loading, PostgreSQL layers, STAC search, and expanded plugin ecosystem.
+### Collaboration, story maps, and sharing
 
-### v0.5.0 - Advanced Data Formats
+- [x] Real-time multi-user collaboration (MVP) backed by a Cloudflare Worker
+- [x] Scroll-driven story map builder, presenter, and standalone HTML export
+- [x] User-editable legend for the print layout
+- [x] Field statistics summary panel in the attribute table
 
-Implemented comprehensive Add Data dialogs, MBTiles support, ArcGIS layer integration, and MapLibre Components plugin.
+### AI and scripting
 
-### Earlier Releases
+- [x] AI Segmentation toolbox via [segment-geospatial](https://github.com/opengeos/segment-geospatial) (SamGeo) and Meta's SAM 3, proxied through the sidecar to a separate `samgeo-api` model server
+- [x] Natural-language GIS assistant (Strands agent) that turns plain-English requests into auditable, undoable GeoLibre operations
+- [x] Python automation API and an in-app Python Console
+- [x] Python package: local raster, marker/cluster, and choropleth APIs; `split_map`, `add_legend`, and `add_colorbar` helpers; typed read-back of selected/drawn features; and `to_html` export
 
-- **v0.4.0**: DuckDB Spatial integration for diverse vector formats
-- **v0.3.0**: Cloud-native formats (GeoParquet, FlatGeobuf, PMTiles, COG)
-- **v0.2.0**: Project persistence and recent projects tracking
-- **v0.1.0**: Initial Tauri + React + MapLibre foundation
+### Mobile, offline, and Android
 
----
+- [x] Native Android app from the same codebase via Tauri v2 mobile, with a CI workflow that builds signed, per-ABI release APKs (~40 MB) — see [Android](android.md)
+- [x] `isMobile()` feature-gating that hides desktop-process tools (Whitebox, Raster, Conversion, AI Segmentation, PostgreSQL/Martin) on Android so nothing is shown that cannot run
+- [x] Responsive, touch-friendly mobile layout: Layers/Style panels overlay the map as slide-over sheets on phones, pointer-event (touch) panel resizing, and safe-area insets so the toolbar clears the system status bar
+- [x] Download Offline Area tool that pre-caches the current map view's basemap tiles into the service-worker cache
+- [x] Service-worker caching of the CDN-loaded Pyodide and PGlite/PostGIS engines so browser SQL and Python keep working offline after first use
 
-## Contributing
+### Packaging
 
-See planned features you want to help with? Check the [Contributing Guide](https://github.com/opengeos/GeoLibre/blob/main/CONTRIBUTING.md) and open an issue to discuss your approach before starting work.
+- [x] Homebrew Cask packaging for macOS
+
+## Plugin marketplace and registry (design)
+
+This captures the design for the `v1.0` "Plugin marketplace / registry" item. It
+builds on the existing external-plugin foundation, the `plugin.json` manifest
+contract, HTTPS manifest-URL loading, the desktop app data `plugins/` scan, and
+the bundled `public/plugins/` drop-in mechanism, and it relates to the "External
+plugin package distribution workflow" item.
+
+### Goal
+
+Let users discover, install, update, and remove trusted external plugins from a
+curated registry without hand-entering manifest URLs, on both the desktop and
+web builds, while keeping the existing trust model in which plugins are trusted
+code.
+
+### Registry
+
+- A curated, versioned index published as static JSON (for example
+  `registry.json` hosted on `geolibre.app`, or generated from a GitHub
+  repository of submissions). No live backend is required for the MVP.
+- Each entry carries `id`, `name`, `version`, `description`, `author`,
+  `homepage`, `manifestUrl`, `categories`, `minGeoLibreVersion`, and optional
+  `screenshots`.
+- The index is fetched over HTTPS and cached; entries point at the same
+  `plugin.json` manifests the existing loader already understands.
+
+### Browse and install UI
+
+- A standalone Manage Plugins dialog (Settings menu > Manage Plugins), modeled
+  on QGIS, has All / Installed / Not installed / Upgradeable / Settings sections.
+  The four browse sections list registry entries with search and per-entry
+  install, installed, and update states; the Settings section manages plugin
+  sources.
+- Install reuses the current external-plugin loader: it resolves the entry's
+  `manifestUrl`, validates it, and registers the plugin.
+  - Desktop: download the bundle into the app data `plugins/<id>/` directory so
+    it persists and loads on startup through the existing scan.
+  - Web: record the entry's `manifestUrl` in desktop settings (and, for shared
+    projects, in the project `plugins.manifestUrls`) so it loads on next open.
+- Remove drops the recorded manifest URL and unregisters the plugin at runtime
+  (tearing down any active control), so the change takes effect without a
+  restart. (The MVP records manifest URLs rather than downloading bundles; the
+  desktop bundle-download path above is a later enhancement.)
+
+### Updates and versioning
+
+- Compare the installed `version` against the registry entry, surface an update
+  available state, and offer a one-click update that re-fetches the bundle.
+- Honor `minGeoLibreVersion` so incompatible plugins are flagged, not installed.
+
+### Trust and security
+
+- The registry is an allowlist; only curated entries are offered for install.
+- HTTPS-only manifests (the existing `isAllowedPluginManifestUrl` rule).
+- Explicit user consent on install, because plugin entries execute as trusted
+  code (the desktop CSP permits `blob:` script execution by design).
+- The curated registry and explicit install consent are the primary controls.
+
+### Relationship to bundled plugins
+
+- Bundled `public/plugins/<id>/` drop-ins remain the zero-config way to ship
+  first-party or private plugins inside a build. The marketplace covers
+  discoverable, user-installed third-party plugins; the two are complementary
+  and share the same `plugin.json` contract and loader.
+
+### Phasing
+
+1. Curated static registry plus browse and install through manifest URLs
+   (reuses the current loader; records the manifest URL in settings). **Done.**
+2. Version checks, update and removal flows.
+3. Submission workflow for third-party authors.
+
+### Implementation (phase 1)
+
+The MVP ships in the desktop app and, because the same frontend serves the web
+build, works in both:
+
+- `apps/geolibre-desktop/src/lib/plugin-registry.ts` fetches and normalizes a
+  registry (`{ "plugins": [...] }`), resolving each entry's `manifestUrl`
+  against the registry location. The registry URL is
+  `VITE_GEOLIBRE_PLUGIN_REGISTRY_URL` or, by default, the hosted registry at
+  `https://plugins.geolibre.app/plugin-registry.json`.
+- `apps/geolibre-desktop/src/components/layout/ManagePluginsDialog.tsx` is a
+  standalone dialog (Settings menu > Manage Plugins) with All / Installed / Not
+  installed / Upgradeable / Settings sections: search, install, a confirm step
+  before uninstall, an Update action when a newer version is published,
+  `minGeoLibreVersion` compatibility checks, and inline error handling. The
+  Settings section manages additional local directories and manual manifest
+  URLs. All actions apply immediately (live).
+- Installing records the entry's manifest URL in the plugin manifest URL list,
+  so the existing external-plugin loader fetches and registers it. No new trust
+  path is introduced. Uninstalling (after confirmation) unregisters the plugin
+  at runtime — tearing down any active map control — so the Plugins menu updates
+  without a reload. Update re-fetches the manifest URL and re-registers the
+  published version in place, fetching the new version before tearing down the
+  old one so a failed update leaves the installed plugin intact.
+- The registry and plugin bundles live in the
+  [opengeos/geolibre-plugins](https://github.com/opengeos/geolibre-plugins) repo,
+  published to GitHub Pages at `plugins.geolibre.app`; it ships a `sample/`
+  template and maintainers add curated entries there.

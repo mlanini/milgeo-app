@@ -1,525 +1,77 @@
 # SQL Workspace
 
-The SQL Workspace provides powerful spatial query capabilities using DuckDB Spatial SQL, running directly in your browser or desktop application.
+The **SQL Workspace** runs DuckDB Spatial SQL right in the app, against your loaded layers, local files, and remote URLs. Open it from **Processing → SQL Workspace**. The spatial extension is loaded for you, so `ST_*` functions are available.
 
-## Opening SQL Workspace
+![SQL Workspace](https://data.geolibre.app/images/geolibre-sql-workspace.webp)
 
-Access from **Data > SQL Workspace** or press `Ctrl+Q`.
+## Querying loaded layers
 
-The workspace panel provides:
-- **Query editor**: Write and execute SQL
-- **Query history**: Access previous queries
-- **Results panel**: View query results
-- **Export options**: Save results as CSV or GeoParquet
-
-## Quick Start
-
-### Your First Query
+Every loaded vector layer is exposed as a queryable table; the dialog lists the available table names at the top. Write a query in the editor and click **Run** to see the results.
 
 ```sql
--- View all features from a layer
-SELECT * FROM layer_name LIMIT 10;
+SELECT NAME, CONTINENT, POP_EST
+FROM countries
+ORDER BY POP_EST DESC
+LIMIT 10;
 ```
 
-Layers in your project are automatically available as tables.
+## Reading files and URLs
 
-### Layer Names
-
-Layer names in SQL:
-- Replace spaces with underscores: `"Unit Positions"` → `unit_positions`
-- Remove special characters
-- Use quotes for names with reserved words: `SELECT * FROM "order"`
-
-View available tables:
-```sql
-SHOW TABLES;
-```
-
-## Spatial Queries
-
-### Point Queries
-
-**Find features near a location**:
-```sql
-SELECT name, 
-       ST_Distance(geom, ST_Point(-122.4194, 37.7749)) AS distance_m
-FROM units
-WHERE ST_Distance(geom, ST_Point(-122.4194, 37.7749)) < 5000
-ORDER BY distance_m;
-```
-
-**Count features within radius**:
-```sql
-SELECT COUNT(*) AS units_within_10km
-FROM units
-WHERE ST_Distance(geom, ST_Point(10.0, 50.0)) < 10000;
-```
-
-### Area Queries
-
-**Features within a polygon** (AO boundary):
-```sql
-SELECT u.*
-FROM units u
-JOIN operational_area oa ON ST_Within(u.geom, oa.geom)
-WHERE oa.name = 'AO EAGLE';
-```
-
-**Features intersecting an area**:
-```sql
-SELECT route_name, 
-       ST_Length(ST_Intersection(r.geom, s.geom)) AS length_in_sector
-FROM routes r, sectors s
-WHERE ST_Intersects(r.geom, s.geom)
-  AND s.sector_name = 'Sector North';
-```
-
-### Buffer Analysis
-
-**Create 5km buffer around features**:
-```sql
-SELECT name, 
-       ST_Buffer(geom, 5000) AS buffer_geom
-FROM installations;
-```
-
-**Units within threat range**:
-```sql
-SELECT u.unit_id, u.designation
-FROM units u
-JOIN threats t ON ST_Within(u.geom, ST_Buffer(t.geom, t.range_m))
-WHERE t.threat_type = 'Artillery';
-```
-
-### Distance Analysis
-
-**Nearest feature**:
-```sql
-SELECT target_id, 
-       ST_Distance(geom, (SELECT geom FROM units WHERE unit_id = 'A/1-7')) AS distance
-FROM targets
-ORDER BY distance
-LIMIT 1;
-```
-
-**Distance matrix** (all units to all targets):
-```sql
-SELECT u.unit_id, 
-       t.target_id,
-       ST_Distance(u.geom, t.geom) AS distance_m
-FROM units u
-CROSS JOIN targets t
-ORDER BY u.unit_id, distance_m;
-```
-
-## Attribute Queries
-
-### Filtering
-
-**Simple filter**:
-```sql
-SELECT * FROM units
-WHERE echelon = 'Battalion'
-  AND affiliation = 'Friend';
-```
-
-**Multiple conditions**:
-```sql
-SELECT * FROM units
-WHERE (echelon IN ('Company', 'Battalion'))
-  AND status = 'Present'
-  AND strength >= 50
-ORDER BY designation;
-```
-
-**Text search**:
-```sql
-SELECT * FROM units
-WHERE designation LIKE '%CAV%'
-   OR designation LIKE '%Cavalry%';
-```
-
-**Date/time filtering**:
-```sql
-SELECT * FROM reports
-WHERE report_date >= '2024-01-01'
-  AND report_date < '2024-02-01'
-ORDER BY report_date DESC;
-```
-
-### Aggregation
-
-**Count by category**:
-```sql
-SELECT affiliation, 
-       COUNT(*) AS count
-FROM units
-GROUP BY affiliation
-ORDER BY count DESC;
-```
-
-**Statistical summary**:
-```sql
-SELECT echelon,
-       COUNT(*) AS units,
-       AVG(strength) AS avg_strength,
-       SUM(strength) AS total_strength,
-       MIN(strength) AS min_strength,
-       MAX(strength) AS max_strength
-FROM units
-GROUP BY echelon;
-```
-
-**Spatial aggregation**:
-```sql
-SELECT s.sector_name,
-       COUNT(u.unit_id) AS num_units,
-       SUM(u.strength) AS total_personnel
-FROM sectors s
-LEFT JOIN units u ON ST_Within(u.geom, s.geom)
-GROUP BY s.sector_name;
-```
-
-## Geometry Operations
-
-### Creating Geometry
-
-**Point from coordinates**:
-```sql
-SELECT ST_Point(longitude, latitude) AS geom,
-       name
-FROM coordinates_table;
-```
-
-**Line from points**:
-```sql
-SELECT ST_MakeLine(geom ORDER BY sequence) AS route_geom
-FROM waypoints
-WHERE route_id = 'Route_Blue'
-GROUP BY route_id;
-```
-
-**Polygon from text** (WKT):
-```sql
-SELECT ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))') AS geom;
-```
-
-### Geometry Measurements
-
-**Length and area**:
-```sql
-SELECT name,
-       ST_Length(geom) AS length_m,
-       ST_Area(geom) AS area_sqm
-FROM features;
-```
-
-**Perimeter**:
-```sql
-SELECT sector_name,
-       ST_Perimeter(geom) / 1000 AS perimeter_km
-FROM sectors;
-```
-
-**Bounding box**:
-```sql
-SELECT name,
-       ST_Envelope(geom) AS bbox
-FROM layers;
-```
-
-### Geometry Transformations
-
-**Centroids**:
-```sql
-SELECT name,
-       ST_Centroid(geom) AS center_point
-FROM polygons;
-```
-
-**Simplify geometry**:
-```sql
-SELECT name,
-       ST_Simplify(geom, 100) AS simplified_geom
-FROM complex_boundaries;
-```
-
-**Convex hull**:
-```sql
-SELECT unit_id,
-       ST_ConvexHull(ST_Union(geom)) AS unit_extent
-FROM positions
-GROUP BY unit_id;
-```
-
-## Advanced Queries
-
-### Spatial Joins
-
-**Find all features in each sector**:
-```sql
-SELECT s.sector_name,
-       u.unit_id,
-       u.designation
-FROM sectors s
-LEFT JOIN units u ON ST_Within(u.geom, s.geom)
-ORDER BY s.sector_name, u.designation;
-```
-
-**Intersecting features with overlap area**:
-```sql
-SELECT r1.route_name AS route1,
-       r2.route_name AS route2,
-       ST_Area(ST_Intersection(r1.geom, r2.geom)) AS overlap_area
-FROM routes r1
-JOIN routes r2 ON ST_Intersects(r1.geom, r2.geom)
-WHERE r1.route_name < r2.route_name  -- Avoid duplicates
-  AND ST_Area(ST_Intersection(r1.geom, r2.geom)) > 0;
-```
-
-### Window Functions
-
-**Rank by distance**:
-```sql
-SELECT unit_id,
-       designation,
-       distance_to_target,
-       ROW_NUMBER() OVER (ORDER BY distance_to_target) AS rank
-FROM (
-  SELECT u.unit_id, 
-         u.designation,
-         ST_Distance(u.geom, t.geom) AS distance_to_target
-  FROM units u, targets t
-  WHERE t.target_id = 'TGT-001'
-) ranked;
-```
-
-**Running totals**:
-```sql
-SELECT date,
-       new_units,
-       SUM(new_units) OVER (ORDER BY date) AS cumulative_units
-FROM daily_reports
-ORDER BY date;
-```
-
-### Subqueries
-
-**Features within user-defined buffer**:
-```sql
-SELECT u.*
-FROM units u
-WHERE ST_Within(
-  u.geom,
-  (SELECT ST_Buffer(geom, 10000) FROM locations WHERE name = 'HQ')
-);
-```
-
-**Density analysis**:
-```sql
-SELECT name,
-       (SELECT COUNT(*) 
-        FROM units u 
-        WHERE ST_Within(u.geom, s.geom)) / (ST_Area(s.geom) / 1000000) AS density_per_sqkm
-FROM sectors s;
-```
-
-## Loading Remote Data
-
-DuckDB can query remote files directly:
-
-### Remote GeoJSON
-```sql
-SELECT * FROM 'https://example.com/data.geojson';
-```
-
-### Remote GeoParquet
-```sql
-SELECT * FROM 'https://example.com/data.parquet';
-```
-
-### S3/Cloud Storage
-```sql
-SELECT * FROM 's3://bucket/prefix/data.parquet';
-```
-
-Auto-detection wraps URLs with appropriate reader. For explicit control:
+You can query files and remote URLs directly. The workspace auto-wraps a bare URL into the matching reader (for example Parquet, CSV, JSON, or GeoJSON) and streams remote files over HTTP range requests, so you do not have to download them first.
 
 ```sql
-SELECT * FROM read_parquet('https://example.com/data.parquet');
+SELECT NAME, CONTINENT, POP_EST, geom
+FROM https://data.source.coop/giswqs/opengeos/countries.parquet
+LIMIT 100;
 ```
 
-## Query History
+## Cloud URLs (s3://, gs://, az://)
 
-### Accessing History
-
-1. **History panel**: Shows recent queries
-2. **Star queries**: Mark favorites for quick access
-3. **Search history**: Filter by keywords
-4. **Re-run**: Click to execute again
-
-### Managing History
-
-- **Clear history**: Remove all queries
-- **Export history**: Save as JSON
-- **Import history**: Load saved queries
-
-## Exporting Results
-
-### To New Layer
+Cloud object-store URLs are transparently rewritten to their public HTTPS equivalents, so you can use them directly in queries:
 
 ```sql
--- Execute query, then click "Add to Map"
-SELECT name, geom FROM units WHERE echelon = 'Battalion';
+-- Amazon S3
+SELECT * FROM read_parquet('s3://bucket/path/to/data.parquet') LIMIT 10;
+
+-- Google Cloud Storage
+SELECT * FROM read_parquet('gs://bucket/path/to/data.parquet') LIMIT 10;
+
+-- Azure Blob Storage
+SELECT * FROM read_parquet('az://account/container/data.parquet') LIMIT 10;
 ```
 
-Prompts for layer name, adds result to map.
+The bare `FROM s3://…` form works too — the workspace wraps it in the matching reader automatically.
 
-### To CSV
+!!! note "Public access only"
+    Cloud URL translation targets anonymous / public buckets. Private buckets that require credentials are not yet supported.
 
-Results panel > Export > CSV
+!!! tip "CORS"
+    Browser-side reads require the bucket's CORS policy to allow cross-origin requests. Most public dataset buckets (e.g. AWS Open Data, Source Cooperative) already allow this. If you hit a CORS error, check the bucket's CORS configuration.
 
-Exports attribute table (no geometry).
+## Choosing a SQL engine
 
-### To GeoParquet
+The **Engine** menu (top right) selects which SQL engine runs your query. All three load a spatial extension, so `ST_*` functions are available in each.
 
-Results panel > Export > GeoParquet
+- **DuckDB** (default) — DuckDB Spatial, in-browser. Queries loaded layers, local files, and remote URLs (including `s3://`/`gs://`/`az://` public data). Works offline after first use.
+- **PostGIS** — PGlite + PostGIS, in-browser. Queries loaded layers using full PostGIS SQL. The first run loads a ~19 MB engine.
+- **Apache Sedona** — Sedona spatial SQL over your loaded layers. It runs in-browser on [CereusDB](https://github.com/tobilg/cereusdb), a WebAssembly build of Apache [SedonaDB](https://sedona.apache.org/sedonadb/). On the desktop app it uses the **SedonaDB sidecar** instead when the optional `sedona` extra is installed (better for larger layers); otherwise it falls back to the in-browser engine automatically. The CereusDB engine is downloaded lazily on first use.
 
-Exports full spatial dataset with geometry.
+!!! note "Sedona reads loaded layers"
+    Like PostGIS, the Apache Sedona engine queries layers you have loaded into the map (listed as **Queryable layers**). The geometry column is named `geometry`, so spatial functions look like `ST_Centroid(geometry)`, `ST_Area(geometry)`, or `ST_Buffer(geometry, 0.1)`.
 
-## Sample Queries
+!!! note "Attribute columns in the browser engine"
+    With the in-browser CereusDB engine, `SELECT *` returns each layer's attributes as columns (and "Add as layer" preserves them), but you cannot yet reference an attribute by name in SQL (e.g. `WHERE name = 'Texas'`) — that build exposes attributes only through the `geometry` column and spatial functions. Run the **SedonaDB sidecar** (install the `sedona` extra) for full attribute SQL.
 
-### Operational Planning
+## Sample queries and history
 
-**Units by echelon and sector**:
-```sql
-SELECT s.sector_name,
-       u.echelon,
-       COUNT(*) AS count,
-       SUM(u.strength) AS total_strength
-FROM sectors s
-JOIN units u ON ST_Within(u.geom, s.geom)
-GROUP BY s.sector_name, u.echelon
-ORDER BY s.sector_name, u.echelon;
-```
+- **Sample queries** and **Sample query for layer** menus drop ready-made queries into the editor to get you started.
+- Your previous queries are kept in a **history** so you can rerun them.
 
-**Route overlap analysis**:
-```sql
-SELECT r1.name AS route1,
-       r2.name AS route2,
-       ST_Length(ST_Intersection(r1.geom, r2.geom)) AS shared_length_m
-FROM routes r1
-JOIN routes r2 ON ST_Intersects(r1.geom, r2.geom)
-WHERE r1.name < r2.name
-  AND ST_Length(ST_Intersection(r1.geom, r2.geom)) > 100
-ORDER BY shared_length_m DESC;
-```
+## Using the results
 
-### Intelligence Analysis
+When a query returns geometry, you can **add the result to the map** as a new layer (with an optional layer name). The result layer behaves like any vector layer, with [identify, selection, and the attribute table](attribute-table.md). You can also **export** results as CSV or GeoParquet.
 
-**Threat density by grid**:
-```sql
-WITH grid AS (
-  SELECT ST_MakeBox2D(ST_Point(x, y), ST_Point(x+0.1, y+0.1)) AS cell_geom
-  FROM generate_series(10.0, 11.0, 0.1) AS x,
-       generate_series(50.0, 51.0, 0.1) AS y
-)
-SELECT cell_geom,
-       COUNT(t.threat_id) AS threat_count
-FROM grid g
-LEFT JOIN threats t ON ST_Within(t.geom, g.cell_geom)
-GROUP BY cell_geom
-HAVING COUNT(t.threat_id) > 0;
-```
+!!! tip "Multiple result layers"
+    You can add several DuckDB query-result layers to the same project and keep them all open at once.
 
-**Change detection**:
-```sql
-SELECT current.feature_id,
-       'Modified' AS status,
-       ST_Distance(current.geom, previous.geom) AS position_change_m
-FROM current_positions current
-JOIN previous_positions previous ON current.feature_id = previous.feature_id
-WHERE ST_Distance(current.geom, previous.geom) > 100;
-```
-
-### Terrain Analysis
-
-**Elevation statistics by sector**:
-```sql
-SELECT s.sector_name,
-       AVG(e.elevation) AS avg_elevation,
-       MIN(e.elevation) AS min_elevation,
-       MAX(e.elevation) AS max_elevation,
-       STDDEV(e.elevation) AS elevation_stddev
-FROM sectors s
-JOIN elevation_points e ON ST_Within(e.geom, s.geom)
-GROUP BY s.sector_name;
-```
-
-## Performance Tips
-
-### Spatial Index
-
-DuckDB automatically creates spatial indexes. For optimal performance:
-
-- **Filter first**: Use WHERE before spatial operations
-- **Limit extents**: Process subsets when possible
-- **Simplify geometries**: Reduce vertices for faster operations
-
-### Query Optimization
-
-**Use EXPLAIN**:
-```sql
-EXPLAIN SELECT * FROM units WHERE ST_Distance(geom, ST_Point(0,0)) < 1000;
-```
-
-Shows query execution plan.
-
-**Indexed columns**:
-```sql
--- Filter on indexed columns before spatial ops
-SELECT * FROM units
-WHERE echelon = 'Battalion'  -- Fast filter
-  AND ST_Within(geom, sector_geom);  -- Then spatial
-```
-
-**Minimize data transfer**:
-```sql
--- Select only needed columns
-SELECT unit_id, designation, geom FROM units;
-
--- Not: SELECT * FROM units;
-```
-
-## Troubleshooting
-
-### Common Errors
-
-**Table not found**:
-- Verify layer is loaded in project
-- Check layer name spelling/casing
-- Use `SHOW TABLES;` to list available tables
-
-**Invalid geometry**:
-- Some operations require valid geometries
-- Try `ST_MakeValid(geom)` to fix
-- Check coordinate system (should be EPSG:4326)
-
-**Out of memory**:
-- Reduce query extent
-- Filter data before spatial operations
-- Process in smaller batches
-- Use LIMIT for testing
-
-**Slow queries**:
-- Add WHERE clauses to filter early
-- Reduce geometry complexity with ST_Simplify
-- Process smaller area subsets
-- Check EXPLAIN output for optimization
-
-### Getting Help
-
-- **Syntax reference**: Click ? icon in SQL Workspace
-- **DuckDB docs**: [duckdb.org/docs/extensions/spatial](https://duckdb.org/docs/extensions/spatial)
-- **Sample queries**: File > Load Example Query
-- **Community**: GitHub Discussions for questions
+See the [Spatial SQL tutorial](../tutorials/spatial-sql.md) for an end-to-end walkthrough. The SQL Workspace works in both the browser and the desktop app because it runs on DuckDB-WASM.

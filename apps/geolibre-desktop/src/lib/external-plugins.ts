@@ -1,9 +1,15 @@
 import type {
+  GeoLibreAppAPI,
   GeoLibreExternalPluginManifest,
   GeoLibrePlugin,
   PluginManager,
 } from "@geolibre/plugins";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  isManagedUrlSource,
+  pluginAssetUrlFromSource,
+  resolvePluginAssetUrl,
+} from "./plugin-asset-url";
 import { isTauri } from "./tauri-io";
 
 interface ExternalPluginBundle {
@@ -43,6 +49,13 @@ export interface ExternalPluginLoadResult {
 // needed to pick it up. Removing a plugin source does not unregister its
 // plugins until the app restarts.
 const externallyLoadedPluginSources = new Map<string, string>();
+
+// In-flight upgrade promises keyed by manifest URL. reloadExternalUrlPlugin is
+// otherwise not re-entrant-safe: concurrent calls for the same URL capture the
+// same existingId/wasActive snapshot and would double-register. Coalescing them
+// onto one promise makes the function safe even if the UI's busyId guard is
+// bypassed (e.g. the dialog is closed and reopened mid-upgrade).
+const inFlightUrlUpgrades = new Map<string, Promise<GeoLibrePlugin>>();
 
 export async function loadExternalPlugins(
   manager: PluginManager,
@@ -166,8 +179,9 @@ async function loadPluginUrlBundles(
 
 async function loadPluginUrlBundle(
   manifestUrl: string,
+  signal?: AbortSignal,
 ): Promise<ExternalPluginBundle> {
-  const manifestResponse = await fetch(manifestUrl);
+  const manifestResponse = await fetch(manifestUrl, { signal });
   if (!manifestResponse.ok) {
     throw new Error(
       `Could not fetch plugin manifest: HTTP ${manifestResponse.status}`,
@@ -184,9 +198,9 @@ async function loadPluginUrlBundle(
     ? resolvePluginAssetUrl(manifestUrl, manifest.style)
     : null;
   const [entrySource, styleSource] = await Promise.all([
-    fetchPluginText(entryUrl, "plugin entry"),
+    fetchPluginText(entryUrl, "plugin entry", signal),
     styleUrl
-      ? fetchPluginText(styleUrl, "plugin style")
+      ? fetchPluginText(styleUrl, "plugin style", signal)
       : Promise.resolve(null),
   ]);
 
@@ -202,8 +216,12 @@ async function loadPluginUrlBundle(
 // plugin assets cannot buffer an unbounded response into memory.
 const MAX_PLUGIN_ASSET_BYTES = 50 * 1024 * 1024;
 
-async function fetchPluginText(url: string, label: string): Promise<string> {
-  const response = await fetch(url);
+async function fetchPluginText(
+  url: string,
+  label: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const response = await fetch(url, { signal });
   if (!response.ok) {
     throw new Error(`Could not fetch ${label}: HTTP ${response.status}`);
   }
@@ -248,26 +266,6 @@ async function fetchPluginText(url: string, label: string): Promise<string> {
     offset += chunk.byteLength;
   }
   return new TextDecoder().decode(merged);
-}
-
-function resolvePluginAssetUrl(manifestUrl: string, path: string): string {
-  if (
-    path.startsWith("/") ||
-    path.includes("\\") ||
-    /^[a-z][a-z\d+.-]*:/i.test(path) ||
-    path.split("/").some((part) => !part || part === "." || part === "..")
-  ) {
-    throw new Error("Plugin manifest paths must be relative safe paths.");
-  }
-  // Percent-encoded dot segments ("%2e%2e") pass the textual check above but
-  // the URL parser still normalizes them, so confirm the resolved URL stays
-  // under the manifest directory.
-  const resolved = new URL(path, manifestUrl);
-  const manifestDirectory = new URL(".", manifestUrl);
-  if (!resolved.href.startsWith(manifestDirectory.href)) {
-    throw new Error("Plugin manifest paths must be relative safe paths.");
-  }
-  return resolved.toString();
 }
 
 // Matches the Rust validate_required_manifest_string: non-empty with no
@@ -363,4 +361,156 @@ function injectExternalPluginStyle(
   style.dataset.geolibreExternalPlugin = pluginId;
   style.textContent = styleSource;
   document.head.append(style);
+}
+
+function removeExternalPluginStyle(pluginId: string): void {
+  document
+    .getElementById(`geolibre-external-plugin-style:${pluginId}`)
+    ?.remove();
+}
+
+/**
+ * Resolve a fetchable URL for an asset shipped alongside a loaded plugin's
+ * manifest (e.g. sample data bundled in the plugin folder). The plugin's
+ * recorded source is its manifest URL, so `relativePath` resolves against the
+ * plugin's own directory. Returns null when the plugin is unknown, was loaded
+ * from the desktop filesystem (no URL base), or when `relativePath` would
+ * escape the plugin directory. This is exposed to plugins via the app API so a
+ * plugin can locate its own bundled assets without GeoLibre knowing anything
+ * about that specific plugin.
+ */
+export function resolvePluginAssetUrlForLoadedPlugin(
+  pluginId: string,
+  relativePath: string,
+): string | null {
+  return pluginAssetUrlFromSource(
+    externallyLoadedPluginSources.get(pluginId),
+    relativePath,
+  );
+}
+
+/**
+ * Unregister URL-loaded plugins whose manifest URL is no longer present in
+ * `currentManifestUrls` (e.g. a marketplace or manual removal). Filesystem and
+ * bundled plugins are untouched: filesystem sources are not URLs, and bundled
+ * URLs are always re-injected into the current list. Deactivates each plugin
+ * (removing its map control) and drops its injected style, then the manager
+ * notifies so the Plugins menu updates without a reload.
+ */
+export function unloadRemovedUrlPlugins(
+  manager: PluginManager,
+  currentManifestUrls: string[],
+  app: GeoLibreAppAPI,
+): string[] {
+  const keep = new Set(currentManifestUrls);
+  // Collect first, then mutate: manager.unregister notifies subscribers
+  // synchronously, so removing entries in a separate pass avoids mutating the
+  // map while iterating it.
+  const toRemove: string[] = [];
+  for (const [pluginId, source] of externallyLoadedPluginSources) {
+    if (isManagedUrlSource(source) && !keep.has(source)) toRemove.push(pluginId);
+  }
+  for (const pluginId of toRemove) {
+    manager.unregister(pluginId, app);
+    removeExternalPluginStyle(pluginId);
+    externallyLoadedPluginSources.delete(pluginId);
+  }
+  return toRemove;
+}
+
+/**
+ * Re-fetch and re-register the plugin loaded from `manifestUrl` to upgrade it to
+ * the version currently published at that URL. The new version is fetched
+ * before the old one is torn down, so a failed upgrade leaves the installed
+ * plugin intact. Active state is preserved: an active plugin is reactivated
+ * after the new version registers. Returns the new plugin.
+ *
+ * Concurrent calls for the same manifest URL are coalesced onto a single
+ * in-flight promise, so the function is re-entrant-safe even if a caller's own
+ * guard (e.g. the dialog's `busyId`) is bypassed by closing and reopening the
+ * dialog mid-upgrade. If the plugin is uninstalled mid-fetch the returned
+ * plugin is fetched and validated but NOT registered in the manager.
+ */
+export function reloadExternalUrlPlugin(
+  manager: PluginManager,
+  manifestUrl: string,
+  app: GeoLibreAppAPI,
+): Promise<GeoLibrePlugin> {
+  const inFlight = inFlightUrlUpgrades.get(manifestUrl);
+  if (inFlight) return inFlight;
+  const promise = reloadExternalUrlPluginUncoalesced(
+    manager,
+    manifestUrl,
+    app,
+  ).finally(() => {
+    inFlightUrlUpgrades.delete(manifestUrl);
+  });
+  inFlightUrlUpgrades.set(manifestUrl, promise);
+  return promise;
+}
+
+async function reloadExternalUrlPluginUncoalesced(
+  manager: PluginManager,
+  manifestUrl: string,
+  app: GeoLibreAppAPI,
+): Promise<GeoLibrePlugin> {
+  let existingId: string | null = null;
+  for (const [id, source] of externallyLoadedPluginSources) {
+    if (source === manifestUrl) {
+      existingId = id;
+      break;
+    }
+  }
+  const wasActive = existingId ? manager.isActive(existingId) : false;
+
+  // Fetch and validate the new version first; if this throws the old plugin is
+  // untouched. Bound the fetch so a stalled endpoint can't leave the Update
+  // button spinning forever (the manifest + entry/style requests are aborted).
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  let bundle: ExternalPluginBundle;
+  let plugin: GeoLibrePlugin;
+  try {
+    bundle = await loadPluginUrlBundle(manifestUrl, controller.signal);
+    // The timeout only bounds the fetch/stream above; a dynamic import() of a
+    // local blob URL can't be aborted, but it evaluates near-instantly so it is
+    // not a practical hang risk.
+    plugin = await importExternalPlugin(bundle);
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  // Nothing was loaded for this URL (existingId null — e.g. the manifest is in
+  // settings but its initial load failed). Throw rather than registering the
+  // fetched plugin as a side effect, so the caller surfaces the inconsistency
+  // instead of the UI reporting a silent, invisible "success".
+  if (existingId === null) {
+    throw new Error(
+      `Cannot update plugin: no loaded version was found for '${manifestUrl}'. Try reloading the app.`,
+    );
+  }
+
+  // If the plugin was uninstalled while we were fetching (its source was
+  // removed from the loaded map by unloadRemovedUrlPlugins), don't resurrect it.
+  if (!externallyLoadedPluginSources.has(existingId)) return plugin;
+
+  // A version that changes its plugin id (e.g. the author renamed it) would
+  // leave the marketplace's installed/version state pointing at the old id.
+  // Refuse rather than silently register a mismatched plugin.
+  if (existingId !== plugin.id) {
+    throw new Error(
+      `Cannot update plugin: the published version exports id '${plugin.id}' but the installed version has id '${existingId}'. Reinstall it manually.`,
+    );
+  }
+
+  manager.unregister(existingId, app);
+  removeExternalPluginStyle(existingId);
+  externallyLoadedPluginSources.delete(existingId);
+  manager.register(plugin);
+  externallyLoadedPluginSources.set(plugin.id, manifestUrl);
+  if (bundle.styleSource) {
+    injectExternalPluginStyle(plugin.id, bundle.styleSource);
+  }
+  if (wasActive) manager.activate(plugin.id, app);
+  return plugin;
 }

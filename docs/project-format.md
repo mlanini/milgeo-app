@@ -15,6 +15,8 @@ Projects are saved as **`.geolibre.json`** files.
 | `layers`          | array   | Layer definitions (see below)                                                                                |
 | `styles`          | object  | Map of layer id → `LayerStyle`                                                                               |
 | `plugins`         | object  | Optional external plugin manifest URLs, active plugin IDs, plugin map-control positions, and plugin settings |
+| `legend`          | object  | Optional Print Layout legend customizations (title, grouping, ordering, per-item rename/hide)                |
+| `storymap`        | object  | Optional scroll-driven story map (chapters and presentation settings); omitted when there are no chapters    |
 | `metadata`        | object  | Free-form project metadata                                                                                   |
 
 ## Plugin state
@@ -41,6 +43,77 @@ Projects are saved as **`.geolibre.json`** files.
 ```
 
 Projects without a `plugins` section open with the built-in default plugin state.
+
+## Legend
+
+The Print Layout legend is always derived from the visible layers' symbology; the
+`legend` object stores only the user's edits layered on top, so customizations
+survive layer additions and removals.
+
+```json
+{
+  "title": "Legend",
+  "groupByLayer": true,
+  "order": ["layer-b", "layer-a"],
+  "overrides": {
+    "layer-a": { "label": "Roads" },
+    "layer-b::0": { "label": "Low" },
+    "layer-b::1": { "hidden": true }
+  }
+}
+```
+
+- `title` — heading drawn above the legend entries.
+- `groupByLayer` — when `true`, graduated/categorized classes are grouped under a
+  per-layer heading; when `false`, classes are listed flat.
+- `order` — top-level entry order by layer id (top-first); layers not listed keep
+  their default order after the listed ones.
+- `overrides` — per-item `label` and `hidden` edits keyed by a stable item key: a
+  layer id for a whole entry, or `${layerId}::${index}` for an individual class
+  within a graduated/categorized entry.
+
+Projects without a `legend` section open with the default legend (auto-generated
+from the layers, titled "Legend").
+
+## Story map
+
+A story map turns the project into a scroll-driven narrative. Each chapter
+captures a camera view plus text, and can fade project layers in or out on
+enter/exit. The section is omitted entirely when the project has no chapters.
+
+```json
+{
+  "title": "A Tour of Three Cities",
+  "subtitle": "Built with GeoLibre",
+  "byline": "By the GeoLibre team",
+  "footer": "Source: OpenStreetMap",
+  "theme": "dark",
+  "showMarkers": true,
+  "markerColor": "#3fb1ce",
+  "inset": false,
+  "insetPosition": "bottom-right",
+  "chapters": [
+    {
+      "id": "intro",
+      "title": "San Francisco",
+      "description": "A hilly city on the tip of a peninsula. <em>HTML allowed.</em>",
+      "image": "https://example.com/sf.jpg",
+      "alignment": "left",
+      "hidden": false,
+      "location": { "center": [-122.4194, 37.7749], "zoom": 11, "pitch": 45, "bearing": 0 },
+      "mapAnimation": "flyTo",
+      "rotateAnimation": false,
+      "onChapterEnter": [{ "layerId": "layer-a", "opacity": 1, "duration": 2000 }],
+      "onChapterExit": [{ "layerId": "layer-a", "opacity": 0 }]
+    }
+  ]
+}
+```
+
+`alignment` is one of `left`, `center`, `right`, `full`; `mapAnimation` is
+`flyTo`, `easeTo`, or `jumpTo`. Layer opacity changes reference project layer
+ids. Build and present story maps from **Project → Story Map**, or export a
+self-contained HTML page for static hosting.
 
 ## Layer object
 
@@ -88,7 +161,7 @@ Manual refresh uses the same saved source URL without requiring this metadata.
 
 ## Layer types
 
-| Type             | v0.8.0 status                                                                                      |
+| Type             | v1.0 status                                                                                        |
 | ---------------- | -------------------------------------------------------------------------------------------------- |
 | `geojson`        | Supported for imported files and GeoJSON URLs                                                      |
 | `xyz`            | Supported for raster tile templates                                                                |
@@ -108,10 +181,6 @@ Manual refresh uses the same saved source URL without requiring this metadata.
 | `3d-tiles`       | Supported through the `maplibre-gl-3d-tiles` plugin                               |
 | `mil-symbol`     | APP-6D point symbol (unit, equipment, installation) placed via the MilGeo panel   |
 | `mil-graphic`    | APP-6D tactical graphic (line or area: FLOT, boundary, fire area, objective…)     |
-
-## Example
-
-See [`sample-data/example.geolibre.json`](https://github.com/opengeos/GeoLibre/blob/main/sample-data/example.geolibre.json).
 
 ## API
 

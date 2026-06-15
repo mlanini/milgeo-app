@@ -20,6 +20,10 @@ use std::thread;
 use std::time::Duration;
 use tauri::Manager;
 
+// OAuth popups are a desktop-only, multi-window concept; Android/iOS have no
+// equivalent, and `WebviewWindowBuilder::{on_new_window, window_features}` do
+// not exist on the mobile runtime.
+#[cfg(desktop)]
 static POPUP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const MARTIN_VERSION: &str = "martin-v1.10.1";
@@ -135,6 +139,7 @@ pub fn run() {
             ensure_martin_binary,
             fetch_url_bytes,
             load_external_plugin_bundles,
+            read_project_file,
             resolve_url_redirect,
             read_mbtiles_metadata,
             read_mbtiles_tile,
@@ -154,9 +159,23 @@ pub fn run() {
 }
 
 #[tauri::command]
+fn read_project_file(path: String) -> Result<String, String> {
+    fs::read_to_string(&path).map_err(|error| format!("Could not read project file: {error}"))
+}
+
+#[tauri::command]
 fn close_oauth_popups(app: tauri::AppHandle) {
     for window in app.webview_windows().values() {
-        if window.label().starts_with("oauthPopup") {
+        let is_oauth_popup = window.label().starts_with("oauthPopup")
+            || window
+                .title()
+                .map(|title| {
+                    title.contains("Earth Engine sign-in")
+                        || title.contains("accounts.google.com")
+                        || title.contains("Google")
+                })
+                .unwrap_or(false);
+        if is_oauth_popup {
             let _ = window.close();
         }
     }
@@ -757,6 +776,12 @@ fn start_geolibre_sidecar_blocking(app: tauri::AppHandle) -> Result<SidecarServe
         .arg("run")
         .arg("--project")
         .arg(&project_dir)
+        // The AI segmentation `/ml` endpoints proxy to samgeo-api from inside
+        // this main sidecar process and need `httpx`, which lives in the `ml`
+        // extra. Unlike whitebox/conversion (separate managed venvs), ml has no
+        // lazy bootstrap, so the extra must be synced into the sidecar env here.
+        .arg("--extra")
+        .arg("ml")
         .arg("uvicorn")
         .arg("geolibre_server.app.main:app")
         .arg("--host")
@@ -1707,17 +1732,25 @@ fn create_main_window(app: &mut tauri::App) -> tauri::Result<()> {
         .first()
         .cloned()
         .expect("GeoLibre Desktop requires a main window config");
-    let app_handle = app.handle().clone();
 
-    tauri::WebviewWindowBuilder::from_config(app, &window_config)?
-        .on_new_window(move |url, features| {
+    let builder = tauri::WebviewWindowBuilder::from_config(app, &window_config)?;
+
+    // Only desktop opens OAuth flows in child windows; on mobile they navigate
+    // in-page (or via the system browser), so skip the new-window handler.
+    #[cfg(desktop)]
+    let builder = {
+        let app_handle = app.handle().clone();
+        builder.on_new_window(move |url, features| {
             create_oauth_popup_window(app_handle.clone(), url, features)
         })
-        .build()?;
+    };
+
+    builder.build()?;
 
     Ok(())
 }
 
+#[cfg(desktop)]
 fn create_oauth_popup_window(
     app_handle: tauri::AppHandle,
     url: tauri::Url,

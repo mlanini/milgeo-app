@@ -12,10 +12,7 @@ import {
   type ThreeDTilesControlOptions,
   type ThreeDTilesItemState,
 } from "maplibre-gl-3d-tiles";
-import type {
-  GeoLibreAppAPI,
-  GeoLibreMapControlPosition,
-} from "../types";
+import type { GeoLibreAppAPI, GeoLibreMapControlPosition } from "../types";
 
 const threeDTilesControlPosition: GeoLibreMapControlPosition = "top-left";
 const THREE_D_TILES_LAYER_ID = "geolibre-3d-tiles";
@@ -54,6 +51,14 @@ interface ThreeDTilesControlInternals {
 
 export function openThreeDTilesLayerPanel(app: GeoLibreAppAPI): void {
   openStandaloneThreeDTilesControl(app);
+}
+
+export function closeThreeDTilesLayerPanel(app: GeoLibreAppAPI): void {
+  if (threeDTilesControl && threeDTilesControlMounted) {
+    app.removeMapControl(threeDTilesControl);
+    return;
+  }
+  resetThreeDTilesControl(threeDTilesControl);
 }
 
 export function restoreThreeDTilesLayers(app: GeoLibreAppAPI): void {
@@ -243,6 +248,7 @@ function restoreThreeDTilesMapLayer(
   const layerName = layer.name || layerNameFromUrl(url, id);
   const beforeId = validThreeDTilesBeforeId(control, layer.beforeId);
   const altitudeOffset = numberValue(layer.source.altitudeOffset, 0);
+  const requestHeaders = stringRecordValue(layer.source.requestHeaders);
   const existingTilesets = control
     .getState()
     .tilesets.filter((tileset) => tileset.id !== id);
@@ -262,6 +268,7 @@ function restoreThreeDTilesMapLayer(
     status,
     center: savedCenter,
     altitude: savedAltitude,
+    requestHeaders,
   };
 
   runWithThreeDTilesStoreSyncSuspended(() => {
@@ -274,6 +281,7 @@ function restoreThreeDTilesMapLayer(
       error: undefined,
       layerName,
       opacity: layer.opacity,
+      requestHeaders,
       status,
       tilesetUrl: url,
       tilesets: [...existingTilesets, restoredTileset],
@@ -292,6 +300,7 @@ function restoreThreeDTilesMapLayer(
     altitudeOffset,
     opacity: layer.opacity,
     visible: layer.visible,
+    requestHeaders,
     ...getThreeDTilesDecoderOptions(control),
     onLoad: (metadata) => updateThreeDTilesLoaded(control, id, metadata),
     onError: (error) => updateThreeDTilesError(control, id, error),
@@ -365,7 +374,8 @@ function createThreeDTilesStoreLayer(
   opacity = 1,
   panelCollapsed = true,
 ): GeoLibreLayer {
-  const layerName = tileset.layerName || layerNameFromUrl(tileset.tilesetUrl, tileset.id);
+  const layerName =
+    tileset.layerName || layerNameFromUrl(tileset.tilesetUrl, tileset.id);
   const beforeId = tileset.beforeId;
 
   return {
@@ -377,6 +387,11 @@ function createThreeDTilesStoreLayer(
       sourceId: tileset.id,
       type: "3d-tiles",
       url: tileset.tilesetUrl,
+      // Persisted so a saved project reloads an authenticated tileset; this
+      // means any credential in a header is stored in the project file.
+      // JSON.stringify drops the key when undefined, so a header-less tileset
+      // is not written to the project file.
+      requestHeaders: tileset.requestHeaders,
     },
     visible: tileset.visible,
     opacity,
@@ -410,7 +425,8 @@ function createThreeDTilesLayerUpdate(
   const name = existingLayer.name || layer.name;
 
   if (existingLayer.name !== name) update.name = name;
-  if (existingLayer.beforeId !== layer.beforeId) update.beforeId = layer.beforeId;
+  if (existingLayer.beforeId !== layer.beforeId)
+    update.beforeId = layer.beforeId;
   if (existingLayer.opacity !== layer.opacity) update.opacity = layer.opacity;
   if (existingLayer.visible !== layer.visible) update.visible = layer.visible;
   if (existingLayer.sourcePath !== layer.sourcePath) {
@@ -571,9 +587,7 @@ function isThreeDTilesStoreSyncSuspended(): boolean {
   return threeDTilesStoreSyncSuspended > 0;
 }
 
-function threeDTilesPanelCollapsedFromLayers(
-  layers: GeoLibreLayer[],
-): boolean {
+function threeDTilesPanelCollapsedFromLayers(layers: GeoLibreLayer[]): boolean {
   const panelCollapsed = layers.find(
     (layer) => typeof layer.metadata.panelCollapsed === "boolean",
   )?.metadata.panelCollapsed;
@@ -615,9 +629,7 @@ function getThreeDTilesControlLayers(
   return layers;
 }
 
-function getThreeDTilesDecoderOptions(
-  control: ThreeDTilesControl,
-): {
+function getThreeDTilesDecoderOptions(control: ThreeDTilesControl): {
   dracoDecoderPath: string;
   ktx2TranscoderPath: string;
 } {
@@ -632,8 +644,7 @@ function getThreeDTilesDecoderOptions(
     );
   }
   return {
-    dracoDecoderPath:
-      options?.dracoDecoderPath ?? DEFAULT_DRACO_DECODER_PATH,
+    dracoDecoderPath: options?.dracoDecoderPath ?? DEFAULT_DRACO_DECODER_PATH,
     ktx2TranscoderPath:
       options?.ktx2TranscoderPath ?? DEFAULT_KTX2_TRANSCODER_PATH,
   };
@@ -662,9 +673,7 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function numberValue(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : fallback;
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function optionalNumberValue(value: unknown): number | undefined {
@@ -687,6 +696,20 @@ function lngLatPairValue(value: unknown): [number, number] | undefined {
     return [value[0], value[1]];
   }
   return undefined;
+}
+
+function stringRecordValue(
+  value: unknown,
+): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  // Keep only valid string-valued headers with a non-empty name (an empty
+  // header name is invalid per RFC 7230); drop malformed entries from a
+  // hand-edited project file rather than discarding the whole set.
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] =>
+      entry[0].trim() !== "" && typeof entry[1] === "string",
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function recordsEqual(
@@ -715,11 +738,7 @@ function valuesEqual(left: unknown, right: unknown): boolean {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function layerNameFromUrl(url: string, fallback: string): string {

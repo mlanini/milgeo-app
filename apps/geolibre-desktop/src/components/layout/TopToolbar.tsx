@@ -1,110 +1,116 @@
+import { DEFAULT_PROJECT_NAME, useAppStore } from "@geolibre/core";
 import {
-  projectFromStore,
-  projectPathLabel,
-  serializeProject,
-  useAppStore,
-} from "@geolibre/core";
-import {
-  type BuiltInMapControl,
   DEFAULT_BUILT_IN_CONTROL_VISIBILITY,
   type MapController,
 } from "@geolibre/map";
 import {
-  closeColorbarPanel,
-  closeHtmlPanel,
-  closeLegendPanel,
-  closeSearchPlacesPanel,
+  closeDuckDBLayerPanel,
+  closeEarthEnginePanel,
+  closeMaplibreComponentControls,
+  closePlanetaryComputerPanel,
+  closeRasterLayerPanel,
+  closeThreeDTilesLayerPanel,
+  closeVectorLayerPanel,
   openFlatGeobufAddVectorLayerPanel,
   openDuckDBLayerPanel,
-  isColorbarPanelVisible,
-  isHtmlPanelVisible,
-  isLegendPanelVisible,
-  isSearchPlacesPanelVisible,
-  openColorbarPanel,
-  openHtmlPanel,
-  openLegendPanel,
   openLidarLayerPanel,
+  openPlanetaryComputerPanel,
   openPMTilesLayerPanel,
-  openSearchPlacesPanel,
+  openRasterLayerPanel,
   openSplattingLayerPanel,
   openStacSearchLayerPanel,
   openThreeDTilesLayerPanel,
+  openVectorLayerPanel,
   openZarrLayerPanel,
-  subscribeColorbarPanel,
-  subscribeHtmlPanel,
-  subscribeLegendPanel,
-  subscribeSearchPlacesPanel,
-  type GeoLibreMapControlPosition,
+  setReverseGeocodeLabels,
+  DECK_VIZ_PLUGIN_ID,
+  DIRECTIONS_PLUGIN_ID,
+  REVERSE_GEOCODE_PLUGIN_ID,
+  EFFECTS_PLUGIN_ID,
 } from "@geolibre/plugins";
+import { Button, cn, Input } from "@geolibre/ui";
 import {
-  Button,
-  cn,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-  Input,
-  Label,
-} from "@geolibre/ui";
-import {
-  Activity,
   Bug,
-  CircleHelp,
   Database,
+  FilePen,
+  Share2,
+  Users,
+  FilePlus2,
+  Folder,
   FolderOpen,
-  History,
   Info,
+  Keyboard,
   Layers,
   Link2,
+  Map,
+  MapPin,
   MessageSquare,
   Moon,
-  Puzzle,
-  Radio,
+  Printer,
+  LayoutTemplate,
   RefreshCw,
   Save,
-  Share2,
-  Shield,
-  SlidersHorizontal,
+  Sparkles,
   Sun,
+  Workflow,
   Wrench,
-  X,
+  Activity,
+  Radio,
+  Shield,
 } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { type FormEvent, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   createAppAPI,
   getPluginManager,
   usePluginRegistry,
 } from "../../hooks/usePlugins";
-import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
+import { useConsentGatedActions } from "../../hooks/useConsentGatedActions";
+import { useOsmPbfLoader } from "../../hooks/useOsmPbfLoader";
+import { useProjectFileActions } from "../../hooks/useProjectFileActions";
+import { useToolbarPanels } from "../../hooks/useToolbarPanels";
 import type { ThemeMode } from "../../hooks/useThemeMode";
-import {
-  isTauri,
-  openProjectFile,
-  openRecentProjectFile,
-  RecentProjectGoneError,
-  saveProjectFile,
-} from "../../lib/tauri-io";
-import { mergeStringLists } from "../../lib/string-lists";
-import { normalizeProjectUrl } from "../../lib/urls";
-import { resolveProjectXyzLayers } from "../../lib/xyz-url";
+import { isTauri } from "../../lib/tauri-io";
+import { CommandPalette } from "../command/CommandPalette";
+import { KeyboardShortcutsDialog } from "../command/KeyboardShortcutsDialog";
+import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
+import type { Command } from "../../lib/commands";
 import { AddDataDialog, type AddDataKind } from "./AddDataDialog";
+import { AddNetcdfDialog } from "./AddNetcdfDialog";
 import { AboutDialog } from "./AboutDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
-import { SettingsDialog } from "./SettingsDialog";
+import { ManagePluginsDialog } from "./ManagePluginsDialog";
 import { ShareProjectDialog } from "./ShareProjectDialog";
+import { CollaborateDialog } from "./CollaborateDialog";
+import { useCollaboration } from "../../hooks/useCollaboration";
+import { SettingsDialog } from "./SettingsDialog";
+import { PrintLayoutDialog } from "./PrintLayoutDialog";
+import { OfflineRegionDialog } from "./OfflineRegionDialog";
+import { AddDataMenu } from "./toolbar/AddDataMenu";
+import { ConsentNoticeDialogs } from "./toolbar/ConsentNoticeDialogs";
+import { ControlsMenu } from "./toolbar/ControlsMenu";
+import { EditMenu } from "./toolbar/EditMenu";
+import { HelpMenu } from "./toolbar/HelpMenu";
+import { OsmPbfDialogs } from "./toolbar/OsmPbfDialogs";
+import { PluginsMenu } from "./toolbar/PluginsMenu";
+import { ProcessingMenu } from "./toolbar/ProcessingMenu";
+import { ProjectFileDialogs } from "./toolbar/ProjectFileDialogs";
+import { ProjectMenu } from "./toolbar/ProjectMenu";
+import {
+  ADD_DATA_KIND_COMMANDS,
+  ALL_BUILT_IN_CONTROL_IDS,
+  type AddLayerHandlers,
+  CONVERSION_COMMANDS,
+  FEEDBACK_URL,
+  MAP_CONTROL_ITEMS,
+  NEW_PROJECT_VISIBLE_BUILT_IN_CONTROLS,
+  newProjectToolbarControlVisibility,
+  openExternalLink,
+  RASTER_TOOL_COMMANDS,
+  type ToolbarChrome,
+  type ToolbarMapControl,
+  VECTOR_TOOL_COMMANDS,
+} from "./toolbar/constants";
 
 interface TopToolbarProps {
   compact?: boolean;
@@ -119,55 +125,6 @@ interface TopToolbarProps {
   onToggleThemeMode: () => void;
 }
 
-type ToolbarMapControl = Exclude<BuiltInMapControl, "layer-control">;
-
-const MAP_CONTROL_ITEMS: Array<{
-  id: ToolbarMapControl;
-  label: string;
-}> = [
-  { id: "navigation", label: "Navigation" },
-  { id: "fullscreen", label: "Fullscreen" },
-  { id: "geolocate", label: "Geolocate" },
-  { id: "globe", label: "Globe" },
-  { id: "terrain", label: "Terrain" },
-  { id: "scale", label: "Scale" },
-  { id: "attribution", label: "Attribution" },
-  { id: "logo", label: "MapLibre logo" },
-];
-
-const PLUGIN_POSITION_ITEMS: Array<{
-  value: GeoLibreMapControlPosition;
-  label: string;
-}> = [
-  { value: "top-left", label: "Top left" },
-  { value: "top-right", label: "Top right" },
-  { value: "bottom-left", label: "Bottom left" },
-  { value: "bottom-right", label: "Bottom right" },
-];
-
-const FEEDBACK_URL = "https://github.com/mlanini/milgeo-app/issues";
-
-async function openExternalLink(url: string): Promise<void> {
-  if (isTauri()) {
-    await openUrl(url);
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
-}
-
-function formatRecentProjectTime(openedAt: string): string {
-  const openedDate = new Date(openedAt);
-  if (Number.isNaN(openedDate.getTime())) return "";
-
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(openedDate);
-}
-
 export function TopToolbar({
   compact = false,
   diagnosticsErrorCount,
@@ -180,21 +137,65 @@ export function TopToolbar({
   onOpenDiagnostics,
   onToggleThemeMode,
 }: TopToolbarProps) {
-  const loadProject = useAppStore((s) => s.loadProject);
+  const { t } = useTranslation();
+  // The reverse-geocode plugin lives in the framework-agnostic plugins package
+  // and cannot call t() itself, so push the translated popup strings into it
+  // here and refresh them whenever the active language changes.
+  useEffect(() => {
+    setReverseGeocodeLabels({
+      lookingUp: t("geocode.reverseLookingUp"),
+      noAddress: t("geocode.reverseNoAddress"),
+      copyAddress: t("geocode.reverseCopyAddress"),
+      failed: t("geocode.reverseFailed"),
+    });
+  }, [t]);
+
+  const setProcessingOpen = useAppStore((s) => s.setProcessingOpen);
+  const setConversionOpen = useAppStore((s) => s.setConversionOpen);
+  const setVectorToolOpen = useAppStore((s) => s.setVectorToolOpen);
+  const setGeocodeOpen = useAppStore((s) => s.setGeocodeOpen);
+  const setModelBuilderOpen = useAppStore((s) => s.setModelBuilderOpen);
   const setRasterToolOpen = useAppStore((s) => s.setRasterToolOpen);
   const setAnalysisOpen = useAppStore((s) => s.setAnalysisOpen);
   const setSillagesOpen = useAppStore((s) => s.setSillagesOpen);
-  const analysisOpen    = useAppStore((s) => s.ui.analysisOpen);
-  const sillagesOpen    = useAppStore((s) => s.ui.sillagesOpen);
+  const analysisOpen = useAppStore((s) => s.ui.analysisOpen);
+  const sillagesOpen = useAppStore((s) => s.ui.sillagesOpen);
+  const setSegmentationOpen = useAppStore((s) => s.setSegmentationOpen);
+  const setSqlWorkspaceOpen = useAppStore((s) => s.setSqlWorkspaceOpen);
+  const setPythonConsoleOpen = useAppStore((s) => s.setPythonConsoleOpen);
+  const setAssistantOpen = useAppStore((s) => s.setAssistantOpen);
   const projectName = useAppStore((s) => s.projectName);
   const projectPath = useAppStore((s) => s.projectPath);
-  const recentProjects = useAppStore((s) => s.recentProjects);
-  const setProjectPath = useAppStore((s) => s.setProjectPath);
   const setProjectName = useAppStore((s) => s.setProjectName);
-  const rememberRecentProject = useAppStore((s) => s.rememberRecentProject);
-  const forgetRecentProject = useAppStore((s) => s.forgetRecentProject);
-  const clearRecentProjects = useAppStore((s) => s.clearRecentProjects);
-  const markSaved = useAppStore((s) => s.markSaved);
+
+  const {
+    plugins,
+    isActive,
+    getMapControlPosition,
+    toggle,
+    setMapControlPosition,
+  } = usePluginRegistry();
+  // mapControllerRef is a stable ref object and createAppAPI dereferences
+  // `.current` lazily, so memoizing on the ref keeps a single appApi identity
+  // across renders without going stale.
+  const appApi = useMemo(() => createAppAPI(mapControllerRef), [mapControllerRef]);
+
+  const panels = useToolbarPanels(appApi);
+  const projectFiles = useProjectFileActions(mapControllerRef);
+  const osmPbf = useOsmPbfLoader(appApi, projectFiles.setActionError);
+  const consent = useConsentGatedActions({ appApi, isActive, toggle });
+  const collaboration = useCollaboration(mapControllerRef);
+
+  // When opened via a `?collab=<code>` share link, auto-open the Collaborate
+  // dialog (which prefills the code) so the recipient only picks a name and
+  // joins, instead of having to find the Project menu first.
+  useEffect(() => {
+    if (!collaboration.enabled) return;
+    if (new URLSearchParams(window.location.search).get("collab")) {
+      setCollaborateDialogOpen(true);
+    }
+  }, [collaboration.enabled]);
+
   const [controlsVisible, setControlsVisible] = useState<
     Record<ToolbarMapControl, boolean>
   >(() =>
@@ -207,290 +208,64 @@ export function TopToolbar({
     ),
   );
   const [addDataKind, setAddDataKind] = useState<AddDataKind | null>(null);
-  const [projectUrlDialogOpen, setProjectUrlDialogOpen] = useState(false);
-  const [projectUrl, setProjectUrl] = useState("");
-  const [projectUrlError, setProjectUrlError] = useState<string | null>(null);
-  const [projectUrlLoading, setProjectUrlLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [aboutOpen, setAboutOpen] = useState(false);
-  const [checkForUpdatesRequest, setCheckForUpdatesRequest] = useState(0);
+  // Deck.gl Layer kind the Add Data dialog opens on (e.g. the 3D-model entry
+  // jumps straight to the scenegraph layer type).
+  const [addDataDeckVizKind, setAddDataDeckVizKind] = useState<
+    string | undefined
+  >(undefined);
+  const [netcdfDialogOpen, setNetcdfDialogOpen] = useState(false);
+  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+  const [managePluginsOpen, setManagePluginsOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const projectUrlAbortRef = useRef<AbortController | null>(null);
-  const recentAbortRef = useRef<AbortController | null>(null);
+  const [collaborateDialogOpen, setCollaborateDialogOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [printLayoutOpen, setPrintLayoutOpen] = useState(false);
+  const [offlineRegionOpen, setOfflineRegionOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [checkForUpdatesRequest, setCheckForUpdatesRequest] = useState(0);
 
-  const handleOpenFromFile = async () => {
-    const result = await openProjectFile();
-    if (result) {
-      try {
-        loadProject(
-          await resolveProjectXyzLayers(result.project),
-          result.path,
-          { rememberRecent: isTauri() },
-        );
-      } catch (error) {
-        console.error("Failed to open project", error);
-        setActionError(
-          error instanceof Error ? error.message : "Could not open project.",
-        );
-      }
-    }
-  };
-
-  const handleOpenFromUrl = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const normalizedUrl = normalizeProjectUrl(projectUrl);
-    if (!normalizedUrl) {
-      setProjectUrlError("Enter a valid HTTP or HTTPS project URL.");
-      return;
-    }
-
-    projectUrlAbortRef.current?.abort();
-    const controller = new AbortController();
-    projectUrlAbortRef.current = controller;
-
-    setProjectUrlLoading(true);
-    setProjectUrlError(null);
-
-    try {
-      const result = await openRecentProjectFile(
-        normalizedUrl,
-        controller.signal,
-      );
-      const project = await resolveProjectXyzLayers(
-        result.project,
-        controller.signal,
-      );
-      if (controller.signal.aborted) return;
-      loadProject(project, result.path);
-      setProjectUrl("");
-      setProjectUrlDialogOpen(false);
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      console.error("Failed to open project URL", error);
-      setProjectUrlError(
-        error instanceof Error ? error.message : "Could not open project URL.",
-      );
-    } finally {
-      if (projectUrlAbortRef.current === controller) {
-        projectUrlAbortRef.current = null;
-      }
-      setProjectUrlLoading(false);
-    }
-  };
-
-  const handleOpenRecent = async (path: string) => {
-    // Cancel any previous in-flight open so rapid clicks cannot race and let a
-    // stale fetch win by resolving last.
-    recentAbortRef.current?.abort();
-    const controller = new AbortController();
-    recentAbortRef.current = controller;
-
-    let result: Awaited<ReturnType<typeof openRecentProjectFile>>;
-
-    try {
-      result = await openRecentProjectFile(path, controller.signal);
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      // Only drop the entry when the project is permanently gone; preserve it
-      // for transient failures (network timeout, 5xx, momentary IO error).
-      if (error instanceof RecentProjectGoneError) {
-        forgetRecentProject(path);
-      }
-      console.error("Failed to open recent project", error);
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : "Could not open the recent project.",
-      );
-      return;
-    }
-
-    try {
-      const project = await resolveProjectXyzLayers(
-        result.project,
-        controller.signal,
-      );
-      if (controller.signal.aborted) return;
-      loadProject(project, result.path);
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      console.error("Failed to load recent project", error);
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : "Could not load the recent project.",
-      );
-    } finally {
-      if (recentAbortRef.current === controller) {
-        recentAbortRef.current = null;
-      }
-    }
-  };
-
-  // Build a serializable snapshot of the current project state. Used by both
-  // the save handler and the Project > Share dialog.
-  const buildCurrentProject = (nameOverride?: string) => {
-    const state = useAppStore.getState();
-    const defaultProjectName =
-      nameOverride?.trim() || state.projectName.trim() || "Untitled Project";
-    const pluginManifestUrls = mergeStringLists(
-      state.projectPlugins?.manifestUrls ?? [],
-      useDesktopSettingsStore.getState().desktopSettings.pluginManifestUrls,
-    );
-    const project = projectFromStore({
-      projectName: defaultProjectName,
-      mapView: mapControllerRef.current?.readView() ?? state.mapView,
-      basemapStyleUrl: state.basemapStyleUrl,
-      basemapVisible: state.basemapVisible,
-      basemapOpacity: state.basemapOpacity,
-      layers: state.layers,
-      preferences: state.preferences,
-      plugins: {
-        ...getPluginManager().getProjectState(),
-        manifestUrls: pluginManifestUrls,
-      },
-      metadata: state.metadata,
+  const resetRuntimeControlsForNewProject = () => {
+    closeMaplibreComponentControls(appApi);
+    closeRasterLayerPanel(appApi);
+    closeVectorLayerPanel(appApi);
+    closePlanetaryComputerPanel(appApi);
+    closeEarthEnginePanel(appApi);
+    closeThreeDTilesLayerPanel(appApi);
+    closeDuckDBLayerPanel(appApi);
+    getPluginManager().restoreProjectState(null, appApi, {
+      resetMissingSettings: true,
     });
-    return {
-      project,
-      defaultProjectName,
-      content: serializeProject(project),
-      projectPath: state.projectPath,
-    };
-  };
 
-  const handleSave = async (): Promise<boolean> => {
-    const state = useAppStore.getState();
-    const defaultProjectName = state.projectName.trim() || "Untitled Project";
-    const pluginManifestUrls = mergeStringLists(
-      state.projectPlugins?.manifestUrls ?? [],
-      useDesktopSettingsStore.getState().desktopSettings.pluginManifestUrls,
-    );
-    const project = projectFromStore({
-      projectName: defaultProjectName,
-      mapView: mapControllerRef.current?.readView() ?? state.mapView,
-      basemapStyleUrl: state.basemapStyleUrl,
-      basemapVisible: state.basemapVisible,
-      basemapOpacity: state.basemapOpacity,
-      layers: state.layers,
-      preferences: state.preferences,
-      plugins: {
-        ...getPluginManager().getProjectState(),
-        manifestUrls: pluginManifestUrls,
-      },
-      metadata: state.metadata,
-    });
-    const content = serializeProject(project);
-    const path = await saveProjectFile(
-      content,
-      state.projectPath ?? `${defaultProjectName}.milgeo.json`,
-    );
-    if (!path) return false;
-    setProjectPath(path);
-    rememberRecentProject({
-      path,
-      name: project.name,
-      openedAt: new Date().toISOString(),
-    });
-    markSaved();
-    return true;
-  };
-
-  const {
-    plugins,
-    isActive,
-    getMapControlPosition,
-    toggle,
-    setMapControlPosition,
-  } = usePluginRegistry();
-  const appApi = createAppAPI(mapControllerRef);
-  const handleAddFlatGeobufLayer = () => {
-    openFlatGeobufAddVectorLayerPanel(appApi);
-  };
-  const handleAddDuckDBLayer = () => {
-    openDuckDBLayerPanel(appApi);
-  };
-  const handleAddGeoParquetLayer = async () => {
-    try {
-      const { openGeoParquetPanel } = await import(
-        "../../lib/geoparquet-duckdb-runtime"
-      );
-      openGeoParquetPanel(appApi);
-    } catch (error) {
-      console.error("Failed to open the GeoParquet panel", error);
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : "Failed to open GeoParquet panel",
+    for (const control of ALL_BUILT_IN_CONTROL_IDS) {
+      mapControllerRef.current?.setBuiltInControlPosition(control, "top-right");
+    }
+    for (const control of ALL_BUILT_IN_CONTROL_IDS) {
+      mapControllerRef.current?.setBuiltInControlVisible(
+        control,
+        NEW_PROJECT_VISIBLE_BUILT_IN_CONTROLS.has(control),
       );
     }
+    setControlsVisible(newProjectToolbarControlVisibility());
   };
-  const handleAddPMTilesLayer = () => {
-    openPMTilesLayerPanel(appApi);
+
+  // The appApi-backed "add layer" handlers shared by the Add Data menu and the
+  // command palette so each panel opens identically from both.
+  const addLayer: AddLayerHandlers = {
+    vector: () => openVectorLayerPanel(appApi),
+    raster: () => openRasterLayerPanel(appApi),
+    stac: () => openStacSearchLayerPanel(appApi),
+    flatGeobuf: () => openFlatGeobufAddVectorLayerPanel(appApi),
+    pmtiles: () => openPMTilesLayerPanel(appApi),
+    zarr: () => openZarrLayerPanel(appApi),
+    netcdf: () => setNetcdfDialogOpen(true),
+    lidar: () => openLidarLayerPanel(appApi),
+    splatting: () => openSplattingLayerPanel(appApi),
+    threeDTiles: () => openThreeDTilesLayerPanel(appApi),
+    duckdb: () => openDuckDBLayerPanel(appApi),
   };
-  const handleAddStacLayer = () => {
-    openStacSearchLayerPanel(appApi);
-  };
-  const searchPlacesVisible = useSyncExternalStore(
-    subscribeSearchPlacesPanel,
-    isSearchPlacesPanelVisible,
-    isSearchPlacesPanelVisible,
-  );
-  const handleToggleSearchPlacesPanel = () => {
-    if (searchPlacesVisible) {
-      closeSearchPlacesPanel();
-      return;
-    }
-    openSearchPlacesPanel(appApi);
-  };
-  const colorbarPanelVisible = useSyncExternalStore(
-    subscribeColorbarPanel,
-    isColorbarPanelVisible,
-    isColorbarPanelVisible,
-  );
-  const handleToggleColorbarPanel = () => {
-    if (colorbarPanelVisible) {
-      closeColorbarPanel(appApi);
-      return;
-    }
-    openColorbarPanel(appApi);
-  };
-  const legendPanelVisible = useSyncExternalStore(
-    subscribeLegendPanel,
-    isLegendPanelVisible,
-    isLegendPanelVisible,
-  );
-  const handleToggleLegendPanel = () => {
-    if (legendPanelVisible) {
-      closeLegendPanel(appApi);
-      return;
-    }
-    openLegendPanel(appApi);
-  };
-  const htmlPanelVisible = useSyncExternalStore(
-    subscribeHtmlPanel,
-    isHtmlPanelVisible,
-    isHtmlPanelVisible,
-  );
-  const handleToggleHtmlPanel = () => {
-    if (htmlPanelVisible) {
-      closeHtmlPanel(appApi);
-      return;
-    }
-    openHtmlPanel(appApi);
-  };
-  const handleAddZarrLayer = () => {
-    openZarrLayerPanel(appApi);
-  };
-  const handleAddLidarLayer = () => {
-    openLidarLayerPanel(appApi);
-  };
-  const handleAddSplattingLayer = () => {
-    openSplattingLayerPanel(appApi);
-  };
-  const handleAddThreeDTilesLayer = () => {
-    openThreeDTilesLayerPanel(appApi);
-  };
+  const handleOpenPlanetaryComputer = () => openPlanetaryComputerPanel(appApi);
+
   const toggleMapControl = (control: ToolbarMapControl) => {
     setControlsVisible((current) => {
       const visible = !current[control];
@@ -500,11 +275,442 @@ export function TopToolbar({
       return updated ? { ...current, [control]: visible } : current;
     });
   };
+
+  // The command registry: the single source of truth shared by the command
+  // palette, the global shortcut layer, and the keyboard cheat sheet. Each
+  // entry reuses the same handler the matching menu item calls, so behaviour is
+  // defined once. Only file operations get global shortcuts to avoid clobbering
+  // MapLibre or browser keys; everything else is reachable through the palette.
+  const commands: Command[] = [
+    // Project
+    {
+      id: "project.new",
+      title: t("toolbar.command.projectNew"),
+      group: t("toolbar.commandGroup.project"),
+      keywords: "create",
+      icon: FilePlus2,
+      shortcut: { key: "n", mod: true, shift: false },
+      run: () => setNewProjectDialogOpen(true),
+    },
+    {
+      id: "project.open-file",
+      title: t("toolbar.command.projectOpenFile"),
+      group: t("toolbar.commandGroup.project"),
+      keywords: "load",
+      icon: FolderOpen,
+      shortcut: { key: "o", mod: true, shift: false },
+      run: () => void projectFiles.handleOpenFromFile(),
+    },
+    {
+      id: "project.open-url",
+      title: t("toolbar.command.projectOpenUrl"),
+      group: t("toolbar.commandGroup.project"),
+      keywords: "load",
+      icon: Link2,
+      run: () => projectFiles.setProjectUrlDialogOpen(true),
+    },
+    {
+      id: "project.save",
+      title: t("toolbar.command.projectSave"),
+      group: t("toolbar.commandGroup.project"),
+      icon: Save,
+      shortcut: { key: "s", mod: true, shift: false },
+      run: () => void projectFiles.handleSave(),
+    },
+    {
+      id: "project.save-as",
+      title: t("toolbar.command.projectSaveAs"),
+      group: t("toolbar.commandGroup.project"),
+      icon: FilePen,
+      shortcut: { key: "s", mod: true, shift: true },
+      run: () => void projectFiles.handleSaveAs(),
+    },
+    {
+      id: "project.share",
+      title: t("toolbar.command.projectShare"),
+      group: t("toolbar.commandGroup.project"),
+      icon: Share2,
+      run: () => setShareDialogOpen(true),
+    },
+    // Only surfaced when live collaboration is configured (env flag).
+    ...(collaboration.enabled
+      ? [
+          {
+            id: "project.collaborate",
+            title: t("toolbar.command.projectCollaborate"),
+            group: t("toolbar.commandGroup.project"),
+            icon: Users,
+            run: () => setCollaborateDialogOpen(true),
+          },
+        ]
+      : []),
+    {
+      id: "project.print",
+      title: t("toolbar.command.projectPrint"),
+      group: t("toolbar.commandGroup.project"),
+      icon: Printer,
+      run: panels.print.toggle,
+    },
+    {
+      id: "project.print-layout",
+      title: t("toolbar.item.printLayoutEllipsis"),
+      group: t("toolbar.commandGroup.project"),
+      icon: LayoutTemplate,
+      run: () => setPrintLayoutOpen(true),
+    },
+    // Add Data
+    {
+      id: "add.vector",
+      title: t("toolbar.command.addVectorLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      icon: Database,
+      run: addLayer.vector,
+    },
+    {
+      id: "add.raster",
+      title: t("toolbar.command.addRasterLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      icon: Database,
+      run: addLayer.raster,
+    },
+    {
+      id: "add.osm-pbf",
+      title: t("toolbar.command.addOsmPbfLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: () => osmPbf.setDialogOpen(true),
+    },
+    ...ADD_DATA_KIND_COMMANDS.map(({ kind, titleKey }) => ({
+      id: `add.${kind}`,
+      title: t("toolbar.command.addLayer", { name: t(titleKey) }),
+      group: t("toolbar.commandGroup.addData"),
+      run: () => setAddDataKind(kind),
+    })),
+    {
+      id: "add.stac",
+      title: t("toolbar.command.addStacLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.stac,
+    },
+    {
+      id: "add.geoparquet",
+      title: t("toolbar.command.addGeoparquetLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.vector,
+    },
+    {
+      id: "add.flatgeobuf",
+      title: t("toolbar.command.addFlatgeobufLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.flatGeobuf,
+    },
+    {
+      id: "add.pmtiles",
+      title: t("toolbar.command.addPmtilesLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.pmtiles,
+    },
+    {
+      id: "add.zarr",
+      title: t("toolbar.command.addZarrLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.zarr,
+    },
+    {
+      id: "add.netcdf",
+      title: t("toolbar.command.addNetcdfLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.netcdf,
+    },
+    {
+      id: "add.lidar",
+      title: t("toolbar.command.addLidarLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.lidar,
+    },
+    {
+      id: "add.splatting",
+      title: t("toolbar.command.addSplattingLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.splatting,
+    },
+    {
+      id: "add.3d-tiles",
+      title: t("toolbar.command.add3dTilesLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.threeDTiles,
+    },
+    {
+      id: "add.duckdb",
+      title: t("toolbar.command.addDuckdbLayer"),
+      group: t("toolbar.commandGroup.addData"),
+      run: addLayer.duckdb,
+    },
+    // Processing
+    {
+      id: "proc.whitebox",
+      title: t("toolbar.command.whiteboxTools"),
+      group: t("toolbar.commandGroup.processing"),
+      icon: Wrench,
+      run: () => setProcessingOpen(true),
+    },
+    {
+      id: "proc.sql",
+      title: t("toolbar.command.sqlWorkspace"),
+      group: t("toolbar.commandGroup.processing"),
+      icon: Wrench,
+      run: () => setSqlWorkspaceOpen(true),
+    },
+    {
+      id: "proc.python",
+      title: t("toolbar.command.pythonConsole"),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "python console pyodide script repl",
+      icon: Wrench,
+      run: () => setPythonConsoleOpen(true),
+    },
+    {
+      id: "proc.assistant",
+      title: t("toolbar.command.assistant"),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "assistant ai chat llm natural language gemini agent",
+      icon: Sparkles,
+      run: () => setAssistantOpen(true),
+    },
+    {
+      id: "proc.geocode",
+      title: t("toolbar.command.geocode"),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "geocode address csv nominatim",
+      icon: MapPin,
+      run: () => setGeocodeOpen(true),
+    },
+    {
+      id: "proc.modelBuilder",
+      title: t("toolbar.command.modelBuilder"),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "batch model pipeline chain modeler workflow graphical",
+      icon: Workflow,
+      run: () => setModelBuilderOpen(true),
+    },
+    {
+      id: "proc.segmentation",
+      title: t("toolbar.command.segmentation"),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "segmentation samgeo sam3 ai segment imagery",
+      icon: Sparkles,
+      run: () => setSegmentationOpen(true),
+    },
+    ...CONVERSION_COMMANDS.map(({ kind, titleKey }) => ({
+      id: `proc.conversion.${kind}`,
+      title: t(titleKey),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "conversion convert",
+      run: () => setConversionOpen(kind),
+    })),
+    ...VECTOR_TOOL_COMMANDS.map(({ kind, titleKey }) => ({
+      id: `proc.vector.${kind}`,
+      title: t(titleKey),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "vector tool",
+      run: () => setVectorToolOpen(kind),
+    })),
+    ...RASTER_TOOL_COMMANDS.map(({ kind, titleKey }) => ({
+      id: `proc.raster.${kind}`,
+      title: t(titleKey),
+      group: t("toolbar.commandGroup.processing"),
+      keywords: "raster tool",
+      run: () => setRasterToolOpen(kind),
+    })),
+    {
+      id: "proc.planetary-computer",
+      title: t("toolbar.command.planetaryComputer"),
+      group: t("toolbar.commandGroup.processing"),
+      run: handleOpenPlanetaryComputer,
+    },
+    {
+      id: "proc.earth-engine",
+      title: t("toolbar.command.earthEngine"),
+      group: t("toolbar.commandGroup.processing"),
+      run: panels.earthEngine.toggle,
+    },
+    // Controls
+    ...MAP_CONTROL_ITEMS.map((control) => ({
+      id: `control.${control.id}`,
+      title: t("toolbar.command.toggleControl", {
+        name: t(control.labelKey),
+      }),
+      group: t("toolbar.commandGroup.controls"),
+      keywords: "control toggle map",
+      run: () => toggleMapControl(control.id),
+    })),
+    {
+      id: "control.effects",
+      title: t("toolbar.command.toggleAtmosphereEffects"),
+      group: t("toolbar.commandGroup.controls"),
+      run: () => toggle(EFFECTS_PLUGIN_ID, appApi),
+    },
+    {
+      id: "control.directions",
+      title: t("toolbar.command.toggleDirections"),
+      group: t("toolbar.commandGroup.controls"),
+      run: consent.handleToggleDirections,
+    },
+    {
+      id: "control.search",
+      title: t("toolbar.command.toggleSearch"),
+      group: t("toolbar.commandGroup.controls"),
+      run: panels.searchPlaces.toggle,
+    },
+    {
+      id: "control.colorbar",
+      title: t("toolbar.command.toggleColorbar"),
+      group: t("toolbar.commandGroup.controls"),
+      run: panels.colorbar.toggle,
+    },
+    {
+      id: "control.legend",
+      title: t("toolbar.command.toggleLegend"),
+      group: t("toolbar.commandGroup.controls"),
+      run: panels.legend.toggle,
+    },
+    {
+      id: "control.html",
+      title: t("toolbar.command.toggleHtmlPanel"),
+      group: t("toolbar.commandGroup.controls"),
+      run: panels.html.toggle,
+    },
+    {
+      id: "control.measure",
+      title: t("toolbar.command.toggleMeasure"),
+      group: t("toolbar.commandGroup.controls"),
+      run: panels.measure.toggle,
+    },
+    {
+      id: "control.bookmark",
+      title: t("toolbar.command.toggleBookmark"),
+      group: t("toolbar.commandGroup.controls"),
+      run: panels.bookmark.toggle,
+    },
+    {
+      id: "control.minimap",
+      title: t("toolbar.command.toggleMinimap"),
+      group: t("toolbar.commandGroup.controls"),
+      run: panels.minimap.toggle,
+    },
+    {
+      id: "control.view-state",
+      title: t("toolbar.command.toggleViewState"),
+      group: t("toolbar.commandGroup.controls"),
+      run: panels.viewState.toggle,
+    },
+    // View
+    {
+      id: "view.theme",
+      title:
+        themeMode === "dark"
+          ? t("toolbar.command.switchToLight")
+          : t("toolbar.command.switchToDark"),
+      group: t("toolbar.commandGroup.view"),
+      keywords: "theme dark light appearance",
+      icon: themeMode === "dark" ? Sun : Moon,
+      run: onToggleThemeMode,
+    },
+    // Help
+    {
+      id: "help.shortcuts",
+      title: t("toolbar.command.keyboardShortcuts"),
+      group: t("toolbar.commandGroup.help"),
+      keywords: "hotkeys cheat sheet",
+      icon: Keyboard,
+      run: () => setShortcutsOpen(true),
+    },
+    {
+      id: "help.diagnostics",
+      title: t("toolbar.command.diagnostics"),
+      group: t("toolbar.commandGroup.help"),
+      icon: Bug,
+      run: onOpenDiagnostics,
+    },
+    {
+      id: "help.feedback",
+      title: t("toolbar.command.giveFeedback"),
+      group: t("toolbar.commandGroup.help"),
+      icon: MessageSquare,
+      run: () => void openExternalLink(FEEDBACK_URL),
+    },
+    {
+      id: "help.updates",
+      title: t("toolbar.command.checkForUpdates"),
+      group: t("toolbar.commandGroup.help"),
+      icon: RefreshCw,
+      run: () => {
+        setAboutOpen(true);
+        setCheckForUpdatesRequest((value) => value + 1);
+      },
+    },
+    {
+      id: "help.about",
+      title: t("toolbar.command.about"),
+      group: t("toolbar.commandGroup.help"),
+      icon: Info,
+      run: () => setAboutOpen(true),
+    },
+    // Plugins — one toggle per registered plugin. Atmosphere Effects,
+    // Directions, Reverse Geocode, and the deck.gl viz renderer are excluded
+    // here because they are surfaced under Controls / Add Data instead
+    // (matching the menus).
+    ...plugins
+      .filter(
+        (plugin) =>
+          plugin.id !== EFFECTS_PLUGIN_ID &&
+          plugin.id !== DIRECTIONS_PLUGIN_ID &&
+          plugin.id !== REVERSE_GEOCODE_PLUGIN_ID &&
+          plugin.id !== DECK_VIZ_PLUGIN_ID,
+      )
+      .map((plugin) => ({
+        id: `plugin.${plugin.id}`,
+        title: t("toolbar.command.togglePlugin", { name: plugin.name }),
+        group: t("toolbar.commandGroup.plugins"),
+        keywords: isActive(plugin.id) ? "plugin deactivate" : "plugin activate",
+        run: () => toggle(plugin.id, appApi),
+      })),
+    // Settings
+    {
+      id: "settings.manage-plugins",
+      title: t("toolbar.command.managePlugins"),
+      group: t("toolbar.commandGroup.settings"),
+      keywords: "install external plugin marketplace",
+      run: () => setManagePluginsOpen(true),
+    },
+  ];
+
+  useGlobalShortcuts({
+    commands,
+    onOpenPalette: () => setCommandPaletteOpen(true),
+    onOpenShortcuts: () => setShortcutsOpen(true),
+  });
+
   const toolbarButtonSize = compact ? "icon" : "sm";
   const toolbarButtonClass = compact ? "h-8 w-8 shrink-0" : "shrink-0";
+  // Class for "secondary" toolbar menus that may be hidden on narrow screens to
+  // reduce toolbar wrapping. The menu stays reachable other ways (e.g. Edit's
+  // actions also have keyboard shortcuts). To make a future menu hideable, give
+  // its trigger Button this class instead of `toolbarButtonClass`.
+  const toolbarSecondaryButtonClass = cn(
+    toolbarButtonClass,
+    "hidden md:inline-flex",
+  );
   const toolbarIconClassName = cn("h-3.5 w-3.5", showLabels && "sm:mr-1");
+  const appTitle = isTauri() ? "GeoLibre Desktop" : "GeoLibre";
   const renderToolbarLabel = (label: string) =>
     showLabels ? <span className="hidden sm:inline">{label}</span> : null;
+  const chrome: ToolbarChrome = {
+    buttonClass: toolbarButtonClass,
+    secondaryButtonClass: toolbarSecondaryButtonClass,
+    buttonSize: toolbarButtonSize,
+    iconClassName: toolbarIconClassName,
+    renderLabel: renderToolbarLabel,
+  };
 
   return (
     <header
@@ -516,246 +722,136 @@ export function TopToolbar({
       )}
     >
       <span className="mr-1 flex shrink-0 items-center gap-1.5 text-sm font-semibold text-primary md:mr-2">
-        <img src="/favicon.svg" alt="MilGeo" className="h-4 w-4" />
+        <Map className="h-4 w-4" />
         {showProjectInfo ? (
-          <span className="hidden sm:inline">MilGeo.app</span>
+          <span className="hidden sm:inline">
+            <img src="/favicon.svg" alt="MilGeo" className="inline h-4 w-4 mr-1" />
+            MilGeo.app
+          </span>
         ) : null}
       </span>
+      <ProjectMenu
+        chrome={chrome}
+        collaborationEnabled={collaboration.enabled}
+        printPanel={panels.print}
+        onNewProject={() => setNewProjectDialogOpen(true)}
+        onOpenFromFile={() => void projectFiles.handleOpenFromFile()}
+        onOpenFromUrl={() => projectFiles.setProjectUrlDialogOpen(true)}
+        onOpenRecent={(path) => void projectFiles.handleOpenRecent(path)}
+        onSave={() => void projectFiles.handleSave()}
+        onSaveAs={() => void projectFiles.handleSaveAs()}
+        onShare={() => setShareDialogOpen(true)}
+        onCollaborate={() => setCollaborateDialogOpen(true)}
+        onPrintLayout={() => setPrintLayoutOpen(true)}
+        onDownloadOffline={() => setOfflineRegionOpen(true)}
+      />
+      <EditMenu chrome={chrome} />
       <NewProjectDialog
+        open={newProjectDialogOpen}
+        onOpenChange={setNewProjectDialogOpen}
+        onSaveCurrentProject={projectFiles.handleSave}
+        onProjectCreated={resetRuntimeControlsForNewProject}
+      />
+      <AddDataMenu
+        chrome={chrome}
+        addLayer={addLayer}
+        osmPbfBusy={osmPbf.busy}
+        onSetAddDataKind={setAddDataKind}
+        onAddGltfModel={() => {
+          setAddDataDeckVizKind("scenegraph");
+          setAddDataKind("deckgl-viz");
+        }}
+        onOpenOsmPbfDialog={() => osmPbf.setDialogOpen(true)}
+      />
+      <ProcessingMenu
+        chrome={chrome}
+        earthEnginePanel={panels.earthEngine}
+        onOpenNetworkTool={consent.openNetworkTool}
+        onOpenPlanetaryComputer={handleOpenPlanetaryComputer}
+      />
+      <ControlsMenu
+        chrome={chrome}
+        controlsVisible={controlsVisible}
+        panels={panels}
+        effectsActive={isActive(EFFECTS_PLUGIN_ID)}
+        directionsActive={isActive(DIRECTIONS_PLUGIN_ID)}
+        reverseGeocodeActive={isActive(REVERSE_GEOCODE_PLUGIN_ID)}
+        onToggleMapControl={toggleMapControl}
+        onToggleEffects={() => toggle(EFFECTS_PLUGIN_ID, appApi)}
+        onToggleDirections={consent.handleToggleDirections}
+        onToggleReverseGeocode={consent.handleToggleReverseGeocode}
+      />
+      <PluginsMenu
+        chrome={chrome}
+        appApi={appApi}
+        plugins={plugins}
+        isActive={isActive}
+        toggle={toggle}
+        getMapControlPosition={getMapControlPosition}
+        setMapControlPosition={setMapControlPosition}
+      />
+      <SettingsDialog
         buttonClassName={toolbarButtonClass}
         buttonSize={toolbarButtonSize}
         iconClassName={toolbarIconClassName}
+        mapControllerRef={mapControllerRef}
         showLabels={showLabels}
-        onSaveCurrentProject={handleSave}
+        onOpenManagePlugins={() => setManagePluginsOpen(true)}
       />
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className={toolbarButtonClass}
-            variant="ghost"
-            size={toolbarButtonSize}
-            aria-label="Open"
-          >
-            <FolderOpen className={toolbarIconClassName} />
-            {renderToolbarLabel("Open")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-80">
-          <DropdownMenuLabel>Project</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => void handleOpenFromFile()}>
-            <FolderOpen className="mr-2 h-3.5 w-3.5" />
-            Open Project from File...
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setProjectUrlDialogOpen(true)}>
-            <Link2 className="mr-2 h-3.5 w-3.5" />
-            Open Project from URL...
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>Recent projects</DropdownMenuLabel>
-          {recentProjects.length === 0 ? (
-            <DropdownMenuItem disabled>No recent projects</DropdownMenuItem>
-          ) : (
-            recentProjects.map((project) => {
-              const openedAt = formatRecentProjectTime(project.openedAt);
-              const label = project.name || projectPathLabel(project.path);
-              return (
-                <DropdownMenuItem
-                  key={project.path}
-                  className="flex items-start justify-between gap-2"
-                  onSelect={() => void handleOpenRecent(project.path)}
-                >
-                  <span className="flex min-w-0 flex-col items-start gap-0.5">
-                    <span className="max-w-full truncate font-medium">
-                      {label}
-                    </span>
-                    <span className="flex max-w-full items-center gap-1 text-xs text-muted-foreground">
-                      <History className="h-3 w-3 shrink-0" />
-                      <span className="truncate">
-                        {openedAt
-                          ? `${openedAt} - ${project.path}`
-                          : project.path}
-                      </span>
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${label} from recent projects`}
-                    className="mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
-                    onClick={(event) => {
-                      // Keep the menu open and prevent the row's onSelect (which
-                      // would reopen the project) from firing.
-                      event.stopPropagation();
-                      event.preventDefault();
-                      forgetRecentProject(project.path);
-                    }}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </DropdownMenuItem>
-              );
-            })
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            disabled={recentProjects.length === 0}
-            onSelect={clearRecentProjects}
-          >
-            Clear Recent Projects
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <Button
-        className={toolbarButtonClass}
-        variant="ghost"
-        size={toolbarButtonSize}
-        onClick={handleSave}
-        aria-label="Save"
-      >
-        <Save className={toolbarIconClassName} />
-        {renderToolbarLabel("Save")}
-      </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className={toolbarButtonClass}
-            variant="ghost"
-            size={toolbarButtonSize}
-            aria-label="Add Data"
-          >
-            <Database className={toolbarIconClassName} />
-            {renderToolbarLabel("Add Data")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuLabel>Add data</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => setAddDataKind("xyz")}>
-            Add XYZ Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("wms")}>
-            Add WMS Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("wfs")}>
-            Add WFS Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("wmts")}>
-            Add WMTS Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("vector")}>
-            Add Vector Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("raster")}>
-            Add Raster Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => void handleAddGeoParquetLayer()}>
-            Add GeoParquet Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddFlatGeobufLayer}>
-            Add FlatGeobuf Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddPMTilesLayer}>
-            Add PMTiles Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("mbtiles")}>
-            Add MBTiles Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("arcgis")}>
-            Add ArcGIS Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddZarrLayer}>
-            Add Zarr Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddLidarLayer}>
-            Add LiDAR Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddSplattingLayer}>
-            Add Splatting Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddThreeDTilesLayer}>
-            Add 3D Tiles Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddStacLayer}>
-            Add STAC Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddDuckDBLayer}>
-            Add DuckDB Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("postgres")}>
-            Add PostgreSQL Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("delimited-text")}>
-            Add Delimited Text Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("gpx")}>
-            Add GPX Layer
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {/* Processing menu — Raster tools (v1.0.0 alignment) */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className={toolbarButtonClass}
-            variant="ghost"
-            size={toolbarButtonSize}
-            aria-label="Processing"
-          >
-            <Wrench className={toolbarIconClassName} />
-            {renderToolbarLabel("Processing")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuLabel>Processing</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>Raster</DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("hillshade")}>
-                Hillshade
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("slope")}>
-                Slope
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("aspect")}>
-                Aspect
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("reproject")}>
-                Reproject
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("resample")}>
-                Resample
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("clip-extent")}>
-                Clip by extent
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("clip-mask")}>
-                Clip by mask layer
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("polygonize")}>
-                Polygonize
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setRasterToolOpen("contour")}>
-                Contour
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {/* Share button */}
-      <Button
-        className={toolbarButtonClass}
-        variant="ghost"
-        size={toolbarButtonSize}
-        onClick={() => setShareDialogOpen(true)}
-        aria-label="Share"
-      >
-        <Share2 className={toolbarIconClassName} />
-        {renderToolbarLabel("Share")}
-      </Button>
+      <ManagePluginsDialog
+        open={managePluginsOpen}
+        onOpenChange={setManagePluginsOpen}
+        mapControllerRef={mapControllerRef}
+      />
+      <PrintLayoutDialog
+        open={printLayoutOpen}
+        onOpenChange={setPrintLayoutOpen}
+        mapControllerRef={mapControllerRef}
+      />
+      <OfflineRegionDialog
+        open={offlineRegionOpen}
+        onOpenChange={setOfflineRegionOpen}
+        mapControllerRef={mapControllerRef}
+      />
+      <ShareProjectDialog
+        open={shareDialogOpen}
+        onOpenChange={setShareDialogOpen}
+        currentTitle={projectName}
+        getProject={(title) => {
+          const { content, defaultProjectName } =
+            projectFiles.buildCurrentProject(title);
+          // Strip path separators, control chars, and other characters that are
+          // illegal in filenames so the server gets a predictable name.
+          const safeName = defaultProjectName.replace(
+            // Includes U+007F (DEL) alongside the C0 control range; both are
+            // non-printing and rejected by some filesystems and HTTP servers.
+            // eslint-disable-next-line no-control-regex
+            /[\u0000-\u001f\u007f/\\:*?"<>|]/g,
+            "_",
+          );
+          return { content, filename: `${safeName}.geolibre.json` };
+        }}
+      />
+      {collaboration.enabled && (
+        <CollaborateDialog
+          open={collaborateDialogOpen}
+          onOpenChange={setCollaborateDialogOpen}
+          api={collaboration}
+        />
+      )}
+      <HelpMenu
+        chrome={chrome}
+        diagnosticsErrorCount={diagnosticsErrorCount}
+        onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+        onOpenDiagnostics={onOpenDiagnostics}
+        onCheckForUpdates={() => {
+          setAboutOpen(true);
+          setCheckForUpdatesRequest((value) => value + 1);
+        }}
+        onAbout={() => setAboutOpen(true)}
+      />
+      {/* MilGeo custom toolbar buttons */}
       <Button
         className={cn(toolbarButtonClass, milSymbolOpen && "bg-primary/10 text-primary")}
         variant="ghost"
@@ -768,7 +864,7 @@ export function TopToolbar({
         {renderToolbarLabel("MilSymb")}
       </Button>
       <Button
-        className={toolbarButtonClass}
+        className={cn(toolbarButtonClass, analysisOpen && "bg-primary/10 text-primary")}
         variant="ghost"
         size={toolbarButtonSize}
         onClick={() => setAnalysisOpen(!analysisOpen)}
@@ -789,263 +885,55 @@ export function TopToolbar({
         <Radio className={toolbarIconClassName} />
         {renderToolbarLabel("Sillages")}
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className={toolbarButtonClass}
-            variant="ghost"
-            size={toolbarButtonSize}
-            aria-label="Controls"
-          >
-            <SlidersHorizontal className={toolbarIconClassName} />
-            {renderToolbarLabel("Controls")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuLabel>Map controls</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {MAP_CONTROL_ITEMS.map((control) => (
-            <DropdownMenuItem
-              key={control.id}
-              onClick={() => toggleMapControl(control.id)}
-            >
-              {control.label}
-              {controlsVisible[control.id] ? " ✓" : ""}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={handleToggleSearchPlacesPanel}>
-            Search
-            {searchPlacesVisible ? " ✓" : ""}
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleToggleColorbarPanel}>
-            Colorbar
-            {colorbarPanelVisible ? " ✓" : ""}
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleToggleLegendPanel}>
-            Legend
-            {legendPanelVisible ? " ✓" : ""}
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleToggleHtmlPanel}>
-            HTML
-            {htmlPanelVisible ? " ✓" : ""}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className={toolbarButtonClass}
-            variant="ghost"
-            size={toolbarButtonSize}
-            aria-label="Plugins"
-          >
-            <Puzzle className={toolbarIconClassName} />
-            {renderToolbarLabel("Plugins")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuLabel>Activate plugin</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          {plugins.map((p) => {
-            const pluginPosition = getMapControlPosition(p.id);
-            if (!pluginPosition) {
-              return (
-                <DropdownMenuItem
-                  key={p.id}
-                  onClick={() => toggle(p.id, appApi)}
-                >
-                  {p.name}
-                  {isActive(p.id) ? " ✓" : ""}
-                </DropdownMenuItem>
-              );
-            }
-
-            return (
-              <DropdownMenuSub key={p.id}>
-                <DropdownMenuSubTrigger>
-                  {p.name}
-                  {isActive(p.id) ? " ✓" : ""}
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  <DropdownMenuItem onClick={() => toggle(p.id, appApi)}>
-                    {isActive(p.id) ? "Deactivate" : "Activate"}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel>Position</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup
-                    value={pluginPosition}
-                    onValueChange={(position: string) =>
-                      setMapControlPosition(
-                        p.id,
-                        appApi,
-                        position as GeoLibreMapControlPosition,
-                      )
-                    }
-                  >
-                    {PLUGIN_POSITION_ITEMS.map((position) => (
-                      <DropdownMenuRadioItem
-                        key={position.value}
-                        value={position.value}
-                        onSelect={(event) => event.preventDefault()}
-                      >
-                        {position.label}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <SettingsDialog
-        buttonClassName={toolbarButtonClass}
-        buttonSize={toolbarButtonSize}
-        iconClassName={toolbarIconClassName}
-        mapControllerRef={mapControllerRef}
-        showLabels={showLabels}
-      />
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className={toolbarButtonClass}
-            variant="ghost"
-            size={toolbarButtonSize}
-            aria-label="Help"
-          >
-            <CircleHelp className={toolbarIconClassName} />
-            {renderToolbarLabel("Help")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuLabel>Help</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onOpenDiagnostics}>
-            <Bug className="mr-2 h-3.5 w-3.5" />
-            Diagnostics
-            {diagnosticsErrorCount > 0 ? (
-              <span className="ml-2 rounded bg-destructive px-1.5 py-0.5 text-[10px] leading-none text-destructive-foreground">
-                {diagnosticsErrorCount}
-              </span>
-            ) : null}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => void openExternalLink(FEEDBACK_URL)}
-          >
-            <MessageSquare className="mr-2 h-3.5 w-3.5" />
-            Give feedback
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => {
-              setAboutOpen(true);
-              setCheckForUpdatesRequest((value) => value + 1);
-            }}
-          >
-            <RefreshCw className="mr-2 h-3.5 w-3.5" />
-            Check for updates
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAboutOpen(true)}>
-            <Info className="mr-2 h-3.5 w-3.5" />
-            About
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
       <AddDataDialog
         kind={addDataKind}
         mapControllerRef={mapControllerRef}
-        onOpenChange={(open) => {
-          if (!open) setAddDataKind(null);
-        }}
-      />
-      <Dialog
-        open={projectUrlDialogOpen}
-        onOpenChange={(open) => {
-          setProjectUrlDialogOpen(open);
+        initialDeckVizKind={addDataDeckVizKind}
+        onOpenChange={(open: boolean) => {
           if (!open) {
-            projectUrlAbortRef.current?.abort();
-            projectUrlAbortRef.current = null;
-            setProjectUrl("");
-            setProjectUrlError(null);
-            setProjectUrlLoading(false);
+            setAddDataKind(null);
+            setAddDataDeckVizKind(undefined);
           }
         }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Open project from URL</DialogTitle>
-            <DialogDescription>
-              Load a public `.milgeo.json` project and add it to recent
-              projects.
-            </DialogDescription>
-          </DialogHeader>
-          <form className="space-y-4" onSubmit={handleOpenFromUrl}>
-            <div className="space-y-2">
-              <Label htmlFor="project-url">Project URL</Label>
-              <Input
-                id="project-url"
-                placeholder="https://example.com/project.milgeo.json"
-                value={projectUrl}
-                onChange={(event) => {
-                  setProjectUrl(event.target.value);
-                  setProjectUrlError(null);
-                }}
-              />
-              {projectUrlError ? (
-                <p className="text-xs text-destructive">{projectUrlError}</p>
-              ) : null}
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setProjectUrlDialogOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={projectUrlLoading}>
-                {projectUrlLoading ? "Opening..." : "Open"}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={actionError !== null}
-        onOpenChange={(open) => {
-          if (!open) setActionError(null);
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Could not open project</DialogTitle>
-            <DialogDescription>{actionError}</DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end">
-            <Button onClick={() => setActionError(null)}>Dismiss</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      />
+      <AddNetcdfDialog
+        open={netcdfDialogOpen}
+        appApi={appApi}
+        onOpenChange={setNetcdfDialogOpen}
+      />
+      <ProjectFileDialogs projectFiles={projectFiles} />
+      <ConsentNoticeDialogs consent={consent} />
+      <OsmPbfDialogs osmPbf={osmPbf} />
       <AboutDialog
         checkForUpdatesRequest={checkForUpdatesRequest}
         open={aboutOpen}
         renderTrigger={false}
         onOpenChange={setAboutOpen}
       />
+      <CommandPalette
+        open={commandPaletteOpen}
+        commands={commands}
+        onOpenChange={setCommandPaletteOpen}
+      />
+      <KeyboardShortcutsDialog
+        open={shortcutsOpen}
+        commands={commands}
+        onOpenChange={setShortcutsOpen}
+      />
       <div className="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
         <Button
           aria-label={
             themeMode === "dark"
-              ? "Switch to light mode"
-              : "Switch to dark mode"
+              ? t("toolbar.command.switchToLight")
+              : t("toolbar.command.switchToDark")
           }
           className="h-7 w-7 shrink-0"
           onClick={onToggleThemeMode}
           size="icon"
           title={
             themeMode === "dark"
-              ? "Switch to light mode"
-              : "Switch to dark mode"
+              ? t("toolbar.command.switchToLight")
+              : t("toolbar.command.switchToDark")
           }
           variant="ghost"
         >
@@ -1059,33 +947,26 @@ export function TopToolbar({
           <>
             <Layers className="mr-1 hidden h-3 w-3 md:inline" />
             <Input
-              aria-label="Project name"
+              aria-label={t("toolbar.item.projectName")}
               className="hidden h-7 w-44 border-transparent px-2 text-xs shadow-none focus-visible:border-input md:block"
               value={projectName}
               onChange={(event) => setProjectName(event.target.value)}
               onBlur={(event) => {
                 const nextName = event.target.value.trim();
-                if (!nextName) setProjectName("Untitled Project");
+                // Persist the canonical, locale-independent default name; a
+                // translated string would otherwise be written into the saved
+                // project file and vary by UI language.
+                if (!nextName) setProjectName(DEFAULT_PROJECT_NAME);
               }}
             />
             {projectPath ? (
-              <span className="hidden truncate lg:inline">{projectPath}</span>
+              <span className="hidden truncate lg:inline" title={projectPath}>
+                {projectPath}
+              </span>
             ) : null}
           </>
         ) : null}
       </div>
-      <ShareProjectDialog
-        open={shareDialogOpen}
-        onOpenChange={setShareDialogOpen}
-        currentTitle={projectName}
-        getProject={(title) => {
-          const { content, defaultProjectName } = buildCurrentProject(title);
-          return {
-            content,
-            filename: `${defaultProjectName.replace(/[^A-Za-z0-9_\-. ]/g, "_")}.geolibre.json`,
-          };
-        }}
-      />
     </header>
   );
 }

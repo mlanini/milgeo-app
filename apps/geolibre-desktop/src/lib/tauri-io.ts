@@ -1,20 +1,25 @@
 import { parseProject, type GeoLibreProject } from "@geolibre/core";
+import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   readFile,
   readTextFile,
+  readTextFileLines,
   writeFile,
   writeTextFile,
 } from "@tauri-apps/plugin-fs";
 import { unzip } from "fflate";
 import type { FeatureCollection } from "geojson";
 import shp from "shpjs";
+import { parseDelimitedTextFields } from "./delimited-text";
 import type { DuckDbVectorFile } from "./duckdb-vector-loader";
+import type { DuckDbVectorLoadOptions } from "./duckdb-vector-guard";
 import { parseGpxLayer } from "./gpx";
+import { isTauri } from "./is-tauri";
 
-export function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+// Re-exported so existing `import { isTauri } from "./tauri-io"` consumers keep
+// working; the implementation lives in the lightweight ./is-tauri module.
+export { isTauri };
 
 function browserSafeFileName(path: string): string {
   return path.split(/[/\\]/).pop() || "project.milgeo.json";
@@ -121,11 +126,19 @@ const NON_VECTOR_SIDECAR_EXTENSIONS = [
   "mxs",
 ];
 
+/** GeoTIFF/COG extensions handled by the map drag and drop raster path. */
+const RASTER_DROP_EXTENSIONS = ["tif", "tiff"];
+
+/** Whether a filename looks like a raster the map can load (GeoTIFF/COG). */
+export function isRasterFileName(name: string): boolean {
+  return RASTER_DROP_EXTENSIONS.includes(fileExtension(name));
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function isHttpUrl(path: string): boolean {
+export function isHttpUrl(path: string): boolean {
   try {
     const url = new URL(path);
     return url.protocol === "http:" || url.protocol === "https:";
@@ -151,7 +164,10 @@ function isGeoLibreProjectFile(path: string): boolean {
 
 function isVectorFileName(path: string): boolean {
   if (isGeoLibreProjectFile(path)) return false;
-  if (browserSafeFileName(path).toLowerCase().endsWith(".shp.xml")) return false;
+  if (browserSafeFileName(path).toLowerCase().endsWith(".shp.xml"))
+    return false;
+  // Rasters are handled by the raster drop path, not the DuckDB vector loader.
+  if (isRasterFileName(path)) return false;
   return !NON_VECTOR_SIDECAR_EXTENSIONS.includes(fileExtension(path));
 }
 
@@ -164,7 +180,9 @@ function assertFeatureCollection(value: unknown): FeatureCollection {
   ) {
     return value as FeatureCollection;
   }
-  throw new Error("The selected file did not produce a GeoJSON FeatureCollection.");
+  throw new Error(
+    "The selected file did not produce a GeoJSON FeatureCollection.",
+  );
 }
 
 // DuckDB-wasm (pthreads build) can hand back a Uint8Array backed by a
@@ -192,9 +210,7 @@ function normalizeShapefileResult(value: unknown): FeatureCollection {
   return assertFeatureCollection(value);
 }
 
-async function parseGeoJsonText(
-  text: string,
-): Promise<FeatureCollection> {
+async function parseGeoJsonText(text: string): Promise<FeatureCollection> {
   return assertFeatureCollection(JSON.parse(text));
 }
 
@@ -280,15 +296,52 @@ async function readKmzKmlFiles(
 
 async function parseKmz(
   data: ArrayBuffer | Uint8Array,
+  options?: DuckDbVectorLoadOptions,
 ): Promise<FeatureCollection> {
   const kmlFiles = await readKmzKmlFiles(data);
-  const collections = await Promise.all(kmlFiles.map(loadDuckDbVector));
+  // Load each KML independently so declining one large KML inside a multi-KML
+  // archive drops just that layer instead of failing the whole KMZ (Promise.all
+  // is fail-fast). Real load errors still reject and abort the archive.
+  let cancellation: unknown;
+  const settled = await Promise.all(
+    kmlFiles.map((file) =>
+      loadDuckDbVector(file, options).then(
+        (collection): FeatureCollection | null => collection,
+        (error): null => {
+          if (!isVectorLoadCancelled(error)) throw error;
+          cancellation = error;
+          return null;
+        },
+      ),
+    ),
+  );
+  const collections = settled.filter(
+    (collection): collection is FeatureCollection => collection !== null,
+  );
+  // Every KML was declined: propagate the cancellation so the caller skips the
+  // whole archive rather than adding an empty layer.
+  if (collections.length === 0 && cancellation) throw cancellation;
   return mergeFeatureCollections(collections);
 }
 
-async function loadDuckDbVector(file: DuckDbVectorFile) {
+async function loadDuckDbVector(
+  file: DuckDbVectorFile,
+  options?: DuckDbVectorLoadOptions,
+) {
   const { loadDuckDbVectorFile } = await import("./duckdb-vector-loader");
-  return loadDuckDbVectorFile(file);
+  return loadDuckDbVectorFile(file, options);
+}
+
+/**
+ * Whether an error is the {@link VectorLoadCancelledError} thrown when the user
+ * declines a large-file load. Matched by `name` rather than `instanceof` so the
+ * heavy `duckdb-vector-loader` module (and its DuckDB-WASM imports) stays a
+ * lazy dynamic import instead of being pulled into this module's chunk.
+ */
+function isVectorLoadCancelled(error: unknown): boolean {
+  return (
+    error instanceof Error && error.name === "VectorLoadCancelledError"
+  );
 }
 
 async function fileToDuckDbVectorFile(file: File): Promise<DuckDbVectorFile> {
@@ -302,6 +355,7 @@ async function fileToDuckDbVectorFile(file: File): Promise<DuckDbVectorFile> {
 async function loadBrowserVectorFile(
   file: File,
   siblingFiles: DuckDbVectorFile[] = [],
+  options?: DuckDbVectorLoadOptions,
 ): Promise<LoadedVectorLayer> {
   const extension = fileExtension(file.name);
   if (extension === "geojson" || extension === "json") {
@@ -329,7 +383,7 @@ async function loadBrowserVectorFile(
 
   if (extension === "kmz") {
     return {
-      data: await parseKmz(await file.arrayBuffer()),
+      data: await parseKmz(await file.arrayBuffer(), options),
       path: file.name,
     };
   }
@@ -342,17 +396,22 @@ async function loadBrowserVectorFile(
   }
 
   return {
-    data: await loadDuckDbVector({
-      name: file.name,
-      extension,
-      data: new Uint8Array(await file.arrayBuffer()),
-      siblingFiles,
-    }),
+    data: await loadDuckDbVector(
+      {
+        name: file.name,
+        extension,
+        data: new Uint8Array(await file.arrayBuffer()),
+        siblingFiles,
+      },
+      options,
+    ),
     path: file.name,
   };
 }
 
-async function openVectorFileBrowser(): Promise<{
+async function openVectorFileBrowser(
+  options?: DuckDbVectorLoadOptions,
+): Promise<{
   data: FeatureCollection;
   path: string;
 } | null> {
@@ -367,7 +426,7 @@ async function openVectorFileBrowser(): Promise<{
           return;
         }
 
-        resolve(await loadBrowserVectorFile(file));
+        resolve(await loadBrowserVectorFile(file, [], options));
       } catch (error) {
         reject(error);
       }
@@ -376,7 +435,9 @@ async function openVectorFileBrowser(): Promise<{
   });
 }
 
-async function openVectorFileTauri(): Promise<{
+async function openVectorFileTauri(
+  options?: DuckDbVectorLoadOptions,
+): Promise<{
   data: FeatureCollection;
   path: string;
 } | null> {
@@ -384,10 +445,13 @@ async function openVectorFileTauri(): Promise<{
     multiple: false,
   });
   if (!selected || typeof selected !== "string") return null;
-  return loadTauriVectorFile(selected);
+  return loadTauriVectorFile(selected, options);
 }
 
-async function loadTauriVectorFile(path: string): Promise<{
+async function loadTauriVectorFile(
+  path: string,
+  options?: DuckDbVectorLoadOptions,
+): Promise<{
   data: FeatureCollection;
   path: string;
 }> {
@@ -418,10 +482,11 @@ async function loadTauriVectorFile(path: string): Promise<{
   if (extension === "kmz") {
     try {
       return {
-        data: await parseKmz(await readFile(path)),
+        data: await parseKmz(await readFile(path), options),
         path,
       };
     } catch (error) {
+      if (isVectorLoadCancelled(error)) throw error;
       const detail = error instanceof Error ? error.message : "Unknown error";
       throw new Error(`Could not read this KMZ file. ${detail}`);
     }
@@ -443,15 +508,19 @@ async function loadTauriVectorFile(path: string): Promise<{
     const siblingFiles =
       extension === "shp" ? await readShapefileSiblings(path) : [];
     return {
-      data: await loadDuckDbVector({
-        name: browserSafeFileName(path),
-        extension,
-        data: await readFile(path),
-        siblingFiles,
-      }),
+      data: await loadDuckDbVector(
+        {
+          name: browserSafeFileName(path),
+          extension,
+          data: await readFile(path),
+          siblingFiles,
+        },
+        options,
+      ),
       path,
     };
   } catch (error) {
+    if (isVectorLoadCancelled(error)) throw error;
     const detail = error instanceof Error ? error.message : "Unknown error";
     throw new Error(
       `Could not convert this vector file with DuckDB-WASM. ${detail}`,
@@ -805,7 +874,10 @@ export async function openRecentProjectFile(
     // Only a present Content-Length lets us guard up front. `Number(null)` is
     // 0, which would silently pass for chunked/CDN responses that omit it.
     const contentLength = response.headers.get("content-length");
-    if (contentLength !== null && Number(contentLength) > MAX_PROJECT_URL_BYTES) {
+    if (
+      contentLength !== null &&
+      Number(contentLength) > MAX_PROJECT_URL_BYTES
+    ) {
       throw new Error("Project file is too large to load (over 25 MB).");
     }
 
@@ -827,10 +899,12 @@ export async function openRecentProjectFile(
 
   let text: string;
   try {
-    text = await readTextFile(path);
+    text = await invoke<string>("read_project_file", { path });
   } catch (error) {
     if (isFileMissingError(error)) {
-      throw new RecentProjectGoneError(`Project file no longer exists: ${path}`);
+      throw new RecentProjectGoneError(
+        `Project file no longer exists: ${path}`,
+      );
     }
     throw error;
   }
@@ -853,6 +927,35 @@ export async function saveProjectFile(
   if (!path) return null;
   await writeTextFile(path, content);
   return path;
+}
+
+/**
+ * Save a project directly to an already-known local path without prompting.
+ * Falls back to the save dialog when not running in Tauri (the browser never
+ * has a writable filesystem path) or when the path is an HTTP(S) URL.
+ */
+export async function saveProjectFileToPath(
+  content: string,
+  path: string,
+): Promise<string | null> {
+  if (!isTauri() || isHttpUrl(path)) {
+    return saveProjectFile(content, path);
+  }
+  await writeTextFile(path, content);
+  return path;
+}
+
+/**
+ * Write text directly to a known local path without prompting. Desktop-only —
+ * the browser has no writable filesystem path — so callers must gate on
+ * {@link isTauri} and a real (non-URL) path; the Python Editor's in-place Save
+ * uses this and falls back to a save dialog otherwise.
+ */
+export async function writeTextFileToPath(
+  path: string,
+  content: string,
+): Promise<void> {
+  await writeTextFile(path, content);
 }
 
 export async function saveTextFileWithFallback(
@@ -922,21 +1025,22 @@ export async function openGeoJsonFileWithFallback(): Promise<{
   return openGeoJsonFileBrowser();
 }
 
-export async function openVectorFileWithFallback(): Promise<{
+export async function openVectorFileWithFallback(
+  options?: DuckDbVectorLoadOptions,
+): Promise<{
   data: FeatureCollection;
   path: string;
 } | null> {
-  if (isTauri()) return openVectorFileTauri();
-  return openVectorFileBrowser();
+  if (isTauri()) return openVectorFileTauri(options);
+  return openVectorFileBrowser(options);
 }
 
 export async function loadDroppedVectorFiles(
   droppedFiles: FileList | File[],
+  options?: DuckDbVectorLoadOptions,
 ): Promise<LoadedVectorLayer[]> {
   const droppedFileArray = Array.from(droppedFiles);
-  const files = droppedFileArray.filter((file) =>
-    isVectorFileName(file.name),
-  );
+  const files = droppedFileArray.filter((file) => isVectorFileName(file.name));
   if (!files.length) return [];
 
   const filesByBaseName = new Map<string, File[]>();
@@ -962,8 +1066,9 @@ export async function loadDroppedVectorFiles(
       extension === "shp"
         ? await Promise.all(
             (
-              filesByBaseName.get(pathWithoutExtension(file.name).toLowerCase()) ??
-              []
+              filesByBaseName.get(
+                pathWithoutExtension(file.name).toLowerCase(),
+              ) ?? []
             )
               .filter((candidate) =>
                 SHAPEFILE_SIDECAR_EXTENSIONS.includes(
@@ -973,14 +1078,65 @@ export async function loadDroppedVectorFiles(
               .map(fileToDuckDbVectorFile),
           )
         : [];
-    layers.push(await loadBrowserVectorFile(file, siblingFiles));
+    try {
+      layers.push(await loadBrowserVectorFile(file, siblingFiles, options));
+    } catch (error) {
+      // The user declined this oversized file: skip it without abandoning the
+      // rest of the dropped batch.
+      if (isVectorLoadCancelled(error)) continue;
+      throw error;
+    }
   }
 
   return layers;
 }
 
+export interface DroppedRaster {
+  name: string;
+  /**
+   * The GeoTIFF/COG as a File. The raster control accepts a File directly and
+   * manages its object URL, matching how the Add Raster panel loads local files.
+   */
+  source: File;
+}
+
+function fileBaseName(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
+/** Collect dropped browser File objects that are rasters the map can load. */
+export function loadDroppedRasterFiles(
+  droppedFiles: FileList | File[],
+): DroppedRaster[] {
+  return Array.from(droppedFiles)
+    .filter((file) => isRasterFileName(file.name))
+    .map((file) => ({ name: file.name, source: file }));
+}
+
+/**
+ * Read dropped raster file paths (Tauri) into File objects the control can load.
+ * There is no asset-protocol scope configured, so the bytes are read and wrapped
+ * in a File, matching how local vector files are loaded.
+ */
+export async function loadDroppedRasterPaths(
+  paths: string[],
+): Promise<DroppedRaster[]> {
+  const rasterPaths = paths.filter(isRasterFileName);
+  const rasters: DroppedRaster[] = [];
+  for (const path of rasterPaths) {
+    const bytes = await readFile(path);
+    const name = fileBaseName(path);
+    rasters.push({
+      name,
+      source: new File([bytes], name, { type: "image/tiff" }),
+    });
+  }
+  return rasters;
+}
+
 export async function loadDroppedVectorPaths(
   paths: string[],
+  options?: DuckDbVectorLoadOptions,
 ): Promise<LoadedVectorLayer[]> {
   const vectorPaths = paths.filter(isVectorFileName);
   if (!vectorPaths.length) return [];
@@ -998,8 +1154,62 @@ export async function loadDroppedVectorPaths(
       }
       continue;
     }
-    layers.push(await loadTauriVectorFile(path));
+    try {
+      layers.push(await loadTauriVectorFile(path, options));
+    } catch (error) {
+      // The user declined this oversized file: skip it without abandoning the
+      // rest of the dropped batch.
+      if (isVectorLoadCancelled(error)) continue;
+      throw error;
+    }
   }
 
   return layers;
+}
+
+/** Split a CSV/TSV header line into trimmed column names. */
+export function parseCsvHeaderLine(line: string): string[] {
+  const header = line.replace(/^﻿/, "").replace(/[\r\n]+$/, "");
+  if (!header) return [];
+  // Reuse the project's quote-aware delimited-text parser for each candidate
+  // delimiter (comma, tab, semicolon) and keep the one that yields the most
+  // columns. Quoting is respected, so a quoted field containing the delimiter
+  // (e.g. "city,state") neither skews detection nor splits the header.
+  let best: string[] = [];
+  for (const delimiter of [",", "\t", ";"]) {
+    try {
+      const fields = parseDelimitedTextFields(header, delimiter).filter(
+        (name) => name.trim().length > 0,
+      );
+      if (fields.length > best.length) best = fields;
+    } catch {
+      // No header row for this delimiter; try the next candidate.
+    }
+  }
+  return best.map((name) => name.trim()).filter((name) => name.length > 0);
+}
+
+/**
+ * Read the header column names of a CSV from a browser File or a desktop path.
+ * Reads only the first line so large CSVs are not loaded into memory.
+ */
+export async function readCsvHeaderColumns(
+  source: File | string,
+): Promise<string[]> {
+  try {
+    if (typeof source !== "string") {
+      // Browser File: decode just the leading slice that holds the header.
+      const text = await source.slice(0, 65536).text();
+      return parseCsvHeaderLine(text.split(/\r?\n/, 1)[0] ?? "");
+    }
+    if (!isTauri()) return [];
+    const lines = await readTextFileLines(source);
+    for await (const line of lines) {
+      return parseCsvHeaderLine(line);
+    }
+    return [];
+  } catch (error) {
+    console.warn("Could not read CSV header", error);
+    return [];
+  }
 }

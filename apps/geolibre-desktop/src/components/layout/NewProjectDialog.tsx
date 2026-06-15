@@ -7,18 +7,15 @@ import {
 } from "@geolibre/core";
 import {
   Button,
-  type ButtonProps,
   cn,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   Input,
   Label,
 } from "@geolibre/ui";
-import { FilePlus2 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 
@@ -41,23 +38,20 @@ type BasemapChoice =
   | typeof BLANK_BASEMAP_ID;
 
 interface NewProjectDialogProps {
-  buttonClassName?: string;
-  buttonSize?: ButtonProps["size"];
-  iconClassName?: string;
-  showLabels?: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onSaveCurrentProject: () => Promise<boolean>;
+  onProjectCreated?: () => void;
 }
 
 export function NewProjectDialog({
-  buttonClassName,
-  buttonSize = "sm",
-  iconClassName,
-  showLabels = true,
+  open,
+  onOpenChange,
   onSaveCurrentProject,
+  onProjectCreated,
 }: NewProjectDialogProps) {
   const newProject = useAppStore((s) => s.newProject);
   const isDirty = useAppStore((s) => s.isDirty);
-  const [open, setOpen] = useState(false);
   const [selectedBasemapId, setSelectedBasemapId] =
     useState<BasemapChoice>(DEFAULT_BASEMAP_ID);
   const [projectName, setProjectName] = useState(DEFAULT_PROJECT_NAME);
@@ -93,7 +87,7 @@ export function NewProjectDialog({
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
-    setOpen(nextOpen);
+    onOpenChange(nextOpen);
     if (!nextOpen) resetForm();
   };
 
@@ -104,7 +98,7 @@ export function NewProjectDialog({
       ? customStyleUrl
       : isBlankSelected
         ? BLANK_BASEMAP
-      : selectedPreset?.styleUrl;
+        : selectedPreset?.styleUrl;
     if (basemapStyleUrl == null) return;
 
     newProject({
@@ -115,7 +109,8 @@ export function NewProjectDialog({
           ? THREE_D_MAP_VIEW
           : createDefaultMapView(),
     });
-    setOpen(false);
+    onProjectCreated?.();
+    onOpenChange(false);
     resetForm();
   };
 
@@ -145,17 +140,6 @@ export function NewProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <Button
-          className={buttonClassName}
-          variant="ghost"
-          size={buttonSize}
-          aria-label="New project"
-        >
-          <FilePlus2 className={iconClassName ?? "h-3.5 w-3.5 sm:mr-1"} />
-          {showLabels ? <span className="hidden sm:inline">New</span> : null}
-        </Button>
-      </DialogTrigger>
       <DialogContent className="max-w-xl">
         {showSavePrompt ? (
           <>
@@ -197,8 +181,8 @@ export function NewProjectDialog({
             <DialogHeader>
               <DialogTitle>New map</DialogTitle>
               <DialogDescription>
-                Choose a blank background, an OpenFreeMap basemap, or a
-                MapLibre style URL.
+                Choose a blank background, an OpenFreeMap basemap, or a MapLibre
+                style URL.
               </DialogDescription>
             </DialogHeader>
             <form className="space-y-5" onSubmit={handleCreate}>

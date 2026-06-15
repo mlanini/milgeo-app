@@ -7,7 +7,6 @@ import {
   TimeSliderControl,
   type SourceSpec,
   type TimeSliderConfig,
-  type TimeSliderEventData,
   type TimeSliderOptions,
 } from "maplibre-gl-time-slider";
 import type {
@@ -23,89 +22,43 @@ import type {
  */
 const STORE_LAYER_SOURCE_KIND = "time-slider";
 
-// ─── Current-date broadcast ───────────────────────────────────────────────────
-//
-// MilGeo extension: the mil-symbol renderer filters APP-6D symbols/graphics by
-// their startDate/endDate window against the slider's current date. The plugin
-// publishes the active date through this tiny module-level pub/sub so app code
-// can subscribe without owning a reference to the control (same pattern as the
-// subscribeXxxPanel helpers in maplibre-components).
-
-type TimeSliderDateListener = (date: Date | null) => void;
-
-const dateListeners = new Set<TimeSliderDateListener>();
-let currentSliderDate: Date | null = null;
-
-function publishTimeSliderDate(date: Date | null): void {
-  // Skip no-op updates so playback ticks that land on the same instant (or a
-  // null → null transition) do not trigger renderer work.
-  if (
-    (date === null && currentSliderDate === null) ||
-    (date !== null &&
-      currentSliderDate !== null &&
-      date.getTime() === currentSliderDate.getTime())
-  ) {
-    return;
-  }
-  currentSliderDate = date;
-  for (const listener of dateListeners) listener(date);
-}
-
 /**
- * Returns the time slider's current date, or null when the plugin is inactive.
- * Stable reference between changes, so it is safe as a useSyncExternalStore
- * snapshot.
- */
-export function getTimeSliderDate(): Date | null {
-  return currentSliderDate;
-}
-
-/**
- * Subscribes to time-slider date changes. The listener fires with the new
- * date on every slider step/playback tick, and with `null` when the plugin is
- * deactivated. Returns an unsubscribe function.
- */
-export function subscribeTimeSliderDate(
-  listener: TimeSliderDateListener,
-): () => void {
-  dateListeners.add(listener);
-  return () => {
-    dateListeners.delete(listener);
-  };
-}
-
-/**
- * Default configuration applied on first activation. No data sources are
- * seeded: the dock opens expanded with an empty timeline so the user can add
- * their own layers via the dock's "Add data" form. The default range targets a
- * recent operational window at day granularity, which suits mil-symbol
- * scenario playback better than the upstream Landsat sample range.
+ * Default configuration applied on first activation. No data sources are seeded:
+ * the dock opens expanded (`collapsed: false`) with an empty timeline so the
+ * user can add their own layers via the dock's "Add data" form. Seeding sample
+ * sources was removed because the bundled examples cover different periods, so
+ * the out-of-range ones flooded the console with 404 tile errors.
+ *
+ * The starting range matches the dock's default "Add data" example (the Landsat
+ * annual COG, 1984-2013 yearly): COG is the form's default type, so its example
+ * timeline is only applied when the user actively switches type. Aligning the
+ * default here means the prefilled Landsat COG renders across its whole valid
+ * range out of the box rather than against an unrelated span (which would
+ * request tiles for years the data does not cover).
  */
 function buildDefaultOptions(): TimeSliderOptions {
-  const end = new Date();
-  const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - 30);
-  const toIsoDay = (d: Date) => d.toISOString().slice(0, 10);
   return {
-    startDate: toIsoDay(start),
-    endDate: toIsoDay(end),
-    granularity: "day",
-    granularities: ["year", "month", "day", "hour"],
+    startDate: "1984-01-01",
+    endDate: "2013-01-01",
+    granularity: "year",
+    granularities: ["year", "month", "day"],
     speed: 800,
     collapsible: true,
     collapsed: false,
     // Match the in-app light/dark toggle rather than the system
-    // `prefers-color-scheme`, which the dock's default `auto` theme follows
-    // and which may differ from the in-app theme.
+    // `prefers-color-scheme`, which the dock's default `auto` theme follows and
+    // which may differ from the in-app theme. startThemeSync keeps it in sync.
     theme: resolveDocumentTheme(),
     sources: [],
   };
 }
 
 /**
- * Reads the current theme from the `dark` class that the desktop app toggles
- * on the document element, so the time slider dock is forced to match the
- * in-app theme instead of the system `prefers-color-scheme`.
+ * Reads the current GeoLibre theme from the `dark` class that the desktop app
+ * toggles on the document element, so the time slider dock is forced to match
+ * the in-app theme instead of the system `prefers-color-scheme`.
+ *
+ * @returns `"dark"` when the app is in dark mode, otherwise `"light"`.
  */
 function resolveDocumentTheme(): "light" | "dark" {
   if (typeof document === "undefined") return "light";
@@ -117,6 +70,12 @@ function resolveDocumentTheme(): "light" | "dark" {
 // is ever active at a time.
 let themeObserver: MutationObserver | null = null;
 
+/**
+ * Forces the control's theme to the current in-app theme and keeps it in sync
+ * with the light/dark toggle by observing the document element's `class`.
+ *
+ * @param control - The active time-slider control.
+ */
 function startThemeSync(control: TimeSliderControl): void {
   control.setTheme(resolveDocumentTheme());
   if (
@@ -128,8 +87,8 @@ function startThemeSync(control: TimeSliderControl): void {
   }
   // The observer fires on any `class` mutation of <html>, so cache the last
   // applied theme and only call setTheme when the dark/light value flips. It
-  // targets the module-level `timeSliderControl` (late-bound) so a rebuilt
-  // control still receives theme updates.
+  // targets the module-level `timeSliderControl` (late-bound, like PrintControl)
+  // so a rebuilt control still receives theme updates.
   let lastTheme = resolveDocumentTheme();
   themeObserver = new MutationObserver(() => {
     const next = resolveDocumentTheme();
@@ -142,6 +101,9 @@ function startThemeSync(control: TimeSliderControl): void {
   });
 }
 
+/**
+ * Stops the document-theme observer started by {@link startThemeSync}.
+ */
 function stopThemeSync(): void {
   themeObserver?.disconnect();
   themeObserver = null;
@@ -230,8 +192,8 @@ export const maplibreTimeSliderPlugin: GeoLibrePlugin = {
     const nextConfig = normalizeConfig(state);
     if (!nextConfig) {
       // A reset/new project (or an invalid value) clears the cached config so
-      // the next activation rebuilds the default empty timeline. If a control
-      // is still live (e.g. an invalid settings entry arrives while the plugin
+      // the next activation rebuilds the default empty timeline. If a control is
+      // still live (e.g. an invalid settings entry arrives while the plugin
       // stays active across a project switch), tear it down and rebuild so the
       // previous project's timeline cannot linger on screen.
       savedConfig = null;
@@ -254,7 +216,6 @@ export const maplibreTimeSliderPlugin: GeoLibrePlugin = {
     // cannot redirect this callback.
     const control = timeSliderControl;
     control.setConfig(nextConfig);
-    publishTimeSliderDate(control.getCurrentDate());
     setTimeout(() => syncStoreLayers(control), 0);
     return true;
   },
@@ -263,6 +224,9 @@ export const maplibreTimeSliderPlugin: GeoLibrePlugin = {
 /**
  * Builds constructor options from a serialized config so a fresh control
  * restores the full timeline state and all of its sources.
+ *
+ * @param config - A config produced by `TimeSliderControl.getConfig()`.
+ * @returns Options for a new `TimeSliderControl`.
  */
 function configToOptions(config: TimeSliderConfig): TimeSliderOptions {
   return {
@@ -289,6 +253,9 @@ function configToOptions(config: TimeSliderConfig): TimeSliderOptions {
  * Returns true when a source URL-bearing field is safe to hand to the library:
  * absent/empty, a non-string (e.g. inline GeoJSON data objects), or a plain
  * http(s) URL. Other schemes (javascript:/data:/file:) are rejected.
+ *
+ * @param value - A candidate `url`/`tiles`/`data`/`baseUrl` value.
+ * @returns Whether the value is safe.
  */
 function isSafeSourceUrl(value: unknown): boolean {
   if (typeof value !== "string" || value === "") return true;
@@ -298,6 +265,9 @@ function isSafeSourceUrl(value: unknown): boolean {
 /**
  * Minimal validation of a restored project value before treating it as a
  * `TimeSliderConfig` (it arrives untyped from the saved project file).
+ *
+ * @param state - The raw value from the saved project.
+ * @returns The config when it looks valid, otherwise null.
  */
 function normalizeConfig(state: unknown): TimeSliderConfig | null {
   if (!state || typeof state !== "object") return null;
@@ -339,19 +309,12 @@ function normalizeConfig(state: unknown): TimeSliderConfig | null {
 // Only sourceadd/sourceremove change the store's layer set. statechange also
 // fires on every playback tick (goTo emits it), so subscribing it to a store
 // reconcile would run at animation speed for no benefit; opacity and
-// visibility are intentionally left to the Layers panel. The `change` event is
-// instead forwarded to the lightweight date broadcast so mil-symbol layers can
-// follow playback.
+// visibility are intentionally left to the Layers panel.
 function attachStoreSync(control: TimeSliderControl): void {
   const onSourceAdd = () => syncStoreLayers(control);
   const onSourceRemove = () => syncStoreLayers(control);
-  const onTimeChange = (event: TimeSliderEventData) =>
-    publishTimeSliderDate(event.state.currentDate);
   control.on("sourceadd", onSourceAdd);
   control.on("sourceremove", onSourceRemove);
-  control.on("change", onTimeChange);
-  // Broadcast the initial position so subscribers filter immediately.
-  publishTimeSliderDate(control.getCurrentDate());
   // Force the dock theme to follow the in-app light/dark toggle for as long as
   // this control is attached.
   startThemeSync(control);
@@ -360,8 +323,6 @@ function attachStoreSync(control: TimeSliderControl): void {
   detachStoreSync = () => {
     control.off("sourceadd", onSourceAdd);
     control.off("sourceremove", onSourceRemove);
-    control.off("change", onTimeChange);
-    publishTimeSliderDate(null);
     stopThemeSync();
     detachStoreSync = null;
   };

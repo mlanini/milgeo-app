@@ -1,10 +1,11 @@
 import {
   DEFAULT_PROJECT_PREFERENCES,
-  isAllowedPluginManifestUrl,
+  GEOCODING_PROVIDERS,
+  getGeocodingProvider,
+  normalizeGeocodingProviderId,
   PROJECT_VERSION,
   useAppStore,
   type MapPreferences,
-  type ProjectPluginState,
   type ProjectPreferences,
   type RuntimeEnvironmentVariable,
 } from "@geolibre/core";
@@ -16,13 +17,20 @@ import {
   DialogHeader,
   DialogTitle,
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   Input,
   Label,
+  Select,
 } from "@geolibre/ui";
 import type { MapController } from "@geolibre/map";
 import {
@@ -31,25 +39,36 @@ import {
   Eye,
   EyeOff,
   FolderCog,
+  Languages,
+  Locate,
   MapPinned,
+  LayoutPanelTop,
+  PanelLeft,
+  PanelRight,
   Plus,
   RotateCcw,
   Settings,
+  Type,
   Trash2,
   TriangleAlert,
   Puzzle,
-  FolderOpen,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type RefObject } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import {
+  DEFAULT_DESKTOP_LAYOUT_SETTINGS,
   useDesktopSettingsStore,
   type DesktopSettings,
+  type DesktopLayoutSettings,
 } from "../../hooks/useDesktopSettings";
-import { getPluginManager } from "../../hooks/usePlugins";
-import { mergeStringLists, normalizeStringList } from "../../lib/string-lists";
-import { pickLocalPathWithFallback } from "../../lib/tauri-io";
+import { useLanguage } from "../../hooks/useLanguage";
 
-type SettingsSection = "map" | "environment" | "plugins" | "project";
+type SettingsSection =
+  | "map"
+  | "layout"
+  | "geocoding"
+  | "environment"
+  | "project";
 
 interface SettingsDialogProps {
   buttonClassName?: string;
@@ -57,17 +76,23 @@ interface SettingsDialogProps {
   iconClassName?: string;
   mapControllerRef: RefObject<MapController | null>;
   showLabels?: boolean;
+  onOpenManagePlugins: () => void;
 }
 
 const SECTION_ITEMS: Array<{
   id: SettingsSection;
-  label: string;
+  labelKey: `settings.section.${SettingsSection}`;
   icon: typeof MapPinned;
 }> = [
-  { id: "map", label: "Map", icon: MapPinned },
-  { id: "environment", label: "Environment", icon: Braces },
-  { id: "plugins", label: "Plugins", icon: Puzzle },
-  { id: "project", label: "Project", icon: FolderCog },
+  { id: "map", labelKey: "settings.section.map", icon: MapPinned },
+  { id: "layout", labelKey: "settings.section.layout", icon: LayoutPanelTop },
+  { id: "geocoding", labelKey: "settings.section.geocoding", icon: Locate },
+  {
+    id: "environment",
+    labelKey: "settings.section.environment",
+    icon: Braces,
+  },
+  { id: "project", labelKey: "settings.section.project", icon: FolderCog },
 ];
 
 const VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -82,24 +107,15 @@ interface DraftEnvironmentVariable extends RuntimeEnvironmentVariable {
 interface DraftPreferences {
   map: MapPreferences;
   environmentVariables: DraftEnvironmentVariable[];
-}
-
-// Draft plugin-source rows carry the same stable client-side id as draft env
-// vars so React keys survive mid-list deletes instead of reusing input DOM
-// state across the wrong row.
-interface DraftListEntry {
-  id: string;
-  value: string;
+  geocoding: ProjectPreferences["geocoding"];
 }
 
 interface DraftDesktopSettings {
-  additionalPluginDirectories: DraftListEntry[];
-  pluginManifestUrls: DraftListEntry[];
+  layout: DesktopLayoutSettings;
+  shareToken: string;
   openTopographyApiKey: string;
-}
-
-function toDraftListEntry(value: string): DraftListEntry {
-  return { id: createDraftId(), value };
+  demSource: import("../../hooks/useDesktopSettings").DemSource;
+  localDtmPath: string;
 }
 
 function createDraftId(): string {
@@ -115,21 +131,20 @@ function clonePreferences(preferences: ProjectPreferences): DraftPreferences {
       ...variable,
       id: createDraftId(),
     })),
+    geocoding: {
+      ...preferences.geocoding,
+      apiKeys: { ...preferences.geocoding.apiKeys },
+    },
   };
 }
 
-function cloneDesktopSettings(
-  settings: DesktopSettings,
-  projectPlugins: ProjectPluginState | null,
-): DraftDesktopSettings {
+function cloneDesktopSettings(settings: DesktopSettings): DraftDesktopSettings {
   return {
-    additionalPluginDirectories:
-      settings.additionalPluginDirectories.map(toDraftListEntry),
-    pluginManifestUrls: mergeStringLists(
-      projectPlugins?.manifestUrls ?? [],
-      settings.pluginManifestUrls,
-    ).map(toDraftListEntry),
+    layout: { ...settings.layout },
+    shareToken: settings.shareToken,
     openTopographyApiKey: settings.openTopographyApiKey ?? "",
+    demSource: settings.demSource ?? "",
+    localDtmPath: settings.localDtmPath ?? "",
   };
 }
 
@@ -176,40 +191,51 @@ function normalizePreferences(
         enabled: variable.enabled,
       }))
       .filter((variable) => variable.key.length > 0),
+    geocoding: normalizeGeocodingPreferences(preferences.geocoding),
   };
 }
 
+function normalizeGeocodingPreferences(
+  geocoding: ProjectPreferences["geocoding"],
+): ProjectPreferences["geocoding"] {
+  const providerId = normalizeGeocodingProviderId(geocoding.providerId);
+  // Keep only non-empty keys so the saved project does not carry blank entries.
+  const apiKeys: Record<string, string> = {};
+  for (const [id, key] of Object.entries(geocoding.apiKeys)) {
+    if (key.trim()) apiKeys[id] = key.trim();
+  }
+  return {
+    providerId,
+    apiKeys,
+    forwardEndpoint: geocoding.forwardEndpoint?.trim() || undefined,
+    reverseEndpoint: geocoding.reverseEndpoint?.trim() || undefined,
+    email: geocoding.email?.trim() || undefined,
+  };
+}
+
+// Returned as a code (not a message) so the user-facing string is resolved
+// through i18n at the call site, where `t` is in scope.
+type EnvironmentValidationError =
+  | { kind: "pattern" }
+  | { kind: "duplicate"; name: string };
+
 function validateEnvironmentVariables(
   variables: RuntimeEnvironmentVariable[],
-): string | null {
+): EnvironmentValidationError | null {
   const keys = new Set<string>();
 
   for (const variable of variables) {
-    if (!variable.key.trim()) continue;
-    if (!VARIABLE_NAME_PATTERN.test(variable.key.trim())) {
-      return "Environment variable names must start with a letter or underscore and contain only letters, numbers, and underscores.";
+    const key = variable.key.trim();
+    if (!key) continue;
+    if (!VARIABLE_NAME_PATTERN.test(key)) {
+      return { kind: "pattern" };
     }
-    if (keys.has(variable.key.trim())) {
-      return `Environment variable "${variable.key.trim()}" is duplicated.`;
+    if (keys.has(key)) {
+      return { kind: "duplicate", name: key };
     }
-    keys.add(variable.key.trim());
+    keys.add(key);
   }
 
-  return null;
-}
-
-function validatePluginManifestUrls(urls: string[]): string | null {
-  for (const url of urls) {
-    if (!url.trim()) continue;
-    try {
-      new URL(url.trim());
-    } catch {
-      return "Plugin manifest URLs must be valid absolute URLs.";
-    }
-    if (!isAllowedPluginManifestUrl(url.trim())) {
-      return "Plugin manifest URLs must use HTTPS, or HTTP on localhost, 127.0.0.1, or [::1].";
-    }
-  }
   return null;
 }
 
@@ -219,15 +245,20 @@ export function SettingsDialog({
   iconClassName,
   mapControllerRef,
   showLabels = true,
+  onOpenManagePlugins,
 }: SettingsDialogProps) {
+  const { t } = useTranslation();
+  const {
+    language,
+    options: languageOptions,
+    setLanguage,
+  } = useLanguage();
   const preferences = useAppStore((s) => s.preferences);
   const setPreferences = useAppStore((s) => s.setPreferences);
   const desktopSettings = useDesktopSettingsStore((s) => s.desktopSettings);
   const setDesktopSettings = useDesktopSettingsStore(
     (s) => s.setDesktopSettings,
   );
-  const projectPlugins = useAppStore((s) => s.projectPlugins);
-  const setProjectPlugins = useAppStore((s) => s.setProjectPlugins);
   const projectName = useAppStore((s) => s.projectName);
   const projectPath = useAppStore((s) => s.projectPath);
   const setProjectName = useAppStore((s) => s.setProjectName);
@@ -237,9 +268,7 @@ export function SettingsDialog({
     () => clonePreferences(preferences),
   );
   const [draftDesktopSettings, setDraftDesktopSettings] =
-    useState<DraftDesktopSettings>(() =>
-      cloneDesktopSettings(desktopSettings, projectPlugins),
-    );
+    useState<DraftDesktopSettings>(() => cloneDesktopSettings(desktopSettings));
   const [draftProjectName, setDraftProjectName] = useState(projectName);
   const [error, setError] = useState<string | null>(null);
   // Ids of variables whose value is temporarily revealed; values are masked
@@ -262,10 +291,7 @@ export function SettingsDialog({
     if (!open) return;
     setDraftPreferences(clonePreferences(useAppStore.getState().preferences));
     setDraftDesktopSettings(
-      cloneDesktopSettings(
-        useDesktopSettingsStore.getState().desktopSettings,
-        useAppStore.getState().projectPlugins,
-      ),
+      cloneDesktopSettings(useDesktopSettingsStore.getState().desktopSettings),
     );
     setDraftProjectName(useAppStore.getState().projectName);
     setRevealedValueIds(new Set());
@@ -342,85 +368,10 @@ export function SettingsDialog({
     setError(null);
   };
 
-  const updatePluginDirectory = (index: number, path: string) => {
-    setDraftDesktopSettings((current) => ({
-      ...current,
-      additionalPluginDirectories: current.additionalPluginDirectories.map(
-        (entry, i) => (i === index ? { ...entry, value: path } : entry),
-      ),
-    }));
-    setError(null);
-  };
-
-  const addPluginDirectory = () => {
-    setDraftDesktopSettings((current) => ({
-      ...current,
-      additionalPluginDirectories: [
-        ...current.additionalPluginDirectories,
-        toDraftListEntry(""),
-      ],
-    }));
-    setSection("plugins");
-    setError(null);
-  };
-
-  const browsePluginDirectory = async (index: number) => {
-    try {
-      const path = await pickLocalPathWithFallback({ directory: true });
-      if (!path) return;
-      updatePluginDirectory(index, path);
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Could not open the directory picker.",
-      );
-    }
-  };
-
-  const removePluginDirectory = (index: number) => {
-    setDraftDesktopSettings((current) => ({
-      ...current,
-      additionalPluginDirectories: current.additionalPluginDirectories.filter(
-        (_, i) => i !== index,
-      ),
-    }));
-    setError(null);
-  };
-
-  const updatePluginManifestUrl = (index: number, url: string) => {
-    setDraftDesktopSettings((current) => ({
-      ...current,
-      pluginManifestUrls: current.pluginManifestUrls.map((entry, i) =>
-        i === index ? { ...entry, value: url } : entry,
-      ),
-    }));
-    setError(null);
-  };
-
-  const addPluginManifestUrl = () => {
-    setDraftDesktopSettings((current) => ({
-      ...current,
-      pluginManifestUrls: [...current.pluginManifestUrls, toDraftListEntry("")],
-    }));
-    setSection("plugins");
-    setError(null);
-  };
-
-  const removePluginManifestUrl = (index: number) => {
-    setDraftDesktopSettings((current) => ({
-      ...current,
-      pluginManifestUrls: current.pluginManifestUrls.filter(
-        (_, i) => i !== index,
-      ),
-    }));
-    setError(null);
-  };
-
   const applyCurrentViewBounds = () => {
     const bounds = mapControllerRef.current?.readView().bbox;
     if (!bounds) {
-      setError("The map bounds are not available yet.");
+      setError(t("settings.map.errorBoundsUnavailable"));
       return;
     }
     updateMapPreferences({
@@ -438,43 +389,80 @@ export function SettingsDialog({
     updateMapPreferences(DEFAULT_PROJECT_PREFERENCES.map);
   };
 
+  const updateGeocoding = (
+    patch: Partial<ProjectPreferences["geocoding"]>,
+  ) => {
+    setDraftPreferences((current) => ({
+      ...current,
+      geocoding: { ...current.geocoding, ...patch },
+    }));
+    setError(null);
+  };
+
+  const updateGeocodingApiKey = (providerId: string, value: string) => {
+    setDraftPreferences((current) => ({
+      ...current,
+      geocoding: {
+        ...current.geocoding,
+        apiKeys: { ...current.geocoding.apiKeys, [providerId]: value },
+      },
+    }));
+    setError(null);
+  };
+
+  const updateDraftLayoutSettings = (patch: Partial<DesktopLayoutSettings>) => {
+    setDraftDesktopSettings((current) => ({
+      ...current,
+      layout: { ...current.layout, ...patch },
+    }));
+    setError(null);
+  };
+
+  const updateSavedLayoutSettings = (patch: Partial<DesktopLayoutSettings>) => {
+    // Read the latest state synchronously so rapid successive toggles do not
+    // overwrite each other with a stale render-closure snapshot.
+    const current = useDesktopSettingsStore.getState().desktopSettings;
+    setDesktopSettings({
+      ...current,
+      layout: { ...current.layout, ...patch },
+    });
+  };
+
+  const resetLayoutSettings = () => {
+    updateDraftLayoutSettings(DEFAULT_DESKTOP_LAYOUT_SETTINGS);
+  };
+
+  const updateShareToken = (value: string) => {
+    // Kept in the draft and only committed on Save, so editing the token and
+    // then closing the dialog without saving discards the change (a secret
+    // field should not persist on every keystroke).
+    setDraftDesktopSettings((current) => ({ ...current, shareToken: value }));
+  };
+
   const saveSettings = () => {
     const normalized = normalizePreferences(draftPreferences);
     const validationError = validateEnvironmentVariables(
       normalized.environmentVariables,
     );
     if (validationError) {
-      setError(validationError);
+      setError(
+        validationError.kind === "duplicate"
+          ? t("settings.env.errorDuplicate", { name: validationError.name })
+          : t("settings.env.errorNamePattern"),
+      );
       setSection("environment");
-      return;
-    }
-
-    const pluginManifestUrls = normalizeStringList(
-      draftDesktopSettings.pluginManifestUrls.map((entry) => entry.value),
-    );
-    const manifestUrlValidationError =
-      validatePluginManifestUrls(pluginManifestUrls);
-    if (manifestUrlValidationError) {
-      setError(manifestUrlValidationError);
-      setSection("plugins");
       return;
     }
 
     const nextProjectName = draftProjectName.trim() || "Untitled Project";
     if (nextProjectName !== projectName) setProjectName(nextProjectName);
     setPreferences(normalized);
+    // Plugin sources are managed live in the Manage Plugins dialog; preserve the
+    // current store values and only update the layout from this dialog.
     setDesktopSettings({
-      additionalPluginDirectories: normalizeStringList(
-        draftDesktopSettings.additionalPluginDirectories.map(
-          (entry) => entry.value,
-        ),
-      ),
-      pluginManifestUrls,
-      openTopographyApiKey: draftDesktopSettings.openTopographyApiKey.trim(),
-    });
-    setProjectPlugins({
-      ...getPluginManager().getProjectState(),
-      manifestUrls: pluginManifestUrls,
+      ...useDesktopSettingsStore.getState().desktopSettings,
+      layout: draftDesktopSettings.layout,
+      shareToken: draftDesktopSettings.shareToken,
     });
     setOpen(false);
   };
@@ -494,7 +482,7 @@ export function SettingsDialog({
         }}
       >
         <Icon className="h-4 w-4" />
-        {item.label}
+        {t(item.labelKey)}
       </Button>
     );
   };
@@ -507,16 +495,40 @@ export function SettingsDialog({
             className={buttonClassName}
             variant="ghost"
             size={buttonSize}
-            aria-label="Settings"
+            aria-label={t("settings.title")}
           >
             <Settings className={iconClassName} />
             {showLabels ? (
-              <span className="hidden sm:inline">Settings</span>
+              <span className="hidden sm:inline">{t("settings.title")}</span>
             ) : null}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          <DropdownMenuLabel>Settings</DropdownMenuLabel>
+        <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuLabel>{t("settings.title")}</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Languages className="mr-2 h-3.5 w-3.5" />
+              {t("language.label")}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-44">
+              <DropdownMenuRadioGroup
+                value={language}
+                onValueChange={setLanguage}
+              >
+                {languageOptions.map((option) => (
+                  <DropdownMenuRadioItem
+                    key={option.code}
+                    value={option.code}
+                  >
+                    {option.nativeName === option.englishName
+                      ? option.nativeName
+                      : `${option.nativeName} (${option.englishName})`}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={() => {
@@ -525,7 +537,80 @@ export function SettingsDialog({
             }}
           >
             <MapPinned className="mr-2 h-3.5 w-3.5" />
-            Map Preferences
+            {t("settings.menu.mapPreferences")}
+          </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <LayoutPanelTop className="mr-2 h-3.5 w-3.5" />
+              {t("settings.section.layout")}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="geolibre-layout-submenu w-40 sm:w-72">
+              <DropdownMenuCheckboxItem
+                checked={desktopSettings.layout.toolbarLabels}
+                onCheckedChange={(checked: boolean) =>
+                  updateSavedLayoutSettings({ toolbarLabels: checked === true })
+                }
+                onSelect={(event: Event) => event.preventDefault()}
+              >
+                {t("settings.layout.showToolbarLabels")}
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={desktopSettings.layout.showProjectInfo}
+                onCheckedChange={(checked: boolean) =>
+                  updateSavedLayoutSettings({
+                    showProjectInfo: checked === true,
+                  })
+                }
+                onSelect={(event: Event) => event.preventDefault()}
+              >
+                {t("settings.layout.showProjectInfo")}
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem
+                checked={desktopSettings.layout.layerPanelVisible}
+                onCheckedChange={(checked: boolean) =>
+                  updateSavedLayoutSettings({
+                    layerPanelVisible: checked === true,
+                  })
+                }
+                onSelect={(event: Event) => event.preventDefault()}
+              >
+                {t("settings.layout.showLayersPanel")}
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={desktopSettings.layout.stylePanelVisible}
+                onCheckedChange={(checked: boolean) =>
+                  updateSavedLayoutSettings({
+                    stylePanelVisible: checked === true,
+                  })
+                }
+                onSelect={(event: Event) => event.preventDefault()}
+              >
+                {t("settings.layout.showStylePanel")}
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => {
+                  setSection("layout");
+                  setOpen(true);
+                }}
+              >
+                {t("settings.menu.layoutSettings")}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="px-2 py-1 text-xs font-normal text-muted-foreground">
+                {t("settings.menu.urlOverrideNote")}
+              </DropdownMenuLabel>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuItem
+            onSelect={() => {
+              setSection("geocoding");
+              setOpen(true);
+            }}
+          >
+            <Locate className="mr-2 h-3.5 w-3.5" />
+            {t("settings.menu.geocoding")}
           </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={() => {
@@ -534,16 +619,7 @@ export function SettingsDialog({
             }}
           >
             <Braces className="mr-2 h-3.5 w-3.5" />
-            Environment Variables
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => {
-              setSection("plugins");
-              setOpen(true);
-            }}
-          >
-            <Puzzle className="mr-2 h-3.5 w-3.5" />
-            Plugin Directories
+            {t("settings.menu.environmentVariables")}
           </DropdownMenuItem>
           <DropdownMenuItem
             onSelect={() => {
@@ -552,17 +628,22 @@ export function SettingsDialog({
             }}
           >
             <FolderCog className="mr-2 h-3.5 w-3.5" />
-            Project Settings
+            {t("settings.menu.projectSettings")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onOpenManagePlugins()}>
+            <Puzzle className="mr-2 h-3.5 w-3.5" />
+            {t("settings.menu.managePlugins")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[min(88vh,760px)] max-w-3xl overflow-hidden p-0">
+        <DialogContent
+          className="max-h-[min(88vh,760px)] max-w-3xl"
+          bodyClassName="overflow-hidden p-0"
+        >
           <DialogHeader className="border-b px-6 pb-4 pt-6">
-            <DialogTitle>Settings</DialogTitle>
-            <DialogDescription>
-              Configure project preferences and runtime settings.
-            </DialogDescription>
+            <DialogTitle>{t("settings.title")}</DialogTitle>
+            <DialogDescription>{t("settings.description")}</DialogDescription>
           </DialogHeader>
           <div className="grid min-h-0 grid-cols-1 md:grid-cols-[12rem_1fr]">
             <nav className="flex gap-1 border-b p-3 md:flex-col md:border-b-0 md:border-r">
@@ -573,9 +654,11 @@ export function SettingsDialog({
                 <div className="space-y-5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-sm font-semibold">Map constraints</h3>
+                      <h3 className="text-sm font-semibold">
+                        {t("settings.map.constraintsTitle")}
+                      </h3>
                       <p className="text-xs text-muted-foreground">
-                        Limits apply while the project is open.
+                        {t("settings.map.constraintsDescription")}
                       </p>
                     </div>
                     <Button
@@ -585,7 +668,7 @@ export function SettingsDialog({
                       onClick={resetMapPreferences}
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
-                      Reset
+                      {t("common.reset")}
                     </Button>
                   </div>
                   <label className="flex items-center gap-2 text-sm">
@@ -599,18 +682,20 @@ export function SettingsDialog({
                         })
                       }
                     />
-                    Restrict map bounds
+                    {t("settings.map.restrictBounds")}
                   </label>
                   <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                    {[
-                      ["West", 0, -180, 180],
-                      ["South", 1, -85, 85],
-                      ["East", 2, -180, 180],
-                      ["North", 3, -85, 85],
-                    ].map(([label, index, min, max]) => (
-                      <div key={label} className="space-y-1.5">
+                    {(
+                      [
+                        ["settings.map.west", 0, -180, 180],
+                        ["settings.map.south", 1, -85, 85],
+                        ["settings.map.east", 2, -180, 180],
+                        ["settings.map.north", 3, -85, 85],
+                      ] as const
+                    ).map(([labelKey, index, min, max]) => (
+                      <div key={labelKey} className="space-y-1.5">
                         <Label htmlFor={`settings-bounds-${index}`}>
-                          {label}
+                          {t(labelKey)}
                         </Label>
                         <Input
                           id={`settings-bounds-${index}`}
@@ -636,11 +721,13 @@ export function SettingsDialog({
                     onClick={applyCurrentViewBounds}
                   >
                     <Crosshair className="h-3.5 w-3.5" />
-                    Use Current View
+                    {t("settings.map.useCurrentView")}
                   </Button>
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="settings-min-zoom">Min zoom</Label>
+                      <Label htmlFor="settings-min-zoom">
+                        {t("settings.map.minZoom")}
+                      </Label>
                       <Input
                         id="settings-min-zoom"
                         type="number"
@@ -656,7 +743,9 @@ export function SettingsDialog({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="settings-max-zoom">Max zoom</Label>
+                      <Label htmlFor="settings-max-zoom">
+                        {t("settings.map.maxZoom")}
+                      </Label>
                       <Input
                         id="settings-max-zoom"
                         type="number"
@@ -672,7 +761,9 @@ export function SettingsDialog({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="settings-max-pitch">Max pitch</Label>
+                      <Label htmlFor="settings-max-pitch">
+                        {t("settings.map.maxPitch")}
+                      </Label>
                       <Input
                         id="settings-max-pitch"
                         type="number"
@@ -699,54 +790,306 @@ export function SettingsDialog({
                         })
                       }
                     />
-                    Render world copies
+                    {t("settings.map.renderWorldCopies")}
                   </label>
-                  <div className="space-y-1.5">
-                    <h3 className="text-sm font-semibold">Analysis</h3>
-                    <p className="text-xs text-muted-foreground">
-                      An{" "}
-                      <a
-                        href="https://www.opentopography.org/developers"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline underline-offset-2"
-                      >
-                        OpenTopography API key
-                      </a>{" "}
-                      is required for Slope, Hillshade and Viewshed tools. The
-                      key is stored locally and never shared.
-                    </p>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="settings-opentopo-key">
-                        OpenTopography API Key
-                      </Label>
-                      <Input
-                        id="settings-opentopo-key"
-                        type="password"
-                        autoComplete="off"
-                        placeholder="Paste your key here"
-                        value={draftDesktopSettings.openTopographyApiKey}
-                        onChange={(e) =>
-                          setDraftDesktopSettings((s) => ({
-                            ...s,
-                            openTopographyApiKey: e.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                  </div>
                 </div>
               ) : null}
-              {section === "environment" ? (
+              {section === "layout" ? (
                 <div className="space-y-5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h3 className="text-sm font-semibold">
-                        Environment variables
+                        {t("settings.layout.title")}
                       </h3>
                       <p className="text-xs text-muted-foreground">
-                        {enabledVariableCount} enabled runtime variable
-                        {enabledVariableCount === 1 ? "" : "s"}.
+                        {t("settings.layout.description")}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={resetLayoutSettings}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      {t("common.reset")}
+                    </Button>
+                  </div>
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {t("settings.layout.toolbar")}
+                    </h4>
+                    <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                      <input
+                        className="h-4 w-4"
+                        type="checkbox"
+                        checked={draftDesktopSettings.layout.toolbarLabels}
+                        onChange={(event) =>
+                          updateDraftLayoutSettings({
+                            toolbarLabels: event.target.checked,
+                          })
+                        }
+                      />
+                      <Type className="h-4 w-4 text-muted-foreground" />
+                      <span>{t("settings.layout.showToolbarLabels")}</span>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                      <input
+                        className="h-4 w-4"
+                        type="checkbox"
+                        checked={draftDesktopSettings.layout.showProjectInfo}
+                        onChange={(event) =>
+                          updateDraftLayoutSettings({
+                            showProjectInfo: event.target.checked,
+                          })
+                        }
+                      />
+                      <FolderCog className="h-4 w-4 text-muted-foreground" />
+                      <span>{t("settings.layout.showProjectInfoToolbar")}</span>
+                    </label>
+                  </div>
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {t("settings.layout.panels")}
+                    </h4>
+                    <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                      <input
+                        className="h-4 w-4"
+                        type="checkbox"
+                        checked={draftDesktopSettings.layout.layerPanelVisible}
+                        onChange={(event) =>
+                          updateDraftLayoutSettings({
+                            layerPanelVisible: event.target.checked,
+                          })
+                        }
+                      />
+                      <PanelLeft className="h-4 w-4 text-muted-foreground" />
+                      <span>{t("settings.layout.showLayersPanel")}</span>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                      <input
+                        className="h-4 w-4"
+                        type="checkbox"
+                        checked={draftDesktopSettings.layout.stylePanelVisible}
+                        onChange={(event) =>
+                          updateDraftLayoutSettings({
+                            stylePanelVisible: event.target.checked,
+                          })
+                        }
+                      />
+                      <PanelRight className="h-4 w-4 text-muted-foreground" />
+                      <span>{t("settings.layout.showStylePanel")}</span>
+                    </label>
+                  </div>
+                  <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                    {t("settings.layout.urlParamsNote")}
+                  </div>
+                </div>
+              ) : null}
+              {section === "geocoding" ? (
+                <div className="space-y-5">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-semibold">
+                      {t("settings.geocoding.title")}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.geocoding.description")}
+                    </p>
+                  </div>
+                  {(() => {
+                    const provider = getGeocodingProvider(
+                      draftPreferences.geocoding.providerId,
+                    );
+                    const apiKeyId = `geocoding-api-key-${provider.id}`;
+                    const apiKeyRevealed = revealedValueIds.has(apiKeyId);
+                    return (
+                      <div className="space-y-4">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">
+                            {t("settings.geocoding.provider")}
+                          </Label>
+                          <Select
+                            value={provider.id}
+                            onChange={(event) =>
+                              updateGeocoding({
+                                providerId: event.target.value,
+                              })
+                            }
+                          >
+                            {GEOCODING_PROVIDERS.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.label}
+                              </option>
+                            ))}
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            {provider.requiresApiKey
+                              ? t("settings.geocoding.requiresKey")
+                              : provider.acceptsApiKey
+                                ? t("settings.geocoding.optionalKey")
+                                : t("settings.geocoding.noKey")}
+                          </p>
+                          {provider.browserCorsRestricted ? (
+                            <p className="text-xs text-amber-600 dark:text-amber-500">
+                              {t("settings.geocoding.corsNote")}
+                            </p>
+                          ) : null}
+                        </div>
+
+                        {provider.acceptsApiKey ? (
+                          <div className="space-y-1.5">
+                            <Label className="text-xs" htmlFor="geocoding-key">
+                              {t("settings.geocoding.apiKey")}
+                            </Label>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                id="geocoding-key"
+                                type={apiKeyRevealed ? "text" : "password"}
+                                autoComplete="off"
+                                spellCheck={false}
+                                value={
+                                  draftPreferences.geocoding.apiKeys[
+                                    provider.id
+                                  ] ?? ""
+                                }
+                                onChange={(event) =>
+                                  updateGeocodingApiKey(
+                                    provider.id,
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder={t(
+                                  "settings.geocoding.apiKeyPlaceholder",
+                                )}
+                              />
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => toggleValueVisibility(apiKeyId)}
+                                aria-label={t("settings.geocoding.toggleApiKey")}
+                              >
+                                {apiKeyRevealed ? (
+                                  <EyeOff className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Eye className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            </div>
+                            <p className="text-xs text-amber-600 dark:text-amber-500">
+                              {t("settings.geocoding.secretsWarning")}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        <div className="space-y-1.5">
+                          <Label
+                            className="text-xs"
+                            htmlFor="geocoding-forward"
+                          >
+                            {t("settings.geocoding.forwardEndpoint")}
+                          </Label>
+                          <Input
+                            id="geocoding-forward"
+                            value={
+                              draftPreferences.geocoding.forwardEndpoint ?? ""
+                            }
+                            onChange={(event) =>
+                              updateGeocoding({
+                                forwardEndpoint: event.target.value,
+                              })
+                            }
+                            placeholder={provider.defaultForwardEndpoint}
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label
+                            className="text-xs"
+                            htmlFor="geocoding-reverse"
+                          >
+                            {t("settings.geocoding.reverseEndpoint")}
+                          </Label>
+                          <Input
+                            id="geocoding-reverse"
+                            value={
+                              draftPreferences.geocoding.reverseEndpoint ?? ""
+                            }
+                            onChange={(event) =>
+                              updateGeocoding({
+                                reverseEndpoint: event.target.value,
+                              })
+                            }
+                            placeholder={provider.defaultReverseEndpoint}
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label className="text-xs" htmlFor="geocoding-email">
+                            {t("settings.geocoding.email")}
+                          </Label>
+                          <Input
+                            id="geocoding-email"
+                            type="email"
+                            value={draftPreferences.geocoding.email ?? ""}
+                            onChange={(event) =>
+                              updateGeocoding({ email: event.target.value })
+                            }
+                            placeholder={t(
+                              "settings.geocoding.emailPlaceholder",
+                            )}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            {t("settings.geocoding.emailHint")}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : null}
+              {section === "environment" ? (
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold">
+                      {t("settings.env.tokenTitle")}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      <Trans
+                        i18nKey="settings.env.tokenDescription"
+                        components={{
+                          tokenLink: (
+                            <a
+                              className="underline"
+                              href="https://share.geolibre.app/settings"
+                              target="_blank"
+                              rel="noreferrer noopener"
+                            />
+                          ),
+                        }}
+                      />
+                    </p>
+                    <Input
+                      aria-label={t("settings.env.tokenTitle")}
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder={t("settings.env.tokenPlaceholder")}
+                      value={draftDesktopSettings.shareToken}
+                      onChange={(event) => updateShareToken(event.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.env.tokenStorageNote")}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t pt-5">
+                    <div>
+                      <h3 className="text-sm font-semibold">
+                        {t("settings.env.variablesTitle")}
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        {t("settings.env.variablesCount", {
+                          count: enabledVariableCount,
+                        })}
                       </p>
                     </div>
                     <Button
@@ -756,31 +1099,33 @@ export function SettingsDialog({
                       onClick={addEnvironmentVariable}
                     >
                       <Plus className="h-3.5 w-3.5" />
-                      Add
+                      {t("common.add")}
                     </Button>
                   </div>
                   <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
                     <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>
-                      Values are stored in plain text in the project file and
-                      may be exposed when the project is shared. Avoid putting
-                      secrets here unless the project file stays private.
-                    </span>
+                    <span>{t("settings.env.secretsWarning")}</span>
                   </div>
                   {draftPreferences.environmentVariables.length === 0 ? (
                     <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                      No environment variables configured.
+                      {t("settings.env.empty")}
                     </div>
                   ) : (
                     <div className="space-y-2">
                       {draftPreferences.environmentVariables.map(
-                        (variable, index) => (
+                        (variable, index) => {
+                          const variableName =
+                            variable.key ||
+                            t("settings.env.variableFallback");
+                          return (
                           <div
                             key={variable.id}
                             className="grid grid-cols-[1.25rem_minmax(7rem,1fr)_minmax(7rem,1fr)_2rem_2rem] items-center gap-2"
                           >
                             <input
-                              aria-label={`Enable ${variable.key || "variable"}`}
+                              aria-label={t("settings.env.enableAria", {
+                                name: variableName,
+                              })}
                               className="h-4 w-4"
                               type="checkbox"
                               checked={variable.enabled}
@@ -791,8 +1136,8 @@ export function SettingsDialog({
                               }
                             />
                             <Input
-                              aria-label="Variable name"
-                              placeholder="VITE_EXAMPLE_KEY"
+                              aria-label={t("settings.env.nameAria")}
+                              placeholder={t("settings.env.namePlaceholder")}
                               value={variable.key}
                               onChange={(event) =>
                                 updateEnvironmentVariable(index, {
@@ -801,8 +1146,8 @@ export function SettingsDialog({
                               }
                             />
                             <Input
-                              aria-label="Variable value"
-                              placeholder="Value"
+                              aria-label={t("settings.env.valueAria")}
+                              placeholder={t("settings.env.valuePlaceholder")}
                               type={
                                 revealedValueIds.has(variable.id)
                                   ? "text"
@@ -819,8 +1164,12 @@ export function SettingsDialog({
                             <Button
                               aria-label={
                                 revealedValueIds.has(variable.id)
-                                  ? `Hide value for ${variable.key || "variable"}`
-                                  : `Show value for ${variable.key || "variable"}`
+                                  ? t("settings.env.hideValueAria", {
+                                      name: variableName,
+                                    })
+                                  : t("settings.env.showValueAria", {
+                                      name: variableName,
+                                    })
                               }
                               className="h-8 w-8"
                               type="button"
@@ -835,7 +1184,9 @@ export function SettingsDialog({
                               )}
                             </Button>
                             <Button
-                              aria-label={`Remove ${variable.key || "variable"}`}
+                              aria-label={t("settings.env.removeAria", {
+                                name: variableName,
+                              })}
                               className="h-8 w-8"
                               type="button"
                               size="icon"
@@ -845,166 +1196,27 @@ export function SettingsDialog({
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
-                        ),
+                          );
+                        },
                       )}
                     </div>
                   )}
                 </div>
               ) : null}
-              {section === "plugins" ? (
-                <div className="space-y-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold">Plugin sources</h3>
-                      <p className="text-xs text-muted-foreground">
-                        Extra local directories and web manifest URLs scanned
-                        for external plugins.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-                    GeoLibre always scans its app data plugins directory. These
-                    local directories are desktop-only settings and are not
-                    saved into project files. Manifest URLs are saved with the
-                    project so reloading a project can fetch its external
-                    plugins before restoring active plugin state. Desktop
-                    directories can contain `.zip` plugin bundles, unpacked
-                    plugin bundle folders, or be an unpacked plugin bundle with
-                    a root `plugin.json`.
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        Local directories
-                      </h4>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={addPluginDirectory}
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Add
-                      </Button>
-                    </div>
-                    {draftDesktopSettings.additionalPluginDirectories.length ===
-                    0 ? (
-                      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                        No additional plugin directories configured.
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {draftDesktopSettings.additionalPluginDirectories.map(
-                          (entry, index) => (
-                            <div
-                              key={entry.id}
-                              className="grid grid-cols-[minmax(10rem,1fr)_2rem_2rem] items-center gap-2"
-                            >
-                              <Input
-                                aria-label="Plugin directory"
-                                placeholder="/path/to/geolibre-plugin"
-                                value={entry.value}
-                                onChange={(event) =>
-                                  updatePluginDirectory(
-                                    index,
-                                    event.target.value,
-                                  )
-                                }
-                              />
-                              <Button
-                                aria-label="Browse plugin directory"
-                                className="h-8 w-8"
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                onClick={() =>
-                                  void browsePluginDirectory(index)
-                                }
-                              >
-                                <FolderOpen className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                aria-label="Remove plugin directory"
-                                className="h-8 w-8"
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => removePluginDirectory(index)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          ),
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        Manifest URLs
-                      </h4>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={addPluginManifestUrl}
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Add
-                      </Button>
-                    </div>
-                    {draftDesktopSettings.pluginManifestUrls.length === 0 ? (
-                      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                        No plugin manifest URLs configured.
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {draftDesktopSettings.pluginManifestUrls.map(
-                          (entry, index) => (
-                            <div
-                              key={entry.id}
-                              className="grid grid-cols-[minmax(10rem,1fr)_2rem] items-center gap-2"
-                            >
-                              <Input
-                                aria-label="Plugin manifest URL"
-                                placeholder="https://example.com/plugin/plugin.json"
-                                value={entry.value}
-                                onChange={(event) =>
-                                  updatePluginManifestUrl(
-                                    index,
-                                    event.target.value,
-                                  )
-                                }
-                              />
-                              <Button
-                                aria-label="Remove plugin manifest URL"
-                                className="h-8 w-8"
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => removePluginManifestUrl(index)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          ),
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : null}
               {section === "project" ? (
                 <div className="space-y-5">
                   <div>
-                    <h3 className="text-sm font-semibold">Project</h3>
+                    <h3 className="text-sm font-semibold">
+                      {t("settings.project.title")}
+                    </h3>
                     <p className="text-xs text-muted-foreground">
-                      Settings are saved with the `.milgeo.json` project.
+                      {t("settings.project.description")}
                     </p>
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="settings-project-name">Name</Label>
+                    <Label htmlFor="settings-project-name">
+                      {t("settings.project.name")}
+                    </Label>
                     <Input
                       id="settings-project-name"
                       value={draftProjectName}
@@ -1015,13 +1227,13 @@ export function SettingsDialog({
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label>Project file</Label>
+                      <Label>{t("settings.project.file")}</Label>
                       <div className="min-h-9 truncate rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground">
-                        {projectPath ?? "Not saved"}
+                        {projectPath ?? t("settings.project.notSaved")}
                       </div>
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Project format</Label>
+                      <Label>{t("settings.project.format")}</Label>
                       <div className="min-h-9 rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground">
                         {PROJECT_VERSION}
                       </div>
@@ -1042,10 +1254,10 @@ export function SettingsDialog({
               variant="outline"
               onClick={() => setOpen(false)}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button type="button" onClick={saveSettings}>
-              Save Settings
+              {t("settings.saveButton")}
             </Button>
           </div>
         </DialogContent>
