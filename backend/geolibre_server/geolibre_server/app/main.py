@@ -13,6 +13,8 @@ Spatial SQL is served by the ``/sql`` router (Apache Sedona / SedonaDB).
 
 from __future__ import annotations
 
+import os
+import re
 import signal
 import threading
 import time
@@ -21,6 +23,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .analysis import router as analysis_router
 from .conversion import router as conversion_router
 from .ml import router as ml_router
 from .ml import stop_child_server
@@ -30,19 +33,32 @@ from .vector import router as vector_router
 from .whitebox import router as whitebox_router
 
 app = FastAPI(title="GeoLibre Server", version="0.8.0")
-# Restrict CORS to the Tauri webview origins and the pinned Vite dev server
-# (vite.config.ts sets strictPort on 5173) rather than any localhost port, so a
-# stray local web app cannot reach the Whitebox endpoints from a browser.
+# Build the CORS origin regex from the environment so that hosted deployments
+# (e.g. Render) can allow their own frontend origin without hardcoding it.
+# GEOLIBRE_CORS_ORIGIN accepts a single origin string or a pipe-separated list,
+# e.g. "https://dev.milgeo.app" or "https://a.example.com|https://b.example.com".
+_extra_origins: list[str] = [
+    re.escape(o.strip())
+    for o in os.environ.get("GEOLIBRE_CORS_ORIGIN", "").split("|")
+    if o.strip()
+]
+_cors_pattern = (
+    r"^("
+    r"http://localhost:5173"
+    r"|http://127\.0\.0\.1:5173"
+    r"|tauri://localhost"
+    r"|http://tauri\.localhost"
+    + ("|" + "|".join(_extra_origins) if _extra_origins else "")
+    + r")$"
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=(
-        r"^(http://localhost:5173|http://127\.0\.0\.1:5173"
-        r"|tauri://localhost|http://tauri\.localhost)$"
-    ),
+    allow_origin_regex=_cors_pattern,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+app.include_router(analysis_router)
 app.include_router(whitebox_router)
 app.include_router(conversion_router)
 app.include_router(raster_router)

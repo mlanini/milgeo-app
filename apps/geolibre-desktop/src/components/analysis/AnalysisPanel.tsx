@@ -56,6 +56,7 @@ import {
 } from "../../lib/analysis-ephemeris";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
 import type { DemSource } from "../../hooks/useDesktopSettings";
+import { isTauri } from "../../lib/is-tauri";
 
 /** Mirror the sidecar base-URL logic from @geolibre/processing/sidecar-client. */
 const SIDECAR_BASE_URL: string =
@@ -514,6 +515,16 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
       setDemPickerOpen(true);
     }
   }, [open, demSource]);
+
+  // In the hosted web version there is no local sidecar, so "local" DTM mode
+  // cannot work. Reset any previously-saved "local" preference to "online" on
+  // first render outside the Tauri desktop webview.
+  useEffect(() => {
+    if (!isTauri() && desktopSettings.demSource === "local") {
+      setDesktopSettings({ ...desktopSettings, demSource: "online" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally runs once on mount
 
   const selectedTool = useMemo(
     () => TOOLS.find((t) => t.id === selectedToolId)!,
@@ -1021,6 +1032,7 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
           currentLocalPath={localDtmPath}
           localDtmDraft={localDtmDraft}
           onLocalDtmDraftChange={setLocalDtmDraft}
+          isDesktop={isTauri()}
           onConfirm={(source, path) => {
             setDesktopSettings({
               ...desktopSettings,
@@ -1043,15 +1055,21 @@ function DemPickerOverlay({
   localDtmDraft,
   onLocalDtmDraftChange,
   onConfirm,
+  isDesktop = false,
 }: {
   currentSource: DemSource;
   currentLocalPath: string;
   localDtmDraft: string;
   onLocalDtmDraftChange: (v: string) => void;
   onConfirm: (source: DemSource, localPath: string) => void;
+  /** True when running in the Tauri desktop app; hides unavailable options on web. */
+  isDesktop?: boolean;
 }) {
   const [selected, setSelected] = useState<DemSource>(
-    currentSource !== "" ? currentSource : "online",
+    // If saved setting is "local" but we're in the web version, reset to online
+    (currentSource !== "" && (currentSource !== "local" || isDesktop))
+      ? currentSource
+      : "online",
   );
   const [localPath, setLocalPath] = useState(localDtmDraft || currentLocalPath);
 
@@ -1108,32 +1126,43 @@ function DemPickerOverlay({
         {/* Option B — Local DTM */}
         <label
           className={cn(
-            "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors hover:bg-accent/50",
-            selected === "local" && "border-primary bg-primary/5",
+            "flex items-start gap-3 rounded-md border p-3 transition-colors",
+            isDesktop
+              ? "cursor-pointer hover:bg-accent/50"
+              : "cursor-not-allowed opacity-50",
+            selected === "local" && isDesktop && "border-primary bg-primary/5",
           )}
         >
           <input
             type="radio"
             name="dem-source"
             value="local"
+            disabled={!isDesktop}
             checked={selected === "local"}
-            onChange={() => setSelected("local")}
+            onChange={() => isDesktop && setSelected("local")}
             className="mt-0.5 accent-primary"
           />
           <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium">Local DTM raster file</span>
-            <span className="text-[11px] text-muted-foreground">
-              GeoTIFF, ASCII grid or any GDAL-supported raster. Queries are processed by
-              the local Python sidecar at <code>127.0.0.1:8765</code>.
+            <span className="text-xs font-medium flex items-center gap-1.5">
+              Local DTM raster file
+              {!isDesktop && (
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Desktop only
+                </span>
+              )}
             </span>
-            {selected === "local" && (
+            <span className="text-[11px] text-muted-foreground">
+              {isDesktop
+                ? <>GeoTIFF, ASCII grid or any GDAL-supported raster. Queries are processed by the local Python sidecar at <code>127.0.0.1:8765</code>.</>
+                : "Requires the local desktop app with the Python sidecar running. Not available in the hosted web version."}
+            </span>
+            {isDesktop && selected === "local" && (
               <div className="mt-1 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] text-amber-300 leading-relaxed">
                 ⚠️ Requires the <strong>local sidecar</strong> to be running
-                (<code>geolibre-server</code> on port 8765). Not available in the
-                hosted web version — use <strong>Online API</strong> instead.
+                (<code>geolibre-server</code> on port 8765).
               </div>
             )}
-            {selected === "local" && (
+            {isDesktop && selected === "local" && (
               <div className="mt-1.5 flex flex-col gap-1.5">
                 <input
                   type="file"
