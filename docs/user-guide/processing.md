@@ -1,470 +1,132 @@
 # Processing Tools
 
-MilGeo.app provides comprehensive geospatial processing capabilities for vector and raster analysis, data conversion, and specialized geoprocessing workflows.
+The **Processing** menu collects GeoLibre's analysis and conversion tools: vector geometry and overlay tools, raster terrain and clipping tools, AI segmentation, format conversion, and the Whitebox toolbox. The [SQL Workspace](sql-workspace.md), [Python Console](python-console.md), [AI Assistant](ai-assistant.md), and [AI Segmentation](segmentation.md) also live here and have their own pages.
 
-## Vector Tools
+!!! note "Page order"
+    This page groups the tools by theme. In the menu itself the items appear in a different order: AI Assistant (top), Whitebox, SQL Workspace, Python Console, Conversion, Vector, Raster, AI Segmentation, Planetary Computer, Earth Engine.
 
-Access vector processing tools from **Processing > Vector**. These tools run in-browser using Turf.js with optional GeoPandas sidecar for heavy operations.
+![Vector tools dialog](https://data.geolibre.app/images/geolibre-processing-vector.webp)
 
-### Geometry Operations
+## Vector
 
-#### Buffer
-Create distance-based zones around features.
+**Processing → Vector** opens the Vector tools dialog. Pick a tool from the list, choose the input layer and parameters, select an engine, then **Run**. Output appears as a new layer.
 
-**Use cases**:
-- Threat range visualization
-- Security perimeters
-- Impact area analysis
+**Geometry**
 
-**Parameters**:
-- **Distance**: Buffer radius (meters, kilometers, miles)
-- **Units**: Distance unit selection
-- **Steps**: Smoothness of curved segments (default: 8)
-- **Dissolve**: Merge overlapping buffers
+| Tool | Description |
+| --- | --- |
+| **Buffer** | Create a buffer polygon around each feature by a fixed distance. |
+| **Centroids** | Compute the centroid point of each feature. |
+| **Convex hull** | Compute the convex hull enclosing all features. |
+| **Dissolve** | Merge polygon features into a single geometry, optionally grouped by a field. |
+| **Bounding box** | Compute the rectangular envelope of all features. |
+| **Simplify** | Reduce the number of vertices using Douglas-Peucker. |
 
-**Example**: 5km buffer around friendly positions for security planning.
+**Overlay**
 
-#### Centroids
-Calculate geometric center points of polygon features.
+| Tool | Description |
+| --- | --- |
+| **Clip** | Clip the input layer to the area covered by an overlay layer (keeps input attributes). |
+| **Intersection** | Keep only the areas where both polygon layers overlap (merges attributes from both). |
+| **Difference** | Remove the overlay layer's area from the input layer (keeps input attributes). |
+| **Union** | Merge two polygon layers into a single combined geometry (attributes are not preserved on either engine). |
 
-**Use cases**:
-- Unit position labeling
-- Spatial aggregation
-- Distance calculations
+**Join**
 
-**Output**: Point layer with centroid of each input polygon.
+| Tool | Description |
+| --- | --- |
+| **Spatial join** | Attach attributes from a join layer to each input feature based on a spatial relationship (intersects, within, or contains). Choose an *inner* join to keep only matched features or a *left* join to keep all input features. Works with any geometry type. |
+| **Attribute join** | Attach attributes from a join layer (a table) onto each input feature where a key field matches — no geometry involved (e.g. join census stats to boundary polygons by FIPS code). One-to-one: the first matching join row wins. Choose which fields to bring over, and an *inner* join (keep only matched) or *left* join (keep all input). |
 
-#### Convex Hull
-Generate smallest convex polygon containing all features.
+**Select**
 
-**Use cases**:
-- Area of operations boundary
-- Unit dispersal analysis
-- Concentration assessment
+| Tool | Description |
+| --- | --- |
+| **Select by value** | Extract features whose attribute matches a condition into a new layer. Pick a field, an operator (=, ≠, >, ≥, <, ≤, contains, starts with, is empty, is not empty) and a value. Comparisons are numeric when both sides are numbers, otherwise text. |
+| **Select by location** | Extract features by their spatial relationship to a second layer (intersects, within, contains, or disjoint) into a new layer. Works with any geometry type. |
 
-**Output**: Single polygon or per-feature hulls.
+### Engines
 
-#### Dissolve
-Merge adjacent or overlapping features with common attributes.
+Every vector tool can run on one of three engines, selectable in the dialog:
 
-**Use cases**:
-- Combine unit sectors into AO boundary
-- Merge administrative areas
-- Simplify tactical graphics
+- **Client (Turf.js)**: runs entirely in the browser. No setup, works offline, and operates on the layer's GeoJSON.
+- **Sidecar (GeoPandas)**: runs on the optional Python sidecar for projection-aware results, backed by GeoPandas and Shapely. The dialog falls back to the client engine when the sidecar's optional `vector` extra is not installed.
+- **Python (Pyodide)**: runs the same GeoPandas/Shapely code as the sidecar, but **entirely in your browser** via [Pyodide](https://pyodide.org) — no server, so it works on the web build and the public demo too. The first run downloads the Python runtime once (a few tens of MB, fetched lazily from a CDN, so an internet connection is needed the first time); later runs reuse the warmed-up runtime. Because it shares the sidecar's Python, results match the Sidecar engine. By default the runtime loads from the public jsDelivr CDN, which is a trust assumption: a tampered CDN response would run unverified (Pyodide loads its own `pyodide.asm.js`/WASM internally, so a subresource-integrity check on the entry script alone is not sufficient). For production or offline use, **self-host** the runtime by pointing `VITE_PYODIDE_INDEX_URL` at a mirrored copy of the Pyodide distribution, which removes the CDN dependency entirely.
 
-**Parameters**:
-- **Attribute**: Field to dissolve by (optional)
-- **Aggregate stats**: Sum, count, mean for numeric fields
+See the [Vector Analysis tutorial](../tutorials/vector-analysis.md).
 
-#### Bounding Box
-Create rectangular envelope around features.
+## Raster
 
-**Use cases**:
-- Quick AO definition
-- Map extent calculation
-- Data subset extraction
+**Processing → Raster** opens the Raster tools dialog. Raster tools run on the rasterio Python sidecar: they take a file path in and write a file path out, then add the result to the map.
 
-**Types**:
-- Per-feature bounding boxes
-- Single box for entire layer
+**Terrain**
 
-#### Simplify
-Reduce vertex count while preserving shape.
+| Tool | Description |
+| --- | --- |
+| **Hillshade** | Compute a shaded-relief raster from an elevation model. |
+| **Slope** | Compute slope (steepness) from an elevation model. |
+| **Aspect** | Compute aspect (compass direction of the steepest slope) from an elevation model. |
 
-**Use cases**:
-- Reduce file size
-- Improve rendering performance
-- Generalize for small-scale maps
+**Reproject**
 
-**Parameters**:
-- **Tolerance**: Simplification threshold (lower = more detail)
-- **High quality**: Uses Visvalingam algorithm (slower)
+| Tool | Description |
+| --- | --- |
+| **Reproject** | Warp a raster to a different coordinate reference system. |
+| **Resample** | Resample a raster to a different pixel size (resolution). |
 
-### Overlay Operations
+**Clip**
 
-#### Clip
-Extract features within a boundary polygon.
+| Tool | Description |
+| --- | --- |
+| **Clip by extent** | Crop a raster to a bounding box (in the raster's CRS). |
+| **Clip by mask layer** | Clip a raster to the geometries of a vector mask file. |
 
-**Use cases**:
-- Extract data for specific AO
-- Trim layers to study area
-- Create data subsets
+**Raster to Vector**
 
-**Inputs**:
-- **Input layer**: Layer to clip
-- **Clip layer**: Boundary polygon
-- **Output**: Clipped features
+| Tool | Description |
+| --- | --- |
+| **Polygonize** | Convert a raster band into vector polygons grouped by pixel value. |
+| **Contour** | Generate contour lines from an elevation model. |
 
-#### Intersection
-Find overlapping areas between two layers.
+**Vector to Raster**
 
-**Use cases**:
-- Identify shared terrain
-- Find units within sectors
-- Terrain suitability analysis
+| Tool | Description |
+| --- | --- |
+| **Interpolation (IDW / Kriging)** | Interpolate a point layer's numeric attribute into a continuous raster surface using inverse distance weighting or ordinary kriging. The output grid spans the points' extent at the chosen pixel size, in the layer's CRS. |
 
-**Output**: New layer with only overlap areas.
+See the [Terrain Analysis tutorial](../tutorials/terrain-analysis.md).
 
-#### Difference
-Subtract one layer from another.
+## Conversion
 
-**Use cases**:
-- Remove excluded areas from analysis
-- Find areas outside no-go zones
-- Exclusion analysis
+**Processing → Conversion** writes data to cloud-native formats:
 
-**Output**: Input layer minus clip layer areas.
+| Tool | Engine | Description |
+| --- | --- | --- |
+| **Vector to GeoParquet** | Browser (DuckDB-WASM) | Hilbert-sorted, compressed GeoParquet. |
+| **Vector to FlatGeobuf** | Sidecar | Hilbert-sorted, cloud-optimized, spatially indexed vector. |
+| **Vector to Shapefile** | Sidecar | Hilbert-sorted, zipped ESRI Shapefile (field names truncated to 10 characters). |
+| **Vector to GeoPackage** | Sidecar | Hilbert-sorted GeoPackage for sharing with QGIS/ArcGIS. |
+| **CSV to GeoParquet** | Browser (DuckDB-WASM) | Convert a CSV with coordinates to GeoParquet. |
+| **Vector to PMTiles** | Sidecar | Build a vector tile archive. |
+| **Raster to COG** | Sidecar | Write a Cloud-Optimized GeoTIFF. |
 
-#### Union
-Combine multiple layers into one.
+The conversion sidecar is hardened with a path allowlist.
 
-**Use cases**:
-- Merge adjacent unit sectors
-- Combine planning layers
-- Create composite datasets
+## Whitebox
 
-**Options**:
-- **Preserve attributes**: Keep all fields
-- **Dissolve overlaps**: Merge overlapping areas
+**Processing → Whitebox** opens the Whitebox toolbox for batch geoprocessing, backed by a managed Python sidecar. Point it at an input directory and run tools across the files in it.
 
-### Attribute Operations
+## AI Segmentation
 
-#### Join Attributes
-Combine attributes from two layers based on common field.
+**Processing → AI Segmentation** turns imagery into vector features with [segment-geospatial](https://github.com/opengeos/segment-geospatial) (SamGeo) and Meta's SAM 3 model: choose a GeoTIFF, type a text prompt (*"trees"*, *"buildings"*) or run automatic segmentation, and the resulting polygons are added as a new layer. It runs the model in a separate `samgeo-api` server (a GPU is recommended) that the sidecar proxies. See the dedicated [AI Segmentation](segmentation.md) page for setup and usage.
 
-**Join types**:
-- **Inner**: Only matching records
-- **Left**: All from left, matching from right
-- **Right**: All from right, matching from left
+## Planetary Computer and Earth Engine
 
-**Use cases**:
-- Add unit data to positions
-- Enrich features with intelligence
-- Combine operational data
+The Processing menu also opens the **Planetary Computer** and **Earth Engine** panels for browsing and loading cloud datasets. See [Data Integrations](data-integrations.md).
 
-#### Select by Attribute
-Filter features based on attribute criteria.
+## The Python sidecar
 
-**Operators**: =, ≠, <, >, ≤, ≥, contains, starts with, ends with
+The raster tools, the sidecar conversion tools, the Whitebox toolbox, and the optional GeoPandas vector engine all use a local FastAPI sidecar that the desktop app starts on demand. The vector tools' client engine and the browser-based conversions need no sidecar. See [Getting Started](../getting-started.md#optional-python-sidecar) for setup and [Reference → Architecture](../architecture.md#python-sidecar) for how it works.
 
-**Example**: Select all units where `echelon = 'Battalion'`
-
-#### Calculate Field
-Compute new attribute values.
-
-**Functions**: Arithmetic, string, geometry (area, length)
-
-**Example**: Calculate density as `population / area`
-
-## Raster Tools
-
-Raster processing requires the Python sidecar with rasterio. Access from **Processing > Raster**.
-
-### Terrain Analysis
-
-#### Hillshade
-Generate shaded relief visualization.
-
-**Use cases**:
-- Terrain visualization
-- Map backgrounds
-- Topographic analysis
-
-**Parameters**:
-- **Azimuth**: Sun direction (default: 315°)
-- **Altitude**: Sun angle (default: 45°)
-- **Z factor**: Vertical exaggeration
-
-#### Slope
-Calculate terrain slope.
-
-**Use cases**:
-- Trafficability analysis
-- Line-of-sight planning
-- Engineering assessment
-
-**Output units**:
-- Degrees (0-90)
-- Percent (0-100+)
-
-#### Aspect
-Determine slope direction.
-
-**Use cases**:
-- Exposure analysis
-- Solar radiation modeling
-- Drainage patterns
-
-**Output**: Direction in degrees (0-360, 0 = North)
-
-### Raster Processing
-
-#### Reproject
-Transform raster to different coordinate system.
-
-**Use cases**:
-- Match coordinate systems across datasets
-- Change to regional projection
-- Prepare for analysis
-
-**Parameters**:
-- **Target CRS**: Output coordinate system
-- **Resampling**: Nearest, bilinear, cubic
-
-#### Resample
-Change raster resolution.
-
-**Use cases**:
-- Match resolution across layers
-- Reduce file size
-- Increase detail (with interpolation)
-
-**Methods**:
-- **Nearest**: Discrete data (land cover)
-- **Bilinear**: Continuous data (elevation)
-- **Cubic**: High-quality continuous data
-
-#### Clip by Extent
-Crop raster to rectangular bounds.
-
-**Inputs**:
-- **Min X, Min Y**: Southwest corner
-- **Max X, Max Y**: Northeast corner
-
-**Use cases**:
-- Extract AO subset
-- Reduce processing area
-- Create map tiles
-
-#### Clip by Mask
-Clip raster to polygon boundary.
-
-**Use cases**:
-- Extract raster data for AO
-- Remove areas outside sector
-- Irregular extent cropping
-
-**Options**:
-- **Crop to extent**: Trim to mask bounds
-- **No data value**: Value for areas outside mask
-
-### Raster Conversion
-
-#### Polygonize
-Convert raster to vector polygons.
-
-**Use cases**:
-- Extract features from imagery
-- Create zone boundaries from classified data
-- Convert elevation contours
-
-**Options**:
-- **Field name**: Attribute for raster values
-- **8-connectivity**: Adjacent pixel grouping
-
-#### Contours
-Generate elevation contour lines.
-
-**Use cases**:
-- Topographic map creation
-- Terrain visualization
-- Elevation reference
-
-**Parameters**:
-- **Interval**: Vertical spacing (meters)
-- **Base**: Starting elevation
-- **Index contours**: Every Nth contour emphasized
-
-## Data Conversion
-
-Convert datasets to cloud-native formats from **Processing > Conversion**.
-
-### GeoParquet
-Column-oriented format for efficient query and storage.
-
-**Benefits**:
-- Fast attribute queries
-- Efficient compression
-- Cloud-optimized
-
-**Use cases**:
-- Large vector datasets
-- Cloud data lakes
-- Analytics workflows
-
-### FlatGeobuf
-Streaming-friendly format with spatial index.
-
-**Benefits**:
-- HTTP range request support
-- Spatial filtering without full download
-- Small file size
-
-**Use cases**:
-- Web services
-- Mobile applications
-- Bandwidth-limited environments
-
-### PMTiles
-Single-file vector tile archive.
-
-**Benefits**:
-- No tile server required
-- Efficient browser rendering
-- Version control friendly
-
-**Use cases**:
-- Basemaps
-- Reference layers
-- Static hosting
-
-### COG (Cloud Optimized GeoTIFF)
-Tiled, overviewed raster format.
-
-**Benefits**:
-- Partial read support
-- Multi-resolution
-- Standard GeoTIFF compatible
-
-**Use cases**:
-- Imagery
-- Elevation data
-- Web map services
-
-## Whitebox Tools
-
-500+ specialized geoprocessing algorithms via Python sidecar. Access from **Processing > Whitebox**.
-
-### Hydrology
-- **Flow Direction**: D8, D-infinity algorithms
-- **Flow Accumulation**: Catchment analysis
-- **Stream Network**: Extract drainage networks
-- **Watershed Delineation**: Define catchment boundaries
-- **Strahler Order**: Stream hierarchy
-
-**Military applications**: Water source identification, crossing site analysis, flood risk
-
-### LiDAR Processing
-- **Classify**: Ground, vegetation, buildings
-- **DEM Generation**: Create elevation models
-- **Canopy Height**: Vegetation analysis
-- **Point Cloud Filtering**: Noise removal
-
-**Military applications**: Cover analysis, obstacle detection, landing zone assessment
-
-### Terrain Analysis
-- **Ruggedness**: Terrain roughness
-- **Wetness Index**: Soil moisture estimation
-- **Relative Elevation**: Height above drainage
-- **Viewshed**: Line-of-sight analysis
-
-**Military applications**: Trafficability, defensive positions, observation posts
-
-### Image Processing
-- **Filters**: Smoothing, edge detection, enhancement
-- **Classification**: Supervised, unsupervised learning
-- **Segmentation**: Object extraction
-- **Change Detection**: Multi-temporal analysis
-
-**Military applications**: Intelligence analysis, target detection, damage assessment
-
-## Batch Processing
-
-Automate repetitive tasks with batch processing.
-
-### Creating Batch Workflows
-
-1. **Processing > Batch Mode**
-2. **Add operations** in sequence
-3. **Configure parameters** for each step
-4. **Set input/output** paths
-5. **Run batch**
-
-### Example Workflow
-
-Prepare imagery for tactical overlay:
-
-1. Clip raster by AO boundary
-2. Resample to 10m resolution
-3. Generate hillshade
-4. Convert to COG format
-5. Export hillshade as basemap layer
-
-### Saving Workflows
-
-- **Save as template**: Reuse with different inputs
-- **Export as script**: Python script for command-line use
-- **Share workflows**: JSON format for team distribution
-
-## Performance Optimization
-
-### Browser-based Processing
-
-**Advantages**:
-- No setup required
-- Works offline (desktop app)
-- Immediate results
-
-**Limitations**:
-- Memory constraints (large datasets)
-- CPU-bound operations slower
-- Some algorithms unavailable
-
-**Best for**: Vector operations, small rasters, quick analysis
-
-### Python Sidecar Processing
-
-**Advantages**:
-- Full GDAL/GeoPandas capabilities
-- Large dataset handling
-- Multiprocessing support
-
-**Limitations**:
-- Requires Python setup
-- Network communication overhead
-- Desktop-only
-
-**Best for**: Raster processing, heavy vector ops, batch workflows
-
-### Optimization Tips
-
-- **Simplify inputs**: Pre-filter or clip to study area
-- **Reduce resolution**: Downsample rasters when appropriate
-- **Use appropriate tools**: Match tool complexity to need
-- **Process incrementally**: Break large jobs into chunks
-- **Monitor memory**: Watch browser/sidecar memory usage
-
-## Troubleshooting
-
-### Processing Failures
-
-**Out of memory**:
-- Reduce input dataset size
-- Close unused browser tabs
-- Use Python sidecar for large operations
-- Increase system memory allocation
-
-**Invalid geometry**:
-- Run "Fix Geometries" tool first
-- Check for self-intersections
-- Validate coordinate system
-- Remove duplicate vertices
-
-**Sidecar connection errors**:
-- Verify sidecar is running (http://127.0.0.1:8765/docs)
-- Check firewall settings
-- Restart sidecar service
-- Review sidecar logs
-
-**Unexpected results**:
-- Verify input layer selection
-- Check parameter units
-- Validate coordinate systems match
-- Test on small sample first
-
-### Getting Help
-
-- **Console log**: Check browser console for errors
-- **Tool documentation**: Hover tooltips explain parameters
-- **Example data**: Use sample datasets for testing
-- **Community forum**: Ask questions on GitHub Discussions
+!!! note "Browser vs desktop"
+    The client-side vector tools and the browser conversions (Vector to GeoParquet, CSV to GeoParquet) run in the browser. The raster tools, sidecar conversions, and Whitebox require the desktop app and the Python sidecar.

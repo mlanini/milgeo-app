@@ -58,6 +58,15 @@ services:
       # directly to `node` as a flag, so both mechanisms apply.
       - key: NODE_OPTIONS
         value: "--max-old-space-size=4096"
+      # ── Real-time collaboration (optional) ─────────────────────────────────
+      # Collaboration requires a separate Cloudflare Workers relay.
+      # 1. Deploy workers/collab/ to Cloudflare (update wrangler.toml route).
+      # 2. Set this variable to your deployed worker URL, e.g.:
+      #      https://geolibre-collab.<your-account>.workers.dev
+      # 3. Set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in GitHub Secrets
+      #    to enable auto-deploy via .github/workflows/deploy-collab.yml.
+      # - key: VITE_GEOLIBRE_COLLAB_URL
+      #   value: "https://geolibre-collab.<your-account>.workers.dev"
 
     # ── SPA routing ────────────────────────────────────────────────────────
     # All paths fall back to index.html so React Router / query-param project

@@ -46,9 +46,13 @@ nav:
       - SQL Workspace: user-guide/sql-workspace.md
   - Documentation:
       - Architecture: architecture.md
+      - Android: android.md
       - Project Format: project-format.md
       - Plugin API: plugin-api.md
+      - Internationalization: i18n.md
+      - Python Package: python.md
       - Roadmap: roadmap.md
+      - Contributing: contributing.md
 
 plugins:
   - search

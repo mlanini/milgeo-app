@@ -1,4 +1,8 @@
 @import "@geolibre/ui/globals.css";
+/* Supplies the custom-color/border-radius theme that @geolibre/ui's globals.css
+   relies on via @apply (background, border, etc.). globals.css is intentionally
+   config-agnostic; the consuming app provides the Tailwind config here. */
+@config "../tailwind.config.js";
 
 html,
 body,
@@ -6,6 +10,19 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
+}
+
+/* Keep the app chrome out from under mobile system bars and display cutouts.
+   With viewport-fit=cover (see index.html) the webview draws edge-to-edge on
+   Android/iOS, so without this the top toolbar renders under the status bar —
+   where the system intercepts taps, making those menu buttons unclickable. The
+   insets are 0 on desktop/web, so this only affects mobile. */
+#root {
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 .geoagent-control .geoagent-control-toggle {
@@ -252,146 +269,6 @@ body,
   color: hsl(var(--popover-foreground)) !important;
   left: 10px !important;
   top: 10px !important;
-}
-
-.geolibre-geoparquet-control {
-  background-color: transparent !important;
-  box-shadow: none !important;
-  color: hsl(var(--popover-foreground)) !important;
-  height: 0 !important;
-  margin: 0 !important;
-  pointer-events: none;
-}
-
-.geolibre-geoparquet-control .geoparquet-control-toggle {
-  pointer-events: none;
-  visibility: hidden;
-}
-
-.geoparquet-control-panel {
-  background-color: hsl(var(--popover)) !important;
-  border: 1px solid hsl(var(--border));
-  box-sizing: border-box;
-  color: hsl(var(--popover-foreground)) !important;
-  --geolibre-geoparquet-panel-left: 10px;
-  left: var(--geolibre-geoparquet-panel-left) !important;
-  max-height: min(620px, calc(100% - 20px));
-  max-width: min(
-    365px,
-    calc(100vw - var(--geolibre-geoparquet-panel-left) - 22px)
-  );
-  top: 10px !important;
-}
-
-.geoparquet-control-content {
-  max-height: min(560px, calc(100vh - 220px));
-}
-
-.geoparquet-control-header {
-  background-color: hsl(var(--card)) !important;
-  border-bottom-color: hsl(var(--border)) !important;
-  color: hsl(var(--foreground)) !important;
-}
-
-.geoparquet-control-title,
-.geoparquet-control-section-title,
-.geoparquet-control-label,
-.geoparquet-control-check,
-.geoparquet-control-summary-row strong,
-.geoparquet-control-properties dd {
-  color: hsl(var(--popover-foreground)) !important;
-}
-
-.geoparquet-control-close,
-.geoparquet-control-summary-row span,
-.geoparquet-control-properties dt {
-  color: hsl(var(--muted-foreground)) !important;
-}
-
-.geoparquet-control-close:hover {
-  color: hsl(var(--foreground)) !important;
-}
-
-.geoparquet-control-section {
-  border-bottom-color: hsl(var(--border)) !important;
-}
-
-.geoparquet-control-input,
-.geoparquet-control-file {
-  background-color: hsl(var(--background)) !important;
-  border-color: hsl(var(--input)) !important;
-  color: hsl(var(--foreground)) !important;
-}
-
-.geoparquet-control-input::placeholder {
-  color: hsl(var(--muted-foreground)) !important;
-}
-
-.geoparquet-control-input:focus {
-  border-color: hsl(var(--ring)) !important;
-  box-shadow: 0 0 0 1px hsl(var(--ring));
-  outline: none;
-}
-
-.geoparquet-control-button {
-  background-color: hsl(var(--primary)) !important;
-  color: hsl(var(--primary-foreground)) !important;
-}
-
-.geoparquet-control-button:hover {
-  background-color: hsl(var(--primary) / 0.9) !important;
-}
-
-.geoparquet-control-secondary-button,
-.geoparquet-control-mini-button {
-  background-color: hsl(var(--secondary)) !important;
-  border-color: hsl(var(--border)) !important;
-  color: hsl(var(--secondary-foreground)) !important;
-}
-
-.geoparquet-control-secondary-button:hover,
-.geoparquet-control-mini-button:hover {
-  background-color: hsl(var(--accent)) !important;
-  color: hsl(var(--accent-foreground)) !important;
-}
-
-.geoparquet-control-layer-list,
-.geoparquet-control-column-list {
-  border-color: hsl(var(--border)) !important;
-}
-
-.geoparquet-control-status {
-  background-color: hsl(var(--accent)) !important;
-  color: hsl(var(--accent-foreground)) !important;
-}
-
-.geoparquet-control-error {
-  background-color: hsl(var(--destructive) / 0.12) !important;
-  color: hsl(var(--destructive)) !important;
-}
-
-.geoparquet-control-warning {
-  background-color: hsl(45 90% 55% / 0.14) !important;
-  color: hsl(var(--foreground)) !important;
-}
-
-.geoparquet-popup {
-  color: hsl(var(--popover-foreground)) !important;
-}
-
-.maplibregl-popup.geoparquet-attribute-popup .maplibregl-popup-content {
-  background-color: hsl(var(--popover)) !important;
-  border: 1px solid hsl(var(--border));
-  color: hsl(var(--popover-foreground)) !important;
-}
-
-.geoparquet-popup th,
-.geoparquet-popup td {
-  border-top-color: hsl(var(--border)) !important;
-}
-
-.geoparquet-popup th {
-  color: hsl(var(--muted-foreground)) !important;
 }
 
 .duckdb-control-content {
@@ -841,6 +718,69 @@ body,
   z-index: 1;
 }
 
+/*
+ * The Measure, Bookmark and View State controls theme themselves purely via
+ * `@media (prefers-color-scheme)`, so they follow the OS preference instead of
+ * GeoLibre's in-app light/dark toggle (the `.dark` class on <html>). When the
+ * two disagree — e.g. the app is in light mode on an OS set to dark — the panel
+ * background is forced light by our backgroundColor option while the icons,
+ * borders and secondary text stay dark-themed (light gray on white), which
+ * reads as poor contrast. Remap each control's theme variables onto the app's
+ * design tokens, which already switch with the `.dark` class, so the controls
+ * track the in-app theme in both directions regardless of the OS setting.
+ * index.css is imported after the component stylesheet, so these same-specificity
+ * rules win the cascade over the component's media-query defaults.
+ */
+.geolibre-measure-control {
+  --ms-panel-bg: hsl(var(--popover));
+  --ms-text: hsl(var(--popover-foreground));
+  --ms-strong-text: hsl(var(--foreground));
+  --ms-muted: hsl(var(--muted-foreground));
+  --ms-subtle: hsl(var(--muted-foreground));
+  --ms-border: hsl(var(--border));
+  --ms-input-bg: hsl(var(--background));
+  --ms-input-text: hsl(var(--foreground));
+  --ms-hover-bg: hsl(var(--accent));
+  --ms-subtle-bg: hsl(var(--muted));
+  --ms-button-bg: hsl(var(--background));
+  --ms-button-text: hsl(var(--foreground));
+  --ms-chip-bg: hsl(var(--muted));
+  --ms-chip-text: hsl(var(--muted-foreground));
+  --ms-secondary-border: hsl(var(--border));
+}
+
+.geolibre-bookmark-control {
+  --bm-panel-bg: hsl(var(--popover));
+  --bm-text: hsl(var(--popover-foreground));
+  --bm-muted: hsl(var(--muted-foreground));
+  --bm-subtle: hsl(var(--muted-foreground));
+  --bm-border: hsl(var(--border));
+  --bm-input-bg: hsl(var(--background));
+  --bm-input-text: hsl(var(--foreground));
+  --bm-placeholder: hsl(var(--muted-foreground));
+  --bm-hover-bg: hsl(var(--accent));
+  --bm-chip-hover-bg: hsl(var(--accent));
+  --bm-button-bg: hsl(var(--background));
+  --bm-button-text: hsl(var(--foreground));
+  --bm-item-active-bg: hsl(var(--accent));
+  --bm-secondary-text: hsl(var(--muted-foreground));
+  --bm-secondary-border: hsl(var(--border));
+}
+
+.geolibre-view-state-control {
+  --vs-surface-bg: hsl(var(--popover));
+  --vs-panel-bg: hsl(var(--popover));
+  --vs-text: hsl(var(--popover-foreground));
+  --vs-heading: hsl(var(--foreground));
+  --vs-label: hsl(var(--muted-foreground));
+  --vs-muted: hsl(var(--muted-foreground));
+  --vs-border: hsl(var(--border));
+  --vs-row-hover: hsl(var(--accent));
+  --vs-code-bg: hsl(var(--muted));
+  --vs-chip-bg: hsl(var(--muted));
+  --vs-chip-hover-bg: hsl(var(--accent));
+}
+
 .geolibre-stac-search-control .maplibre-gl-stac-search-button {
   display: none !important;
 }
@@ -1258,6 +1198,21 @@ body,
   min-height: 30px;
 }
 
+/*
+ * Enlarge the native number-input spinner arrows inside dialogs (e.g. the
+ * Raster/Conversion tool dialogs). The default WebKit stepper is tiny and only
+ * visible on hover; make it always visible and comfortably clickable. Scoped to
+ * [role="dialog"] so the carefully sized map-control inputs above are untouched.
+ */
+[role="dialog"] input[type="number"]::-webkit-inner-spin-button,
+[role="dialog"] input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+  height: 1.9rem;
+  width: 1.15rem;
+  margin-left: 0.35rem;
+  cursor: pointer;
+}
+
 .geolibre-splatting-control .maplibre-gl-splat-panel {
   background: hsl(var(--popover)) !important;
   border: 1px solid hsl(var(--border));
@@ -1525,6 +1480,51 @@ body,
   border-top-color: hsl(var(--popover));
 }
 
+@media (max-width: 767px) {
+  .geolibre-components-control .maplibre-gl-control-grid-floating-panel,
+  .geolibre-components-control .maplibre-gl-control-grid-relocated,
+  .geolibre-pmtiles-control .maplibre-gl-pmtiles-layer-panel,
+  .geolibre-zarr-control .maplibre-gl-zarr-layer-panel,
+  .maplibregl-map .pc-control-panel,
+  .duckdb-control-panel {
+    box-sizing: border-box;
+    /* 96px clears the mobile top toolbar plus the panel's own top offset */
+    max-height: calc(100vh - 96px) !important;
+    max-height: calc(100dvh - 96px) !important;
+    max-width: calc(100vw - 20px) !important;
+    overflow-y: auto;
+  }
+
+  .duckdb-control-panel {
+    left: 10px !important;
+    right: auto !important;
+    width: calc(100vw - 20px) !important;
+  }
+
+  .duckdb-control-content {
+    /* 170px = the 96px panel offset above plus the panel header height */
+    max-height: calc(100vh - 170px);
+    max-height: calc(100dvh - 170px);
+  }
+
+  .geolibre-identify-popup .maplibregl-popup-content {
+    max-width: calc(100vw - 24px);
+  }
+}
+
+@media (max-width: 639px) {
+  /* On narrow screens the Layout submenu can be wider than the space Radix
+     has between the trigger and the viewport edge. Shift it left by the
+     shortfall (Radix reports it via the available-width variable) plus an
+     8px edge buffer so the submenu stays fully visible. */
+  .geolibre-layout-submenu {
+    margin-left: max(
+      0px,
+      calc(100% - var(--radix-dropdown-menu-content-available-width) + 8px)
+    );
+  }
+}
+
 .geolibre-identify-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
   border-right-color: hsl(var(--popover));
 }
@@ -1539,4 +1539,563 @@ body,
   min-height: 0;
   padding-bottom: 0;
   padding-top: 0;
+}
+
+/* The library caps the panel with an inline max-height (500px), which
+   overflows short windows: the panel sits ~50px from the top of the map
+   with overflow hidden, so the bottom is cut off and only the inner
+   content area scrolls within the 500px cap. Clamp the panel to the map
+   height instead so the content scrollbar always reaches the bottom.
+   !important is needed to beat the inline style, and this rule sits
+   after the small-screen media query above so it wins there too. */
+.maplibregl-map .pc-control-panel {
+  max-height: min(500px, calc(100% - 60px)) !important;
+}
+
+.dark .pc-control-toggle {
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+}
+
+.dark .pc-control-toggle:hover {
+  background: hsl(var(--muted));
+}
+
+.dark .pc-control-icon svg {
+  fill: none;
+  stroke: hsl(var(--popover-foreground));
+}
+
+.dark .pc-control-panel {
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+  color: hsl(var(--popover-foreground));
+}
+
+.dark .pc-control-header,
+.dark .pc-control-nav {
+  background: hsl(var(--muted));
+  border-color: hsl(var(--border));
+}
+
+.dark .pc-control-title,
+.dark .pc-collection-title,
+.dark .pc-result-title,
+.dark .pc-details-title,
+.dark .pc-section-title,
+.dark .pc-meta-item .pc-value,
+.dark .pc-stats-grid > div > strong,
+.dark .pc-point-values > div > strong,
+.dark .pc-stats-title,
+.dark .pc-legend-title,
+.dark .pc-tilejson-card > div > strong,
+.dark .pc-layer-name,
+.dark .pc-inspector-title,
+.dark .pc-opacity-value,
+.dark .pc-cloud-value,
+.dark .pc-advanced-render summary,
+.dark .pc-checkbox-group label,
+.dark .pc-asset-name {
+  color: hsl(var(--popover-foreground));
+}
+
+.dark .pc-control-close,
+.dark .pc-nav-btn,
+.dark .pc-loading,
+.dark .pc-collection-description,
+.dark .pc-label,
+.dark .pc-bbox-text,
+.dark .pc-date-separator,
+.dark .pc-results-count,
+.dark .pc-results-empty,
+.dark .pc-result-date,
+.dark .pc-result-cloud,
+.dark .pc-asset-type,
+.dark .pc-stats-grid > div > span,
+.dark .pc-point-values > div > span,
+.dark .pc-legend-labels,
+.dark .pc-tilejson-card > div > span,
+.dark .pc-layers-empty,
+.dark .pc-inspector-hint,
+.dark .pc-inspector-coords,
+.dark .pc-opacity-label,
+.dark .pc-rescale-separator {
+  color: hsl(var(--muted-foreground));
+}
+
+.dark .pc-control-close:hover,
+.dark .pc-btn-icon:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.dark .pc-search-box,
+.dark .pc-selected-collection,
+.dark .pc-bbox-display,
+.dark .pc-details-meta,
+.dark .pc-asset-item,
+.dark .pc-tool-loading,
+.dark .pc-custom-viz,
+.dark .pc-point-json,
+.dark .pc-result-thumbnail {
+  background: hsl(var(--muted));
+}
+
+.dark .pc-collection-item,
+.dark .pc-result-item,
+.dark .pc-stats-card,
+.dark .pc-legend-card,
+.dark .pc-tilejson-card,
+.dark .pc-layer-item,
+.dark .pc-inspector-panel,
+.dark .pc-custom-viz {
+  border-color: hsl(var(--border));
+}
+
+.dark .pc-collection-item:hover,
+.dark .pc-result-item:hover {
+  background: hsl(var(--accent));
+  border-color: hsl(var(--ring));
+}
+
+.dark .pc-result-selected,
+.dark .pc-result-selected:hover {
+  background: hsl(var(--accent));
+  border-color: #f59e0b;
+}
+
+.dark .pc-tag,
+.dark .pc-btn-active,
+.dark .pc-layer-controls-active {
+  background: rgb(14 116 144 / 0.22);
+  color: #67e8f9;
+}
+
+.dark .pc-search-input,
+.dark .pc-input {
+  background: hsl(var(--background));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+
+.dark .pc-search-input::placeholder,
+.dark .pc-input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.dark .pc-search-input:focus,
+.dark .pc-input:focus {
+  border-color: hsl(var(--ring));
+  box-shadow: inset 0 0 0 1px hsl(var(--ring));
+}
+
+.dark .pc-btn,
+.dark .pc-nav-btn {
+  background: hsl(var(--background));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+
+.dark .pc-btn:hover,
+.dark .pc-nav-btn:hover {
+  background: hsl(var(--accent));
+}
+
+.dark .pc-btn:disabled:hover {
+  background: hsl(var(--background));
+}
+
+.dark .pc-btn-primary,
+.dark .pc-nav-btn.active,
+.dark .pc-search-btn-loading,
+.dark .pc-search-btn-loading:disabled,
+.dark .pc-search-btn-loading:disabled:hover,
+.dark .pc-inspect-active,
+.dark .pc-inspect-active:hover {
+  background: #0891b2;
+  border-color: #0891b2;
+  color: #ecfeff;
+}
+
+.dark .pc-btn-back {
+  color: #67e8f9;
+}
+
+.dark .pc-error,
+.dark .pc-tool-error {
+  background: rgb(127 29 29 / 0.35);
+  color: #fecaca;
+}
+
+.dark .pc-tool-success {
+  background: rgb(20 83 45 / 0.35);
+  color: #bbf7d0;
+}
+
+.dark .pc-spinner {
+  border-color: hsl(var(--border));
+  border-top-color: #67e8f9;
+}
+
+.dark .pc-control-content::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+}
+
+.dark .pc-control-content::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+}
+
+.geolibre-earth-engine-control .plugin-control-toggle {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+}
+
+.geolibre-earth-engine-control .plugin-control-icon {
+  align-items: center;
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  width: 100%;
+}
+
+/* The repeated class outranks the upstream stylesheet's scoped variable
+   blocks (.plugin-control-panel.earth-engine-panel and its dark variants)
+   so the app-token remap below keeps winning after the 0.4.2 selector
+   scoping. */
+.geolibre-earth-engine-panel.geolibre-earth-engine-panel.geolibre-earth-engine-panel {
+  --ee-panel-bg: hsl(var(--popover));
+  --ee-panel-elevated: hsl(var(--card));
+  --ee-panel-muted: hsl(var(--muted));
+  --ee-panel-text: hsl(var(--popover-foreground));
+  --ee-panel-subtle: hsl(var(--muted-foreground));
+  --ee-panel-placeholder: hsl(var(--muted-foreground));
+  --ee-panel-border: hsl(var(--border));
+  --ee-panel-border-strong: hsl(var(--input));
+  --ee-input-bg: hsl(var(--background));
+  --ee-input-text: hsl(var(--foreground));
+  --ee-item-bg: hsl(var(--card));
+  --ee-active-bg: hsl(var(--accent));
+  --ee-active-border: hsl(var(--ring));
+  --ee-button-primary: hsl(var(--primary));
+  --ee-button-muted: hsl(var(--muted-foreground));
+  --ee-button-danger: hsl(var(--destructive));
+  --ee-shadow: 0 16px 40px hsl(var(--foreground) / 0.16);
+  --geolibre-ee-panel-left: 10px;
+
+  color-scheme: light;
+  left: var(--geolibre-ee-panel-left) !important;
+  max-width: calc(100% - var(--geolibre-ee-panel-left) * 2);
+}
+
+.dark .geolibre-earth-engine-panel.geolibre-earth-engine-panel.geolibre-earth-engine-panel {
+  --ee-shadow: 0 16px 40px hsl(0 0% 0% / 0.4);
+
+  color-scheme: dark;
+}
+
+.geolibre-earth-engine-panel .plugin-control-input:focus,
+.geolibre-earth-engine-panel .plugin-control-input:focus-visible {
+  border-color: hsl(var(--ring));
+  box-shadow: inset 0 0 0 1px hsl(var(--ring));
+  outline: none;
+}
+
+/* maplibre-gl-raster themes its panel from prefers-color-scheme (the OS
+   setting), while GeoLibre themes from the .dark class on <html>. All of
+   the panel's colors flow through --mlr-* custom properties, so remapping
+   them onto the app theme tokens keeps the panel in sync with the in-app
+   light/dark toggle. The doubled selectors outrank the upstream
+   prefers-color-scheme block regardless of stylesheet order. */
+.mlr-control.geolibre-raster-control,
+.mlr-control-panel.geolibre-raster-panel {
+  --mlr-bg: hsl(var(--popover));
+  --mlr-surface-muted: hsl(var(--muted));
+  --mlr-surface-soft: hsl(var(--card));
+  --mlr-text: hsl(var(--popover-foreground));
+  --mlr-text-strong: hsl(var(--foreground));
+  --mlr-text-soft: hsl(var(--popover-foreground) / 0.8);
+  --mlr-text-muted: hsl(var(--muted-foreground));
+  --mlr-text-faint: hsl(var(--muted-foreground) / 0.75);
+  --mlr-border: hsl(var(--border));
+  --mlr-border-soft: hsl(var(--border) / 0.8);
+  --mlr-border-faint: hsl(var(--border) / 0.6);
+  --mlr-border-strong: hsl(var(--input));
+  --mlr-accent: hsl(var(--primary));
+  --mlr-accent-strong: hsl(var(--primary) / 0.85);
+  --mlr-accent-soft: hsl(var(--primary) / 0.12);
+  --mlr-hover: hsl(var(--foreground) / 0.06);
+  --mlr-error: hsl(var(--destructive));
+  --mlr-disabled-bg: hsl(var(--muted));
+  --mlr-disabled-text: hsl(var(--muted-foreground) / 0.5);
+  --mlr-scrollbar: hsl(var(--border));
+  --mlr-scrollbar-hover: hsl(var(--input));
+  --mlr-shadow: hsl(var(--foreground) / 0.12);
+  --mlr-histogram-neutral: hsl(var(--foreground));
+
+  color-scheme: light;
+}
+
+.dark .mlr-control.geolibre-raster-control,
+.dark .mlr-control-panel.geolibre-raster-panel {
+  --mlr-shadow: hsl(0 0% 0% / 0.4);
+
+  color-scheme: dark;
+}
+
+/* maplibre-gl-vector themes its panel from prefers-color-scheme (the OS
+   setting), while GeoLibre themes from the .dark class on <html>. All of
+   the panel's colors flow through --vc-* custom properties, so remapping
+   them onto the app theme tokens keeps the panel in sync with the in-app
+   light/dark toggle, following the raster panel pattern above. The doubled
+   selectors outrank the upstream prefers-color-scheme block regardless of
+   stylesheet order. The attribute picker popup is themed through the same
+   variables; it mounts in MapLibre's popup container without a hook for a
+   custom class, so it is keyed off html:not(.dark)/.dark instead. */
+.vector-control.geolibre-vector-control,
+.vector-control-panel.geolibre-vector-panel,
+html:not(.dark) .vector-control-popup,
+.dark .vector-control-popup {
+  --vc-bg: hsl(var(--popover));
+  --vc-text: hsl(var(--popover-foreground));
+  --vc-text-strong: hsl(var(--foreground));
+  --vc-text-soft: hsl(var(--popover-foreground) / 0.8);
+  --vc-muted: hsl(var(--muted-foreground));
+  --vc-border: hsl(var(--border));
+  --vc-border-soft: hsl(var(--border) / 0.8);
+  --vc-item-bg: hsl(var(--card));
+  --vc-hover: hsl(var(--foreground) / 0.06);
+  --vc-accent: hsl(var(--primary));
+  --vc-accent-hover: hsl(var(--primary) / 0.85);
+  --vc-accent-soft: hsl(var(--primary) / 0.12);
+  --vc-accent-text: hsl(var(--primary-foreground));
+  --vc-error: hsl(var(--destructive));
+  --vc-input-bg: hsl(var(--popover));
+  --vc-input-border: hsl(var(--input));
+  --vc-scrollbar: hsl(var(--border));
+  --vc-scrollbar-hover: hsl(var(--input));
+  --vc-shadow: 0 0 0 2px hsl(var(--foreground) / 0.12);
+
+  color-scheme: light;
+}
+
+.dark .vector-control.geolibre-vector-control,
+.dark .vector-control-panel.geolibre-vector-panel,
+.dark .vector-control-popup {
+  --vc-shadow: 0 0 0 2px hsl(0 0% 0% / 0.4);
+
+  color-scheme: dark;
+}
+
+/* The panel content scrolls vertically (overflow-y: auto), which forces
+   overflow-x to clip and cuts off the Load button's offset focus ring on
+   the right edge. Give the scroll area a little horizontal breathing room
+   so the ring is not clipped. */
+.vector-control-panel.geolibre-vector-panel .vector-control-content {
+  padding-inline: 5px;
+}
+
+/* The upstream stylesheet themes the MapLibre popup chrome around the
+   picker popup from prefers-color-scheme; re-key it to the app theme. The
+   html prefixes also outrank the upstream :has() rules when the OS scheme
+   and the app theme disagree. */
+html:not(.dark) .maplibregl-popup:has(.vector-control-popup) .maplibregl-popup-content {
+  background: hsl(var(--popover));
+  box-shadow: 0 1px 6px hsl(var(--foreground) / 0.25);
+}
+
+html.dark .maplibregl-popup:has(.vector-control-popup) .maplibregl-popup-content {
+  background: hsl(var(--popover));
+  box-shadow: 0 1px 6px hsl(0 0% 0% / 0.5);
+}
+
+html:not(.dark) .maplibregl-popup:has(.vector-control-popup) .maplibregl-popup-close-button,
+html.dark .maplibregl-popup:has(.vector-control-popup) .maplibregl-popup-close-button {
+  color: hsl(var(--muted-foreground));
+}
+
+html:not(.dark) .maplibregl-popup-anchor-top:has(.vector-control-popup) .maplibregl-popup-tip,
+html:not(.dark) .maplibregl-popup-anchor-top-left:has(.vector-control-popup) .maplibregl-popup-tip,
+html:not(.dark) .maplibregl-popup-anchor-top-right:has(.vector-control-popup) .maplibregl-popup-tip,
+html.dark .maplibregl-popup-anchor-top:has(.vector-control-popup) .maplibregl-popup-tip,
+html.dark .maplibregl-popup-anchor-top-left:has(.vector-control-popup) .maplibregl-popup-tip,
+html.dark .maplibregl-popup-anchor-top-right:has(.vector-control-popup) .maplibregl-popup-tip {
+  border-bottom-color: hsl(var(--popover));
+}
+
+html:not(.dark) .maplibregl-popup-anchor-bottom:has(.vector-control-popup) .maplibregl-popup-tip,
+html:not(.dark) .maplibregl-popup-anchor-bottom-left:has(.vector-control-popup) .maplibregl-popup-tip,
+html:not(.dark) .maplibregl-popup-anchor-bottom-right:has(.vector-control-popup) .maplibregl-popup-tip,
+html.dark .maplibregl-popup-anchor-bottom:has(.vector-control-popup) .maplibregl-popup-tip,
+html.dark .maplibregl-popup-anchor-bottom-left:has(.vector-control-popup) .maplibregl-popup-tip,
+html.dark .maplibregl-popup-anchor-bottom-right:has(.vector-control-popup) .maplibregl-popup-tip {
+  border-top-color: hsl(var(--popover));
+}
+
+html:not(.dark) .maplibregl-popup-anchor-left:has(.vector-control-popup) .maplibregl-popup-tip,
+html.dark .maplibregl-popup-anchor-left:has(.vector-control-popup) .maplibregl-popup-tip {
+  border-right-color: hsl(var(--popover));
+}
+
+html:not(.dark) .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-popup-tip,
+html.dark .maplibregl-popup-anchor-right:has(.vector-control-popup) .maplibregl-popup-tip {
+  border-left-color: hsl(var(--popover));
+}
+
+/* The Web Services controls (FEMA NFHL, NASA Earthdata, US EPA EnviroAtlas,
+   USGS National Map) theme themselves from prefers-color-scheme (the OS
+   setting), while GeoLibre themes from the .dark class on <html>. Each
+   package's colors flow through its own custom properties, so remapping
+   them onto the app theme tokens keeps the panels in sync with the in-app
+   light/dark toggle, following the raster/vector panel pattern above. The
+   panels mount in the map container without the configured control class,
+   so the selectors key off the package classes; the repeated classes
+   outrank the upstream prefers-color-scheme and .dark-ancestor blocks
+   regardless of stylesheet order.
+
+   FEMA and NASA share the generic .plugin-control/.plugin-control-panel
+   template classes (as does Earth Engine), and their stylesheets style
+   those classes unscoped, so whichever sheet loads last paints every
+   panel in the family with its own variables (NASA's
+   `background: var(--ne-bg, #fff)` repaints the FEMA panel white, for
+   example). Defining both token families on all family elements makes
+   the cascade winner irrelevant: every variable resolves to the same
+   app token. */
+.plugin-control.plugin-control.plugin-control.plugin-control.plugin-control,
+.plugin-control-panel.plugin-control-panel.plugin-control-panel.plugin-control-panel.plugin-control-panel,
+.fema-wms-popup.fema-wms-popup.fema-wms-popup.fema-wms-popup.fema-wms-popup {
+  --fw-bg: hsl(var(--popover));
+  --fw-fg: hsl(var(--popover-foreground));
+  --fw-muted: hsl(var(--muted-foreground));
+  --fw-border: hsl(var(--border));
+  --fw-accent: hsl(var(--primary));
+  --fw-accent-hover: hsl(var(--primary) / 0.85);
+  --fw-accent-contrast: hsl(var(--primary-foreground));
+  --fw-input-bg: hsl(var(--popover));
+  --fw-input-border: hsl(var(--input));
+  --fw-row-hover: hsl(var(--foreground) / 0.06);
+  --fw-shadow: 0 0 0 2px hsl(var(--foreground) / 0.12);
+  --fw-scroll-thumb: hsl(var(--border));
+  --fw-scroll-thumb-hover: hsl(var(--input));
+  --fw-error: hsl(var(--destructive));
+  --fw-legend-bg: hsl(var(--card));
+  --ne-bg: hsl(var(--popover));
+  --ne-fg: hsl(var(--popover-foreground));
+  --ne-fg-muted: hsl(var(--muted-foreground));
+  --ne-border: hsl(var(--border));
+  --ne-input-border: hsl(var(--input));
+  --ne-input-bg: hsl(var(--popover));
+  --ne-accent: hsl(var(--primary));
+  --ne-accent-hover: hsl(var(--primary) / 0.85);
+  --ne-accent-fg: hsl(var(--primary-foreground));
+  --ne-danger: hsl(var(--destructive));
+  --ne-danger-hover: hsl(var(--destructive) / 0.85);
+  --ne-hover: hsl(var(--foreground) / 0.06);
+  --ne-row-bg: hsl(var(--card));
+  --ne-badge-bg: hsl(var(--muted));
+  --ne-badge-fg: hsl(var(--muted-foreground));
+  --ne-scrollbar: hsl(var(--border));
+  --ne-scrollbar-hover: hsl(var(--input));
+  --ne-shadow: hsl(var(--foreground) / 0.12);
+
+  color-scheme: light;
+}
+
+.dark .plugin-control.plugin-control.plugin-control.plugin-control.plugin-control,
+.dark .plugin-control-panel.plugin-control-panel.plugin-control-panel.plugin-control-panel.plugin-control-panel,
+.dark .fema-wms-popup.fema-wms-popup.fema-wms-popup.fema-wms-popup.fema-wms-popup {
+  --fw-shadow: 0 0 0 2px hsl(0 0% 0% / 0.45);
+  --ne-shadow: hsl(0 0% 0% / 0.4);
+
+  color-scheme: dark;
+}
+
+.enviroatlas-control.enviroatlas-control.enviroatlas-control,
+.enviroatlas-panel.enviroatlas-panel.enviroatlas-panel {
+  --ea-bg: hsl(var(--popover));
+  --ea-fg: hsl(var(--popover-foreground));
+  --ea-muted: hsl(var(--muted-foreground));
+  --ea-border: hsl(var(--border));
+  --ea-accent: hsl(var(--primary));
+  --ea-accent-fg: hsl(var(--primary-foreground));
+  --ea-hover: hsl(var(--foreground) / 0.06);
+  --ea-input-bg: hsl(var(--popover));
+  --ea-scrollbar: hsl(var(--border));
+  --ea-scrollbar-hover: hsl(var(--input));
+  --ea-shadow: hsl(var(--foreground) / 0.12);
+  --ea-error: hsl(var(--destructive));
+  --ea-notice-bg: hsl(var(--muted));
+
+  color-scheme: light;
+}
+
+.dark .enviroatlas-control.enviroatlas-control.enviroatlas-control,
+.dark .enviroatlas-panel.enviroatlas-panel.enviroatlas-panel {
+  --ea-shadow: hsl(0 0% 0% / 0.45);
+
+  color-scheme: dark;
+}
+
+.national-map.national-map.national-map,
+.national-map-panel.national-map-panel.national-map-panel {
+  --nm-bg: hsl(var(--popover));
+  --nm-fg: hsl(var(--popover-foreground));
+  --nm-fg-strong: hsl(var(--foreground));
+  --nm-muted: hsl(var(--muted-foreground));
+  --nm-border: hsl(var(--border));
+  --nm-input-border: hsl(var(--input));
+  --nm-accent: hsl(var(--primary));
+  --nm-accent-hover: hsl(var(--primary) / 0.85);
+  --nm-accent-ring: hsl(var(--primary) / 0.15);
+  --nm-row-hover: hsl(var(--foreground) / 0.06);
+  --nm-btn-hover: hsl(var(--foreground) / 0.06);
+  --nm-shadow: 0 0 0 2px hsl(var(--foreground) / 0.12);
+  --nm-scroll-thumb: hsl(var(--border));
+  --nm-scroll-thumb-hover: hsl(var(--input));
+  --nm-disabled: hsl(var(--muted));
+  --nm-disabled-fg: hsl(var(--muted-foreground));
+
+  color-scheme: light;
+}
+
+.dark .national-map.national-map.national-map,
+.dark .national-map-panel.national-map-panel.national-map-panel {
+  --nm-shadow: 0 0 0 2px hsl(0 0% 0% / 0.5);
+
+  color-scheme: dark;
+}
+
+/* maplibre-gl-overture-maps themes its control, panel, and inspect popup
+   from prefers-color-scheme (the OS theme): in `auto` mode it stamps a hard
+   `ovt-theme-light`/`ovt-theme-dark` class on the elements from the system
+   preference, so a light OS keeps the panel light even when the app is in
+   dark mode. Remapping the upstream `--ovt-*` tokens to the app theme tokens
+   keys the control to the app's light/dark toggle instead. The repeated
+   classes outrank the upstream `.overture-control.ovt-theme-*` and
+   prefers-color-scheme blocks regardless of stylesheet order. */
+.overture-control.overture-control.overture-control,
+.overture-control-panel.overture-control-panel.overture-control-panel,
+.overture-popup-content.overture-popup-content.overture-popup-content {
+  --ovt-bg: hsl(var(--popover));
+  --ovt-fg: hsl(var(--popover-foreground));
+  --ovt-text: hsl(var(--popover-foreground));
+  --ovt-muted: hsl(var(--muted-foreground));
+  --ovt-border: hsl(var(--border));
+  --ovt-input-border: hsl(var(--input));
+  --ovt-input-bg: hsl(var(--popover));
+  --ovt-hover: hsl(var(--foreground) / 0.06);
+  --ovt-accent: hsl(var(--primary));
+  --ovt-scrollbar: hsl(var(--border));
+  --ovt-scrollbar-hover: hsl(var(--input));
+  --ovt-error-bg: hsl(var(--destructive) / 0.15);
+  --ovt-error-fg: hsl(var(--destructive));
+
+  color-scheme: light;
+}
+
+.dark .overture-control.overture-control.overture-control,
+.dark .overture-control-panel.overture-control-panel.overture-control-panel,
+.dark .overture-popup-content.overture-popup-content.overture-popup-content {
+  color-scheme: dark;
 }

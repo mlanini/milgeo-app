@@ -9,14 +9,131 @@ import type {
   WarningHandlerWithDefault,
 } from "rollup";
 import { defineConfig, type Plugin } from "vite";
+import { VitePWA } from "vite-plugin-pwa";
+import { bundledPlugins } from "./vite-plugins/bundled-plugins";
+import { copyVectorOps } from "./vite-plugins/copy-vector-ops";
 
 const GEOAGENT_BROWSER_BUNDLE = "maplibre-gl-geoagent/dist/browser-";
+const EARTH_ENGINE_CONTROL_BUNDLE = "maplibre-gl-earth-engine/dist/";
 const EARTH_ENGINE_BROWSER_BUNDLE = "@google/earthengine/build/browser.js";
 const GIS_CHUNK_WARNING_LIMIT_KB = 14000;
 const APP_BASE = process.env.GEOLIBRE_APP_BASE;
 const APP_VERSION = JSON.parse(
   readFileSync(new URL("./package.json", import.meta.url), "utf8"),
 ).version as string;
+
+// Tauri sets TAURI_ENV_* env vars while running its beforeBuildCommand
+// (`npm run build`), so their presence flags a desktop build. Used below to drop
+// the service worker from the desktop bundle.
+const IS_TAURI_BUILD = !!process.env.TAURI_ENV_PLATFORM;
+
+// PGlite + PostGIS is ~25 MB raw and weighs ~22 MB inside the Tauri binary
+// (postgis.tar is pre-gzipped, so brotli can't shrink it — it was the entire
+// 42 → 63 MB binary regression). By default it is fetched from jsDelivr at
+// runtime for every target — web, desktop, and embed — so it never inflates any
+// build output. Override with GEOLIBRE_PGLITE_CDN=0 to force-bundle it for a
+// fully offline build. The CDN URLs are pinned to the installed versions so they
+// cannot drift from the lockfile; PGlite resolves its own .wasm/.data/postgis.tar
+// relative to these. jsDelivr is already an allowed script-src in the web
+// (docker/nginx.conf) and desktop (tauri.conf.json) CSPs — it serves Pyodide — so
+// this adds no new external origin. Trade-off: the PostGIS SQL engine needs
+// network on FIRST use. After that, the web build's service worker runtime-caches
+// the jsDelivr-served Pyodide and PGlite/PostGIS engines (see the
+// "geolibre-cdn-engines" CacheFirst rule below), so both the browser SQL and
+// Python features keep working offline. (The desktop Tauri build has no service
+// worker and still fetches these per the same first-use rule.)
+const PGLITE_CDN = process.env.GEOLIBRE_PGLITE_CDN !== "0";
+
+// PWA/offline support targets the standalone web build only. The Tauri desktop
+// shell already works offline (assets are bundled in the binary), and the
+// embedded Jupyter wheel (GEOLIBRE_EMBED=1) is served from inside a notebook
+// where a service worker is meaningless and could even hijack the host page's
+// scope. This is deliberately independent of PGLITE_CDN: the web build CDN-loads
+// PGlite yet still ships a service worker.
+const IS_EMBED = process.env.GEOLIBRE_EMBED === "1";
+const PWA_DISABLED = IS_TAURI_BUILD || IS_EMBED;
+
+const pgliteCdnRequire = createRequire(import.meta.url);
+// The ESM entry of a package's manifest. Prefer the `module` field and the
+// `import` condition of `exports` (both point at the ESM build); never fall back
+// to `main`, which is the CJS entry (`dist/index.cjs` for PGlite) and would
+// break the jsDelivr `import()` at runtime. Falls back to `dist/index.js`, the
+// historical PGlite layout, if neither is declared.
+function esmEntry(manifest: Record<string, unknown>): string {
+  if (typeof manifest.module === "string") return manifest.module;
+  const exportsRoot = (manifest.exports as Record<string, unknown> | undefined)?.[
+    "."
+  ];
+  const importEntry = (exportsRoot as Record<string, unknown> | undefined)
+    ?.import;
+  const importDefault =
+    typeof importEntry === "string"
+      ? importEntry
+      : (importEntry as Record<string, unknown> | undefined)?.default;
+  if (typeof importDefault === "string") return importDefault;
+  return "dist/index.js";
+}
+// These packages do not expose "./package.json" via their `exports`, so resolve
+// a known file inside the package and walk up to the owning package.json (the
+// one whose `name` matches) to read the installed version and entry paths — so a
+// CDN URL tracks the lockfile and any future dist restructuring instead of
+// hardcoding paths.
+function findPackageManifest(
+  startFile: string,
+  pkg: string,
+): { dir: string; manifest: Record<string, unknown> } {
+  let dir = path.dirname(startFile);
+  while (dir !== path.dirname(dir)) {
+    try {
+      const parsed = JSON.parse(
+        readFileSync(path.join(dir, "package.json"), "utf8"),
+      );
+      if (parsed.name === pkg) return { dir, manifest: parsed };
+    } catch {
+      // Not this directory's package.json; keep walking up.
+    }
+    dir = path.dirname(dir);
+  }
+  throw new Error(`Could not resolve installed version of ${pkg}`);
+}
+function installedPackage(pkg: string): { version: string; entry: string } {
+  const { manifest } = findPackageManifest(pgliteCdnRequire.resolve(pkg), pkg);
+  return { version: manifest.version as string, entry: esmEntry(manifest) };
+}
+function pgliteCdnUrl(pkg: string): string | null {
+  if (!PGLITE_CDN) return null;
+  const { version, entry } = installedPackage(pkg);
+  // Normalize a leading "./" from the manifest entry into the jsDelivr path.
+  const entryPath = entry.replace(/^\.?\//, "");
+  return `https://cdn.jsdelivr.net/npm/${pkg}@${version}/${entryPath}`;
+}
+const PGLITE_CDN_URL = pgliteCdnUrl("@electric-sql/pglite");
+const PGLITE_POSTGIS_CDN_URL = pgliteCdnUrl("@electric-sql/pglite-postgis");
+
+// CereusDB (Apache Sedona spatial SQL, compiled to WASM) ships a ~40 MB wasm
+// blob that brotli only shrinks to ~8.6 MB — the entire 27 → 36 MB desktop
+// installer growth in v1.3. Like PGlite above, fetch the wasm from jsDelivr at
+// runtime for every target (web, desktop, embed) so it never inflates any build
+// output; the small JS glue stays bundled and lazy-chunked. Override with
+// GEOLIBRE_CEREUS_CDN=0 to force-bundle the wasm for a fully offline build. The
+// URL is pinned to the installed version (so it tracks the lockfile) and jsDelivr
+// is already an allowed connect-src in both the web (docker/nginx.conf) and
+// desktop (tauri.conf.json) CSPs. Trade-off: the Sedona engine needs network on
+// first use (the desktop app already fetches PGlite, Pyodide, tiles, and the
+// DuckDB spatial extension the same way).
+const CEREUS_CDN = process.env.GEOLIBRE_CEREUS_CDN !== "0";
+function cereusWasmCdnUrl(): string | null {
+  if (!CEREUS_CDN) return null;
+  const pkg = "@cereusdb/standard";
+  // The "./wasm" export resolves straight to the .wasm file; walk up to the
+  // owning package.json for the installed version and the file's package-relative
+  // path, so the URL tracks the lockfile and any future dist restructuring.
+  const wasmFile = pgliteCdnRequire.resolve(`${pkg}/wasm`);
+  const { dir, manifest } = findPackageManifest(wasmFile, pkg);
+  const rel = path.relative(dir, wasmFile).split(path.sep).join("/");
+  return `https://cdn.jsdelivr.net/npm/${pkg}@${manifest.version}/${rel}`;
+}
+const CEREUS_WASM_CDN_URL = cereusWasmCdnUrl();
 const WMS_PROXY_PATH = "/__geolibre_wms_proxy";
 const WFS_PROXY_PATH = "/__geolibre_wfs_proxy";
 const GPX_PROXY_PATH = "/__geolibre_gpx_proxy";
@@ -29,6 +146,7 @@ const TRACCAR_DEV_PROXY_PATH = "/_traccar";
 const TRACCAR_INTELLIGEO_URL = "https://traccar.intelligeo.net";const DUCKDB_WORKER_PATH_PART = "/@duckdb/duckdb-wasm/dist/";
 const DUCKDB_WORKER_SOURCE_MAP_RE =
   /\n?\/\/# sourceMappingURL=duckdb-browser-(?:eh|mvp)\.worker\.js\.map\s*$/;
+const EARTH_ENGINE_PARAMETER_ERROR = "Failed to locate function parameters";
 const RADIX_OPTIMIZE_EXCLUDES = [
   "@developmentseed/geotiff",
   "@developmentseed/lzw-tiff-decoder",
@@ -43,15 +161,41 @@ const RADIX_OPTIMIZE_EXCLUDES = [
 
 function manualChunks(id: string): string | undefined {
   if (!id.includes("node_modules")) return undefined;
+  // Only route JS/TS modules into manual chunks. The name-based rules below match
+  // on the module id, so a package's *stylesheet* (e.g.
+  // `maplibre-gl-duckdb/dist/style.css`, imported eagerly in main.tsx so plugin
+  // controls are styled) would otherwise be assigned to that package's JS chunk
+  // and bundled into it. Importing the CSS in the boot entry then forces the
+  // whole heavy plugin JS to load at boot just to fetch its stylesheet, dragging
+  // DuckDB, Earth Engine, GeoAgent, Mapillary, etc. into the offline-critical
+  // boot graph — a cold offline reload can't fetch those runtime-cached chunks
+  // and the shell never mounts (see e2e/pwa.spec.ts). Let CSS and other assets
+  // fall through to default handling so only their JS is code-split.
+  if (!/\.[mc]?[jt]sx?(?:\?|$)/.test(id)) return undefined;
+  // Keep @duckdb/duckdb-wasm AND its apache-arrow dependency together in one
+  // lazily-fetched chunk. apache-arrow is shared with maplibre-gl-duckdb; if it
+  // is left to default chunking it can be hoisted into a chunk the eager
+  // `maplibre` chunk imports, dragging the heavy DuckDB engine into the app's
+  // offline-critical boot graph (the cold offline reload then can't fetch it and
+  // the shell never mounts — see e2e/pwa.spec.ts). Co-locating it here keeps both
+  // out of boot.
   if (id.includes("@duckdb/duckdb-wasm")) return "duckdb";
-  if (
-    id.includes("maplibre-gl-geoagent") ||
-    id.includes("@google/earthengine")
-  ) {
-    return "maplibre-geoagent";
+  if (id.includes("apache-arrow")) return "duckdb";
+  // PGlite + the ~18.8 MB PostGIS extension only load when the user picks the
+  // PostGIS SQL engine; keep them in their own lazily-fetched chunk.
+  if (id.includes("@electric-sql/pglite")) return "pglite";
+  if (id.includes("maplibre-gl-earth-engine")) {
+    return "maplibre-earth-engine";
   }
+  if (id.includes("maplibre-gl-geoagent")) return "maplibre-geoagent";
+  if (id.includes("@google/earthengine")) return "earth-engine-browser";
   if (id.includes("mapillary-js")) return "mapillary";
   if (id.includes("@geoman-io/maplibre-geoman-free")) return "maplibre-geoman";
+  // maplibre-gl-duckdb pulls in @duckdb/duckdb-wasm + apache-arrow and is only
+  // loaded on demand (the DuckDB map control). It must NOT fall through to the
+  // generic `maplibre-gl` rule below, which would fold it into the eager
+  // `maplibre` chunk and force DuckDB into boot. Give it its own lazy chunk.
+  if (id.includes("maplibre-gl-duckdb")) return "maplibre-duckdb";
   if (id.includes("maplibre-gl")) return "maplibre";
   if (id.includes("@turf/") || id.includes("turf")) return "turf";
   if (id.includes("proj4")) return "proj4";
@@ -79,9 +223,25 @@ function onwarn(
     warning.code === "EVAL" &&
     typeof warning.id === "string" &&
     (warning.id.includes(GEOAGENT_BROWSER_BUNDLE) ||
+      warning.id.includes(EARTH_ENGINE_CONTROL_BUNDLE) ||
       warning.id.includes(EARTH_ENGINE_BROWSER_BUNDLE))
   ) {
     return;
+  }
+
+  // Prebuilt third-party bundles (e.g. maplibre-gl-lidar's Emscripten/WASM
+  // glue, a UMD lib inside maplibre-gl-components) assign to `module.exports`
+  // behind `typeof module` guards. Rolldown flags this as a CommonJS variable
+  // in an ESM file, but the guard makes it a no-op in the browser. Silence it
+  // for vendored files only; a real occurrence in our own source still warns.
+  if (warning.code === "COMMONJS_VARIABLE_IN_ESM") {
+    const file =
+      (typeof warning.id === "string" ? warning.id : undefined) ??
+      warning.loc?.file ??
+      "";
+    if (file.includes("/node_modules/") || file.includes("\\node_modules\\")) {
+      return;
+    }
   }
 
   defaultHandler(warning);
@@ -184,6 +344,44 @@ function stripDuckDbWorkerSourcemapPlugin(): Plugin {
   };
 }
 
+function selectiveJsMinifyPlugin(): Plugin {
+  return {
+    name: "geolibre-selective-js-minify",
+    apply: "build",
+    async generateBundle(_, bundle) {
+      if (process.env.TAURI_DEBUG) return;
+
+      const { transform } = await import("esbuild");
+      await Promise.all(
+        Object.values(bundle).map(async (asset) => {
+          if (asset.type !== "chunk") return;
+          if (shouldPreserveEarthEngineChunk(asset.fileName, asset.code)) {
+            return;
+          }
+
+          const result = await transform(asset.code, {
+            legalComments: "none",
+            minify: true,
+            target: "esnext",
+          });
+          asset.code = result.code;
+        }),
+      );
+    },
+  };
+}
+
+function shouldPreserveEarthEngineChunk(
+  fileName: string,
+  code: string,
+): boolean {
+  return (
+    fileName.includes("earth-engine") ||
+    fileName.includes("maplibre-geoagent") ||
+    code.includes(EARTH_ENGINE_PARAMETER_ERROR)
+  );
+}
+
 function isDuckDbWorkerRequest(pathname: string): boolean {
   return (
     pathname.includes(DUCKDB_WORKER_PATH_PART) &&
@@ -197,48 +395,16 @@ function isDuckDbWorkerRequest(pathname: string): boolean {
  * Vite dev-server middleware that renders APP-6D symbols to SVG on-the-fly.
  * Uses a global middleware (no connect path-prefix mounting) so that req.url
  * is always the full pathname and routing is unambiguous.
- *
- * Endpoints (relative to the Vite dev server):
- *   GET /__milsymbol/health
- *   GET /__milsymbol/symbol?sidc=<20-char>[&size=<px>]
- *                                         [&uniqueDesignation=<text>]
- *                                         [&higherFormation=<text>]
- *                                         [&outlineColor=<css>]
- *                                         [&outlineWidth=<n>]
- *                                         [&quantity=<text>]
- *                                         [&staffComments=<text>]
- *                                         [&additionalInformation=<text>]
- *                                         [&evaluationRating=<text>]
- *                                         [&combatEffectiveness=<text>]
- *                                         [&dtg=<text>]
- *                                         [&type=<text>]
- *                                         [&speed=<text>]
- *                                         [&altitudeDepth=<text>]
- */
-
-/**
- * Post-process a milsymbol SVG string — mirrors KADAS milsymbol_engine.py.
- *
- *  1. stroke-linejoin="round" on the root <svg> so rectangular (Friend) frames
- *     don't show exaggerated miter spikes.
- *  2. Strip the "?" unknown-icon glyph milsymbol renders when an entity/modifier
- *     code is absent from its lookup tables.
- *  3. Strip the four small black corner-filler squares milsymbol draws on
- *     certain symbol sets (Activities, Installations, …).
  */
 function postProcessMilsymbolSvg(svg: string): string {
-  // 1. Inject stroke-linejoin="round" before the closing > of the opening <svg tag.
   const firstClose = svg.indexOf(">");
   if (firstClose !== -1 && !svg.slice(0, firstClose).includes("stroke-linejoin")) {
     svg = svg.slice(0, firstClose) + ' stroke-linejoin="round"' + svg.slice(firstClose);
   }
-  // 2. Remove the "?" glyph (path d starting at m 94.8206,78.1372).
   svg = svg.replace(
     /<path\s[^>]*?d="m\s*94\.8206\s*,\s*78\.1372[^"]*"[^>]*>(?:<\/path>)?/g,
     "",
   );
-  // 3. Remove corner filler squares: <path> with fill="black", stroke="none",
-  //    whose d attribute contains exactly 4 'z'-closed sub-paths.
   svg = svg.replace(
     /<path\s(?:[^>]*?\s)?fill="black"(?:[^>]*?\s)?stroke="none"[^>]*d="[^"]*z[^"]*z[^"]*z[^"]*z[^"]*"[^>]*>(?:<\/path>)?/g,
     "",
@@ -247,9 +413,6 @@ function postProcessMilsymbolSvg(svg: string): string {
 }
 
 function milsymbolPlugin(): Plugin {
-  // Load milsymbol once via CJS require so it runs in the Vite/Node.js server
-  // context without any ESM-interop issues.  The package ships a CJS build at
-  // its "main" entry which is always resolvable here.
   const _require = createRequire(import.meta.url);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const msRaw = _require("milsymbol") as any;
@@ -259,9 +422,6 @@ function milsymbolPlugin(): Plugin {
   return {
     name: "geolibre-milsymbol",
     configureServer(server) {
-      // Register as a global middleware — manually check the path prefix.
-      // This avoids connect's path-prefix mounting which can strip/mangle
-      // req.url in ways that differ between connect versions.
       server.middlewares.use((req, res, next) => {
         const raw = req.url ?? "/";
         if (!raw.startsWith(MILSYMBOL_PATH)) { next(); return; }
@@ -271,7 +431,6 @@ function milsymbolPlugin(): Plugin {
             const url     = new URL(raw, "http://localhost");
             const subpath = url.pathname.slice(MILSYMBOL_PATH.length) || "/";
 
-            // ── /health ────────────────────────────────────────────────────
             if (subpath === "/health" || subpath === "/") {
               res.statusCode = 200;
               res.setHeader("content-type",                "application/json");
@@ -280,7 +439,6 @@ function milsymbolPlugin(): Plugin {
               return;
             }
 
-            // ── /symbol ────────────────────────────────────────────────────
             if (subpath === "/symbol") {
               const sidc = url.searchParams.get("sidc") ?? "";
               if (!sidc) {
@@ -291,43 +449,27 @@ function milsymbolPlugin(): Plugin {
               }
 
               const p = url.searchParams;
-              const size                 = parseInt(p.get("size") ?? "40", 10);
-              const uniqueDesignation    = p.get("uniqueDesignation")    ?? undefined;
-              const higherFormation      = p.get("higherFormation")      ?? undefined;
-              const outlineColor         = p.get("outlineColor")         ?? "white";
-              const outlineWidth         = parseInt(p.get("outlineWidth") ?? "6", 10);
-              const quantity             = p.get("quantity")             ?? undefined;
-              const staffComments        = p.get("staffComments")        ?? undefined;
-              const additionalInformation= p.get("additionalInformation")?? undefined;
-              const evaluationRating     = p.get("evaluationRating")     ?? undefined;
-              const combatEffectiveness  = p.get("combatEffectiveness")  ?? undefined;
-              const dtg                  = p.get("dtg")                  ?? undefined;
-              const type                 = p.get("type")                 ?? undefined;
-              const speed                = p.get("speed")                ?? undefined;
-              const altitudeDepth        = p.get("altitudeDepth")        ?? undefined;
+              const size                  = parseInt(p.get("size") ?? "40", 10);
+              const uniqueDesignation     = p.get("uniqueDesignation")    ?? undefined;
+              const higherFormation       = p.get("higherFormation")      ?? undefined;
+              const outlineColor          = p.get("outlineColor")         ?? "white";
+              const outlineWidth          = parseInt(p.get("outlineWidth") ?? "6", 10);
+              const quantity              = p.get("quantity")             ?? undefined;
+              const staffComments         = p.get("staffComments")        ?? undefined;
+              const additionalInformation = p.get("additionalInformation")?? undefined;
+              const evaluationRating      = p.get("evaluationRating")     ?? undefined;
+              const combatEffectiveness   = p.get("combatEffectiveness")  ?? undefined;
+              const dtg                   = p.get("dtg")                  ?? undefined;
+              const type                  = p.get("type")                 ?? undefined;
+              const speed                 = p.get("speed")                ?? undefined;
+              const altitudeDepth         = p.get("altitudeDepth")        ?? undefined;
 
               const sym = new ms.Symbol(sidc, {
-                size,
-                uniqueDesignation,
-                higherFormation,
-                outlineColor,
-                outlineWidth,
-                quantity,
-                staffComments,
-                additionalInformation,
-                evaluationRating,
-                combatEffectiveness,
-                dtg,
-                type,
-                speed,
-                altitudeDepth,
+                size, uniqueDesignation, higherFormation, outlineColor, outlineWidth,
+                quantity, staffComments, additionalInformation, evaluationRating,
+                combatEffectiveness, dtg, type, speed, altitudeDepth,
               });
 
-              // Do NOT gate on sym.isValid() — milsymbol 3.x returns falsy for
-              // valid-but-partially-specified SIDCs (high echelon codes such as
-              // Army/Corps/Army Group, and generic frame-only entities with
-              // entity code 000000).  asSVG() is the authoritative render path:
-              // if it produces a non-empty string the symbol can be displayed.
               const svg = postProcessMilsymbolSvg(sym.asSVG());
               if (!svg || svg.length < 10) {
                 res.statusCode = 422;
@@ -356,6 +498,54 @@ function milsymbolPlugin(): Plugin {
           }
         })();
       });
+    },
+  };
+}
+
+// Embed build only: redirect imports of `./pglite-loader` to the CDN variant so
+// the bundled PGlite/PostGIS packages (and their ~25 MB of WASM/data/postgis.tar)
+// are removed from the graph entirely. A bundler emits a chunk for every parsed
+// `import()` regardless of dead-code reachability, so swapping the whole module
+// is the only reliable way to keep those assets out of the wheel.
+function pgliteCdnLoaderPlugin(): Plugin {
+  const cdnLoader = path.resolve(__dirname, "src/lib/pglite-loader.cdn.ts");
+  return {
+    name: "geolibre-pglite-cdn-loader",
+    enforce: "pre",
+    resolveId(source) {
+      return /(?:^|\/)pglite-loader(?:\.ts)?$/.test(source) ? cdnLoader : null;
+    },
+  };
+}
+
+const CEREUS_WASM_GLUE = "@cereusdb/standard/dist/wasm/cereusdb.js";
+const CEREUS_DEFAULT_WASM_URL = "new URL('cereusdb_bg.wasm', import.meta.url)";
+function cereusCdnLoaderPlugin(): Plugin {
+  const cdnLoader = path.resolve(__dirname, "src/lib/cereus-loader.cdn.ts");
+  return {
+    name: "geolibre-cereus-cdn-loader",
+    enforce: "pre",
+    resolveId(source) {
+      return /(?:^|\/)cereus-loader(?:\.ts)?$/.test(source) ? cdnLoader : null;
+    },
+    transform(code, id) {
+      const file = id.split("?")[0].replaceAll("\\", "/");
+      if (!file.endsWith(CEREUS_WASM_GLUE)) return null;
+      if (!code.includes(CEREUS_DEFAULT_WASM_URL)) {
+        this.warn(
+          `${CEREUS_WASM_GLUE} no longer contains the expected default wasm URL ` +
+            `expression; the ~40 MB wasm may be silently re-emitted into dist. ` +
+            `Update CEREUS_WASM_GLUE / CEREUS_DEFAULT_WASM_URL in vite.config.ts.`,
+        );
+        return null;
+      }
+      return {
+        code: code.replaceAll(
+          CEREUS_DEFAULT_WASM_URL,
+          "(()=>{throw new Error('CereusDB must be initialised with an explicit wasmUrl (GEOLIBRE_CEREUS_CDN build)')})()",
+        ),
+        map: null,
+      };
     },
   };
 }
@@ -444,18 +634,191 @@ async function proxyBinaryRequest(
   res.end(body);
 }
 
+// Installable, offline-capable web build. See docs/architecture.md (Offline /
+// PWA). The service worker precaches the app shell (HTML + the JS/CSS chunks the
+// map needs to boot) and runtime-caches the heavy, lazily-fetched same-origin
+// binaries (DuckDB-WASM + spatial extension, MapLibre feature plugins) with a
+// hash-keyed CacheFirst strategy, so a feature works offline after its first
+// online use without bloating the first-visit precache. PGlite/PostGIS and the
+// Pyodide runtime are fetched cross-origin from jsDelivr (see PGLITE_CDN above),
+// so they are not same-origin cacheable: the PostGIS SQL engine needs network on
+// first use and is not available offline. The pglite-*/*.wasm/*.data ignores
+// below still apply when GEOLIBRE_PGLITE_CDN=0 force-bundles PGlite into the
+// web build, keeping that variant's first visit light.
+function pwaPlugin(): Plugin[] {
+  // Hashed build chunks/binaries that are lazily fetched. Excluded from the
+  // precache so first visit stays light; the same-origin CacheFirst rule below
+  // caches them on first use for offline. Hashed filenames make CacheFirst safe
+  // (a redeploy mints new URLs, so a stale entry is never served as current).
+  const HEAVY_PRECACHE_IGNORES = [
+    // MapLibre core (~13 MB) and its feature-plugin chunks. The map boots from
+    // its first runtime fetch and is CacheFirst-cached thereafter.
+    "**/maplibre-*",
+    "**/duckdb-*",
+    "**/pglite-*",
+    "**/earth-engine-browser-*",
+    "**/mapillary-*",
+    "**/*.wasm",
+    "**/*.data",
+  ];
+  // Note: the 4 KB public/pyodide/pyodide-worker.js shim is intentionally left
+  // in the precache (revisioned, so no stale-after-deploy risk). The heavy
+  // Pyodide runtime it loads is fetched from the jsDelivr CDN (cross-origin) and
+  // is not cached — Pyodide offline needs a same-origin VITE_PYODIDE_INDEX_URL
+  // mirror. See docs/architecture.md.
+
+  return VitePWA({
+    disable: PWA_DISABLED,
+    // autoUpdate installs the new SW and lets it take control on the next
+    // deploy (skipWaiting + clientsClaim below), so its fresh precache serves
+    // subsequent requests. We deliberately suppress workbox's default
+    // force-reload-on-activate via `onNeedReload` in main.tsx — that reload
+    // fired spuriously on the relative-base `/demo/` subpath and discarded map
+    // state. Page refreshes are left to installStaleChunkReload
+    // (src/lib/stale-chunk-reload.ts), which reloads on-demand only when a now
+    // orphaned lazy chunk actually 404s; precached chunks never 404.
+    registerType: "autoUpdate",
+    // We register the SW by hand in main.tsx so registration lives next to the
+    // stale-chunk reload it coordinates with; no auto-injected snippet.
+    injectRegister: false,
+    includeAssets: ["favicon.ico", "favicon.png", "apple-touch-icon.png"],
+    manifest: {
+      name: "GeoLibre",
+      short_name: "GeoLibre",
+      description:
+        "A lightweight, cloud-native GIS platform for visualizing, exploring, and analyzing geospatial data.",
+      theme_color: "#2f8f85",
+      background_color: "#ffffff",
+      display: "standalone",
+      orientation: "any",
+      categories: ["productivity", "utilities", "education"],
+      icons: [
+        { src: "pwa-192x192.png", sizes: "192x192", type: "image/png" },
+        { src: "pwa-512x512.png", sizes: "512x512", type: "image/png" },
+        {
+          src: "maskable-icon-512x512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "maskable",
+        },
+      ],
+    },
+    workbox: {
+      // Precache the app shell: HTML plus the JS/CSS/fonts that boot the map.
+      // The heavy lazily-fetched chunks/binaries are runtime-cached instead.
+      globPatterns: ["**/*.{js,css,html,woff,woff2}"],
+      globIgnores: HEAVY_PRECACHE_IGNORES,
+      // deck.gl/vendor shell chunks can run a few MB; allow them into the
+      // precache. MapLibre and the huge binaries are globIgnored above.
+      maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+      cleanupOutdatedCaches: true,
+      clientsClaim: true,
+      skipWaiting: true,
+      navigateFallback: "index.html",
+      // Never SPA-fallback the sidecar proxy or any asset request; let those hit
+      // the network/precache directly.
+      navigateFallbackDenylist: [/^\/sidecar\//, /^\/__geolibre_/, /\/[^/?]+\.[^/]+$/],
+      runtimeCaching: [
+        {
+          // Hashed build assets under /assets/ that the precache skips: the
+          // MapLibre chunk, DuckDB-WASM + its spatial extension, PGlite/PostGIS,
+          // and the MapLibre feature-plugin chunks. Vite content-hashes every
+          // file it emits here, so CacheFirst is safe (a redeploy mints new
+          // URLs). This is what makes DuckDB-WASM + the spatial extension work
+          // offline after their first online use. Scoped to /assets/ so the
+          // non-hashed public files (e.g. pyodide-worker.js, dropped-in plugin
+          // bundles) are not pinned by hash-immutable CacheFirst — those are
+          // served from the revisioned precache and refresh on a SW update.
+          urlPattern: ({ url, sameOrigin }: { url: URL; sameOrigin: boolean }) =>
+            sameOrigin &&
+            url.pathname.includes("/assets/") &&
+            /\.(?:js|css|wasm|data|woff2?)$/.test(url.pathname),
+          handler: "CacheFirst",
+          options: {
+            cacheName: "geolibre-assets",
+            expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
+            cacheableResponse: { statuses: [0, 200] },
+          },
+        },
+        {
+          // CDN-loaded heavy engines: Pyodide (the Python runtime + its wheels),
+          // PGlite/PostGIS, and the CereusDB (Apache Sedona) wasm — all served
+          // version-pinned from jsDelivr (see PGLITE_CDN_URL, CEREUS_WASM_CDN_URL,
+          // and pyodide-config.ts). Their URLs embed the exact package version, so
+          // a redeploy/upgrade mints new URLs and CacheFirst never serves a stale
+          // engine. Caching them here is what lets the browser SQL (PostGIS),
+          // Sedona SQL, and Python features work OFFLINE after their first online
+          // use — closing the gap noted at the top of this file. jsDelivr sends
+          // permissive CORS headers, so these come back as normal (non-opaque)
+          // 200s and can be revalidated/evicted like any cache entry. When
+          // GEOLIBRE_PGLITE_CDN=0 / GEOLIBRE_CEREUS_CDN=0, those engines are
+          // bundled under /assets/ instead and this rule simply never matches them
+          // (Pyodide is always CDN-loaded regardless).
+          urlPattern: ({ url }: { url: URL }) =>
+            url.hostname === "cdn.jsdelivr.net" &&
+            (url.pathname.startsWith("/pyodide/") ||
+              url.pathname.startsWith("/npm/@electric-sql/") ||
+              url.pathname.startsWith("/npm/@cereusdb/")),
+          handler: "CacheFirst",
+          options: {
+            cacheName: "geolibre-cdn-engines",
+            expiration: { maxEntries: 400, maxAgeSeconds: 60 * 60 * 24 * 30 },
+            cacheableResponse: { statuses: [0, 200] },
+          },
+        },
+        {
+          // Basemap tiles/styles from the CORS-friendly default hosts only
+          // (OpenFreeMap, CARTO). Other remote tiles/services stay network-only
+          // by design — see docs for what is and isn't available offline.
+          urlPattern: ({ url }: { url: URL }) =>
+            /(?:^|\.)(?:openfreemap\.org|cartocdn\.com)$/.test(url.hostname),
+          handler: "CacheFirst",
+          options: {
+            // Generous cap: the "Download Offline Area" feature
+            // (lib/offline-tiles.ts) warms a whole region's tiles at once and
+            // would otherwise evict its own freshly-cached tiles past 600.
+            cacheName: "geolibre-basemaps",
+            expiration: { maxEntries: 8000, maxAgeSeconds: 60 * 60 * 24 * 30 },
+            cacheableResponse: { statuses: [0, 200] },
+          },
+        },
+      ],
+    },
+    devOptions: {
+      // Keep the SW out of `vite dev`; it complicates HMR and the stale-chunk
+      // flow. PWA behavior is validated against the production build / preview.
+      enabled: false,
+    },
+  }) as Plugin[];
+}
+
 export default defineConfig({
   base: APP_BASE,
   plugins: [
+    ...(PGLITE_CDN ? [pgliteCdnLoaderPlugin()] : []),
+    ...(CEREUS_CDN ? [cereusCdnLoaderPlugin()] : []),
     stripDuckDbWorkerSourcemapPlugin(),
     projectUrlQueryPlugin(),
+    bundledPlugins(path.resolve(__dirname, "public/plugins")),
+    copyVectorOps(
+      path.resolve(
+        __dirname,
+        "../../backend/geolibre_server/geolibre_server/vector_ops.py",
+      ),
+      path.resolve(__dirname, "src/lib/pyodide/vector_ops.generated.py"),
+    ),
     react(),
     wmsProxyPlugin(),
     milsymbolPlugin(),
+    selectiveJsMinifyPlugin(),
+    ...pwaPlugin(),
   ],
   clearScreen: false,
   define: {
     __GEOLIBRE_VERSION__: JSON.stringify(APP_VERSION),
+    __PGLITE_CDN_URL__: JSON.stringify(PGLITE_CDN_URL),
+    __PGLITE_POSTGIS_CDN_URL__: JSON.stringify(PGLITE_POSTGIS_CDN_URL),
+    __CEREUS_WASM_CDN_URL__: JSON.stringify(CEREUS_WASM_CDN_URL),
   },
   server: {
     port: 5173,
@@ -478,18 +841,47 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   optimizeDeps: {
-    esbuildOptions: {
-      target: "esnext",
-    },
-    exclude: RADIX_OPTIMIZE_EXCLUDES,
+    // Pre-bundle the AI Assistant's heavy deps at dev-server startup. They are
+    // only reached through the lazily-imported assistant panel (and, for the
+    // provider models, through dynamic import() inside it), so Vite would
+    // otherwise discover them on first open and trigger a full-page reload to
+    // re-optimize — which manifests as the map reloading and the panel needing
+    // a second click. Listing them here pre-bundles them up front instead.
+    include: [
+      "@strands-agents/sdk",
+      "@strands-agents/sdk/models/google",
+      "@strands-agents/sdk/models/anthropic",
+      "@strands-agents/sdk/models/openai",
+      "@strands-agents/sdk/models/bedrock",
+      "@anthropic-ai/sdk",
+      "@google/genai",
+      "openai",
+      "zod",
+    ],
+    // PGlite ships its own WASM + filesystem bundles and must not be pre-bundled
+    // by esbuild, which mangles those asset references (per PGlite's Vite guide).
+    // CereusDB (the WASM Sedona engine) is excluded for the same reason, and
+    // because its wasm-bindgen glue imports `./env_shim.js?v=...` — that query
+    // suffix breaks the dev-server dependency optimizer, so it must be served
+    // as-is rather than pre-bundled.
+    exclude: [
+      ...RADIX_OPTIMIZE_EXCLUDES,
+      "@electric-sql/pglite",
+      "@electric-sql/pglite-postgis",
+      "@cereusdb/standard",
+    ],
   },
   build: {
     target: "esnext",
+    // The Earth Engine browser SDK keys EXPORTED_FN_INFO by Function#toString().
+    // A second Vite/esbuild minification pass rewrites those functions after
+    // the SDK table has been generated. Vite minification stays disabled here;
+    // selectiveJsMinifyPlugin minifies chunks that do not contain that SDK.
+    minify: false,
     // Output to the monorepo root's build/ dir so Render's dashboard
     // "Publish directory: build" resolves correctly from the repo root.
     outDir: path.resolve(__dirname, "../../build"),
     emptyOutDir: true,
-    minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     // Skip gzip-size calculation — saves ~200 MB of peak heap during bundling.
     reportCompressedSize: false,

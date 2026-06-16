@@ -11,32 +11,34 @@ import subprocess
 import tempfile
 import threading
 import traceback
-import urllib.request
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from .runtime import (
+    RUNTIME_CATALOG_TIMEOUT_SECS,
+    RUNTIME_DISCOVERY_TIMEOUT_SECS,
+    RUNTIME_SETUP_TIMEOUT_SECS,
+    JobState,
+    RuntimeBootstrapError,
+    _clean_env,
+    _runtime_cache_root,
+    _runtime_setup_env,
+    _subprocess_startup_kwargs,
+    _utc_now,
+    _uv_executable,
+    _venv_python,
+)
+
 router = APIRouter(prefix="/whitebox", tags=["whitebox"])
-RUNTIME_DISCOVERY_TIMEOUT_SECS = 5
-RUNTIME_CATALOG_TIMEOUT_SECS = 120
-RUNTIME_SETUP_TIMEOUT_SECS = 600
 WHITEBOX_RUNTIME_PACKAGE = os.environ.get(
     "GEOLIBRE_WHITEBOX_PACKAGE",
     "whitebox-workflows>=2.0.2",
 )
 WHITEBOX_PYTHON_VERSION = os.environ.get("GEOLIBRE_WHITEBOX_PYTHON_VERSION", "3.12")
-UV_INSTALL_BASE_URL = os.environ.get(
-    "GEOLIBRE_UV_INSTALL_BASE_URL",
-    "https://astral.sh/uv",
-).rstrip("/")
-
-
-class RuntimeBootstrapError(RuntimeError):
-    """Raised when a usable Whitebox runtime cannot be initialized."""
 
 
 class WhiteboxRunRequest(BaseModel):
@@ -50,55 +52,10 @@ class WhiteboxRunRequest(BaseModel):
     tier: str = "open"
 
 
-class JobState(BaseModel):
-    """Serializable state for a background Whitebox job."""
-
-    id: str
-    status: str
-    tool_id: str
-    created_at: str
-    updated_at: str
-    messages: list[str] = []
-    outputs: dict[str, Any] = {}
-    result: Any = None
-    error: str | None = None
-
-
 _JOBS: dict[str, JobState] = {}
 _JOBS_LOCK = threading.Lock()
 _RUNTIME_SETUP_LOCK = threading.Lock()
 MAX_RETAINED_JOBS = 100
-
-
-def _utc_now() -> str:
-    """Return the current UTC timestamp as an ISO string."""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _clean_env() -> dict[str, str]:
-    """Return a Python subprocess environment suitable for extension imports."""
-    env = dict(os.environ)
-    env.pop("PYTHONHOME", None)
-    env["PYTHONIOENCODING"] = "utf-8"
-    env["PYTHONUTF8"] = "1"
-    return env
-
-
-def _runtime_setup_env(**overrides: str) -> dict[str, str]:
-    """Return an environment for managed runtime setup commands."""
-    root = _runtime_cache_root()
-    env = _clean_env()
-    env.setdefault("UV_CACHE_DIR", str(root / "uv-cache"))
-    env.setdefault("UV_PYTHON_INSTALL_DIR", str(root / "uv-python"))
-    env.update(overrides)
-    return env
-
-
-def _subprocess_startup_kwargs() -> dict[str, Any]:
-    """Return platform-specific subprocess startup options."""
-    if os.name != "nt":
-        return {}
-    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
 
 
 def _check_python_import(python_executable: str) -> None:
@@ -144,129 +101,12 @@ def _explicit_runtime_python() -> str | None:
     raise RuntimeBootstrapError(f"Configured Whitebox Python is not executable: {path}")
 
 
-def _runtime_cache_root() -> Path:
-    """Return the cache root for managed GeoLibre runtime environments."""
-    configured = os.environ.get("GEOLIBRE_RUNTIME_DIR")
-    if configured:
-        return Path(configured).expanduser()
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / "GeoLibre"
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "geolibre"
-
-
 def _managed_runtime_dir() -> Path:
     """Return the managed Whitebox runtime environment directory."""
     configured = os.environ.get("GEOLIBRE_WHITEBOX_ENV")
     if configured:
         return Path(configured).expanduser()
     return _runtime_cache_root() / "whitebox-runtime"
-
-
-def _managed_uv_dir() -> Path:
-    """Return the directory for GeoLibre's managed uv binary."""
-    configured = os.environ.get("GEOLIBRE_UV_DIR")
-    if configured:
-        return Path(configured).expanduser()
-    return _runtime_cache_root() / "uv-bin"
-
-
-def _managed_uv_executable() -> Path:
-    """Return the managed uv executable path."""
-    suffix = ".exe" if os.name == "nt" else ""
-    return _managed_uv_dir() / f"uv{suffix}"
-
-
-def _venv_python(env_dir: Path) -> Path:
-    """Return the Python executable path inside a virtual environment."""
-    if os.name == "nt":
-        return env_dir / "Scripts" / "python.exe"
-    return env_dir / "bin" / "python"
-
-
-def _download_to_temp(url: str, suffix: str) -> Path:
-    """Download a URL to a temporary file and return its path."""
-    target = (
-        Path(tempfile.mkdtemp(prefix="geolibre-uv-installer-"))
-        / f"install{suffix}"
-    )
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "GeoLibre/0.7 uv-bootstrap"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            target.write_bytes(response.read())
-    except Exception as exc:
-        raise RuntimeBootstrapError(
-            f"Could not download uv installer from {url}: {exc}"
-        ) from exc
-    return target
-
-
-def _install_managed_uv() -> str:
-    """Download and install uv into GeoLibre's managed runtime directory."""
-    uv = _managed_uv_executable()
-    if uv.exists():
-        return str(uv)
-
-    install_dir = _managed_uv_dir()
-    install_dir.mkdir(parents=True, exist_ok=True)
-    script_url = (
-        f"{UV_INSTALL_BASE_URL}/install.ps1"
-        if os.name == "nt"
-        else f"{UV_INSTALL_BASE_URL}/install.sh"
-    )
-    script = _download_to_temp(script_url, ".ps1" if os.name == "nt" else ".sh")
-    env = _runtime_setup_env(UV_UNMANAGED_INSTALL=str(install_dir))
-    try:
-        if os.name == "nt":
-            command = [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(script),
-            ]
-        else:
-            command = ["sh", str(script)]
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            timeout=RUNTIME_SETUP_TIMEOUT_SECS,
-            **_subprocess_startup_kwargs(),
-        )
-    finally:
-        shutil.rmtree(script.parent, ignore_errors=True)
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        raise RuntimeBootstrapError(f"uv installer failed. {detail}")
-    if not uv.exists():
-        raise RuntimeBootstrapError(f"uv installer did not create {uv}")
-    return str(uv)
-
-
-def _uv_executable() -> str:
-    """Return the configured or discovered uv executable."""
-    configured = os.environ.get("GEOLIBRE_UV")
-    if configured:
-        resolved = str(Path(configured).expanduser())
-        if os.path.isfile(resolved) and os.access(resolved, os.X_OK):
-            return resolved
-        raise RuntimeBootstrapError(
-            f"Configured uv executable is not valid: {configured}"
-        )
-    uv = shutil.which("uv")
-    if uv:
-        return uv
-    return _install_managed_uv()
 
 
 def _run_runtime_setup_command(command: list[str]) -> None:
@@ -451,6 +291,7 @@ class ExternalRuntimeSession:
         tool_id: str,
         args_json: str,
         callback: Callable[[Any], None] | None = None,
+        working_directory: str | None = None,
     ) -> str:
         """Run a Whitebox tool and stream progress events to a callback."""
         payload = {
@@ -500,6 +341,7 @@ class ExternalRuntimeSession:
             encoding="utf-8",
             errors="replace",
             env=_clean_env(),
+            cwd=working_directory,
             bufsize=1,
             **_subprocess_startup_kwargs(),
         )
@@ -718,6 +560,53 @@ def _coerce_value(value: Any, kind: str) -> Any:
     return value
 
 
+# Catalog wording that marks a dataset input as batch-capable. Whitebox tool
+# descriptions read "... If omitted, runs in batch mode over all ... files in
+# current directory." If a catalog release rephrases this, directory values
+# fall through to normal argument coercion instead of enabling batch mode.
+_BATCH_DESCRIPTION_PHRASES = ("batch mode", "current directory", "omitted")
+
+
+def _is_batch_directory_input(param: dict[str, Any]) -> bool:
+    """Return whether a parameter supports directory-backed batch mode.
+
+    Args:
+        param: Normalized Whitebox parameter metadata.
+
+    Returns:
+        True when the parameter is an input dataset that the catalog documents
+        as batch-capable when omitted.
+    """
+    kind = str(param.get("kind") or "")
+    description = str(param.get("description") or "").lower()
+    return kind.endswith("_in") and all(
+        phrase in description for phrase in _BATCH_DESCRIPTION_PHRASES
+    )
+
+
+def _batch_working_directory(value: Any, param: dict[str, Any]) -> str | None:
+    """Return the working directory for a batch-mode input value.
+
+    Args:
+        value: Frontend parameter value.
+        param: Normalized Whitebox parameter metadata.
+
+    Returns:
+        The normalized directory path when the value should trigger batch
+        mode, otherwise None.
+    """
+    if not _is_batch_directory_input(param) or not isinstance(value, str):
+        return None
+    path = Path(value).expanduser()
+    # Require an absolute, non-symlinked directory (matching the symlink
+    # policy of whitebox_output) and normalize it so the single-directory
+    # comparison in _prepare_arguments is not defeated by lexical variants
+    # such as /data/./a.
+    if not path.is_absolute() or path.is_symlink() or not path.is_dir():
+        return None
+    return str(path.resolve())
+
+
 def _write_layer_input(param_name: str, layer: dict[str, Any], temp_paths: list[Path]) -> str:
     """Write an embedded layer input to a temporary file.
 
@@ -739,28 +628,47 @@ def _write_layer_input(param_name: str, layer: dict[str, Any], temp_paths: list[
     return str(path)
 
 
-def _prepare_arguments(request: WhiteboxRunRequest, temp_paths: list[Path]) -> dict[str, Any]:
-    """Prepare a Whitebox JSON argument payload from a run request."""
+def _prepare_arguments(
+    request: WhiteboxRunRequest,
+    temp_paths: list[Path],
+) -> tuple[dict[str, Any], str | None]:
+    """Prepare a Whitebox JSON argument payload from a run request.
+
+    Args:
+        request: Tool run request from the frontend.
+        temp_paths: Collection of temporary paths to remove after execution.
+
+    Returns:
+        A tuple containing the argument payload and an optional subprocess
+        working directory for directory-backed batch tools.
+    """
     specs = {
         str(param.get("name")): param
         for param in (request.tool or {}).get("params", [])
         if isinstance(param, dict)
     }
     args: dict[str, Any] = {}
+    working_directory: str | None = None
     for name, value in request.parameters.items():
         spec = specs.get(str(name), {})
         kind = str(spec.get("kind") or "")
         if name in request.layer_inputs:
             value = _write_layer_input(name, request.layer_inputs[name], temp_paths)
+        batch_directory = _batch_working_directory(value, spec)
+        if batch_directory:
+            if working_directory and working_directory != batch_directory:
+                raise ValueError("Only one Whitebox batch input directory is supported.")
+            working_directory = batch_directory
+            continue
         coerced = _coerce_value(value, kind)
         if coerced is not None:
             args[name] = coerced
 
     for name, spec in specs.items():
         kind = str(spec.get("kind") or "")
-        if kind.endswith("_out") and not args.get(name):
+        if kind.endswith("_out") and not args.get(name) and not working_directory:
             args[name] = _default_output_path(request.tool_id, name, kind)
-    return args
+    return args, working_directory
 
 
 def _extract_outputs(result: Any, args: dict[str, Any], tool: dict[str, Any] | None) -> dict[str, Any]:
@@ -822,7 +730,7 @@ def _run_job(job_id: str, request: WhiteboxRunRequest) -> None:
     temp_paths: list[Path] = []
     try:
         _job_update(job_id, status="running")
-        args = _prepare_arguments(request, temp_paths)
+        args, working_directory = _prepare_arguments(request, temp_paths)
         session = create_runtime_session(
             include_pro=request.include_pro,
             tier=request.tier or "open",
@@ -831,6 +739,7 @@ def _run_job(job_id: str, request: WhiteboxRunRequest) -> None:
             request.tool_id,
             json.dumps(args),
             lambda event: _append_job_message(job_id, event),
+            working_directory=working_directory,
         )
         result = _parse_json_maybe(raw_result)
         _job_update(

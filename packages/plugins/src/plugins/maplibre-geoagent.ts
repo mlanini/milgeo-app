@@ -1,46 +1,67 @@
 /// <reference path="../earthengine.d.ts" />
 
-import {
+import type {
   GeoAgentControl,
-  type GeoAgentControlOptions,
+  GeoAgentControlOptions,
 } from "maplibre-gl-geoagent";
-import earthEngine from "@google/earthengine";
-import { invoke } from "@tauri-apps/api/core";
+import type { Map as MapLibreMap } from "maplibre-gl";
+import {
+  authenticateWithOAuth,
+  renderEeLayer,
+  type VisualizeOptions,
+} from "maplibre-gl-earth-engine";
 import type {
   GeoLibreAppAPI,
   GeoLibreMapControlPosition,
   GeoLibrePlugin,
 } from "../types";
+import {
+  removeGeoAgentStoreLayers,
+  syncGeoAgentOverlaysToStore,
+  unwireGeoAgentStoreSync,
+  wireGeoAgentStoreSync,
+  type GeoAgentOverlayRecord,
+} from "./geoagent-layer-sync";
+import {
+  authenticateEarthEngine as authenticateEarthEngineForGeoLibre,
+  captureEarthEngineFunctionInfo,
+  clearEarthEngineFunctionInfo,
+  closeTauriOauthPopups,
+  errorMessage,
+  importMetaEnv,
+  installEarthEngineFunctionInfoFallback,
+  oauthClientIdValue,
+  preloadEarthEngineAuthLibrary,
+  projectValue as earthEngineProjectValue,
+  shouldUseTauriEarthEngineOAuth,
+} from "./earth-engine-auth";
 
-const DEFAULT_GEE_OAUTH_CLIENT_ID =
-  "141292844612-gitmgm28jkmkujonfkrkvdaqjiqt6qkf.apps.googleusercontent.com";
 const STORAGE_PREFIX = "geolibre.geoagent";
-
-type GeoAgentImportMetaEnv = {
-  VITE_GEE_OAUTH_CLIENT_ID?: unknown;
-  VITE_GEE_PROJECT_ID?: unknown;
-};
 
 type GeoAgentControlInternals = {
   options?: GeoAgentControlOptions;
   tools?: {
+    __geolibreToolRunnerPatched?: boolean;
+    addGeeRasterOverlay?: (overlay: {
+      name: string;
+      url: string;
+    }) => Promise<void>;
+    map?: MapLibreMap;
+    overlays?: Map<string, GeoAgentOverlayRecord>;
+    publishEarthEngineState?: () => void;
+    removeOverlay?: (name: string) => boolean;
+    requireEarthEngine?: () => {
+      registerLayer?: (layer: Record<string, unknown>) => void;
+    };
+    runCommand?: (command: string, args?: unknown) => Promise<unknown>;
+    uniqueLayerBaseId?: (baseId: string, suffixes: string[]) => string;
+    uniqueSourceId?: (baseId: string) => string;
+    waitForMapIdle?: () => Promise<void>;
     updateEarthEngineOptions?: (
       options: NonNullable<GeoAgentControlOptions["earthEngine"]>,
     ) => void;
   };
   invalidateAgent?: () => void;
-};
-
-type TauriEarthEngineOAuthStart = {
-  url: string;
-  state: string;
-};
-
-type TauriEarthEngineOAuthToken = {
-  accessToken?: string;
-  tokenType?: string;
-  expiresIn?: number;
-  error?: string;
 };
 
 let geoAgentPosition: GeoLibreMapControlPosition = "top-left";
@@ -60,32 +81,31 @@ const GEOAGENT_OPTIONS = {
 } satisfies Omit<GeoAgentControlOptions, "position">;
 
 let geoAgentControl: GeoAgentControl | null = null;
+let geoAgentControlPromise: Promise<GeoAgentControl> | null = null;
+let geoAgentActive = false;
 let earthEngineAccessTokenOverride = "";
 let earthEngineTokenTypeOverride = "Bearer";
 let earthEngineTokenExpiresInOverride = 3600;
+let geoAgentEarthEngineFunctionInfo: unknown;
 
 export const maplibreGeoAgentPlugin: GeoLibrePlugin = {
   id: "maplibre-gl-geoagent",
   name: "GeoAgent",
   version: "0.4.2",
   activate: (app: GeoLibreAppAPI) => {
-    if (!geoAgentControl) {
-      geoAgentControl = new GeoAgentControl(getGeoAgentOptions());
-    }
-
-    const added = app.addMapControl(geoAgentControl, geoAgentPosition);
-    if (!added) {
-      geoAgentControl = null;
-      return false;
-    }
-    setTimeout(() => geoAgentControl?.expand(), 0);
-    setTimeout(enhanceEarthEngineSignIn, 0);
-    preloadEarthEngineAuthLibrary();
+    geoAgentActive = true;
+    void mountGeoAgentControl(app);
   },
   deactivate: (app: GeoLibreAppAPI) => {
-    if (!geoAgentControl) return;
-    app.removeMapControl(geoAgentControl);
-    geoAgentControl = null;
+    geoAgentActive = false;
+    unwireGeoAgentStoreSync();
+    if (geoAgentControl) {
+      app.removeMapControl(geoAgentControl);
+      geoAgentControl = null;
+    }
+    // The control's teardown already cleared its overlays from the map; drop
+    // the matching store entries so the layer panel does not list dead layers.
+    removeGeoAgentStoreLayers();
   },
   getMapControlPosition: () => geoAgentPosition,
   setMapControlPosition: (
@@ -93,14 +113,53 @@ export const maplibreGeoAgentPlugin: GeoLibrePlugin = {
     position: GeoLibreMapControlPosition,
   ) => {
     geoAgentPosition = position;
-    if (!geoAgentControl) return;
+    if (!geoAgentControl) {
+      if (geoAgentActive) void mountGeoAgentControl(app);
+      return;
+    }
     app.removeMapControl(geoAgentControl);
     const added = app.addMapControl(geoAgentControl, geoAgentPosition);
-    if (!added) return false;
+    if (!added) {
+      // removeMapControl already tore the tools (and their overlays) down;
+      // drop the now-stale sync wiring and store layers with them.
+      unwireGeoAgentStoreSync();
+      removeGeoAgentStoreLayers();
+      return false;
+    }
+    patchGeoAgentToolRunner(geoAgentControl);
     setTimeout(() => geoAgentControl?.expand(), 0);
     setTimeout(enhanceEarthEngineSignIn, 0);
   },
 };
+
+async function mountGeoAgentControl(app: GeoLibreAppAPI): Promise<void> {
+  const control = await loadGeoAgentControl();
+  if (!geoAgentActive) return;
+
+  const added = app.addMapControl(control, geoAgentPosition);
+  if (!added) {
+    if (geoAgentControl === control) geoAgentControl = null;
+    return;
+  }
+  patchGeoAgentToolRunner(control);
+  setTimeout(() => geoAgentControl?.expand(), 0);
+  setTimeout(enhanceEarthEngineSignIn, 0);
+  preloadEarthEngineAuthLibrary();
+}
+
+async function loadGeoAgentControl(): Promise<GeoAgentControl> {
+  if (geoAgentControl) return geoAgentControl;
+  installEarthEngineFunctionInfoFallback();
+  geoAgentControlPromise ??= import("maplibre-gl-geoagent")
+    .then(({ GeoAgentControl }) => {
+      geoAgentControl ??= new GeoAgentControl(getGeoAgentOptions());
+      return geoAgentControl;
+    })
+    .finally(() => {
+      geoAgentControlPromise = null;
+    });
+  return geoAgentControlPromise;
+}
 
 function getGeoAgentOptions(): GeoAgentControlOptions {
   return {
@@ -109,35 +168,186 @@ function getGeoAgentOptions(): GeoAgentControlOptions {
   };
 }
 
-function envString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
+function patchGeoAgentToolRunner(control: GeoAgentControl): void {
+  const tools = (control as unknown as GeoAgentControlInternals).tools;
+  if (!tools?.runCommand || tools.__geolibreToolRunnerPatched === true) {
+    return;
+  }
 
-function importMetaEnv(): GeoAgentImportMetaEnv {
-  return (
-    import.meta as ImportMeta & {
-      env?: GeoAgentImportMetaEnv;
+  const runCommand = tools.runCommand.bind(tools);
+  tools.runCommand = async (command, args) => {
+    try {
+      if (isEarthEngineToolCommand(command)) {
+        if (command === "load_gee_dataset") {
+          return await loadGeoAgentDatasetWithGeoLibreEarthEngine(tools, args);
+        }
+
+        installEarthEngineFunctionInfoFallback(geoAgentEarthEngineFunctionInfo);
+        try {
+          return await runCommand(command, args);
+        } finally {
+          geoAgentEarthEngineFunctionInfo = captureEarthEngineFunctionInfo();
+        }
+      }
+      return await runCommand(command, args);
+    } finally {
+      // Any command may add or remove overlays (including scripts run through
+      // run_maplibre_script); mirror the registry into the store so the layer
+      // panel stays in sync.
+      syncGeoAgentOverlaysToStore(tools.overlays);
     }
-  ).env ?? {};
+  };
+  tools.__geolibreToolRunnerPatched = true;
+
+  wireGeoAgentStoreSync(tools);
+  // The control recreates tools (with an empty overlay registry) on every
+  // onAdd, so prune store entries left over from a previous tools instance.
+  syncGeoAgentOverlaysToStore(tools.overlays);
 }
 
-function oauthClientIdValue(envValue: unknown): string {
-  return envString(envValue) || DEFAULT_GEE_OAUTH_CLIENT_ID;
+async function loadGeoAgentDatasetWithGeoLibreEarthEngine(
+  tools: NonNullable<GeoAgentControlInternals["tools"]>,
+  args: unknown,
+): Promise<Record<string, unknown>> {
+  if (!tools.map) throw new Error("GeoAgent map is unavailable.");
+
+  const input = recordArg(args);
+  const assetId = stringArg(input, "asset_id");
+  if (!assetId) throw new Error("load_gee_dataset requires asset_id.");
+
+  const layerName = stringArg(input, "layer_name") || assetId;
+  const vis = geoAgentVisualizeOptions(input);
+  const earthEngine = geoAgentEarthEngineOptions();
+  const oauthClientId = oauthClientIdValue(earthEngine.oauthClientId);
+  const projectId = projectValue(earthEngine.projectId);
+  let accessToken = earthEngine.accessToken || earthEngineAccessTokenOverride;
+
+  if (shouldUseTauriEarthEngineOAuth() && !accessToken) {
+    await authenticateEarthEngine(oauthClientId);
+    accessToken = earthEngineAccessTokenOverride;
+  }
+
+  clearEarthEngineFunctionInfo();
+  await authenticateWithOAuth({
+    accessToken: accessToken || undefined,
+    oauthClientId,
+    projectId,
+    tokenExpiresIn:
+      earthEngine.tokenExpiresIn ?? earthEngineTokenExpiresInOverride,
+    tokenType: earthEngine.tokenType || earthEngineTokenTypeOverride,
+  });
+
+  await tools.waitForMapIdle?.();
+  tools.removeOverlay?.(layerName);
+  clearEarthEngineFunctionInfo();
+  const layerBaseId = geoAgentSlug(layerName);
+  const sourceId =
+    tools.uniqueSourceId?.(`${layerBaseId}-source`) ?? `${layerBaseId}-source`;
+  const layerId = tools.uniqueLayerBaseId?.(layerBaseId, [""]) ?? layerBaseId;
+  const result = await renderEeLayer(tools.map, assetId, vis, sourceId, layerId);
+
+  tools.overlays?.set(layerName, {
+    attribution: "Google Earth Engine",
+    geeLayerName: layerName,
+    kind: "gee",
+    layerIds: [result.layerId],
+    name: layerName,
+    sourceIds: [result.sourceId],
+    url: result.tileUrl,
+  });
+  tools.requireEarthEngine?.().registerLayer?.({
+    asset_id: assetId,
+    asset_type: stringArg(input, "asset_type") || "Image",
+    eeObject: result.eeObject,
+    layer_name: layerName,
+    name: layerName,
+    object_type: stringArg(input, "asset_type") || "Image",
+    source: "earth_engine",
+    tile_url: result.tileUrl,
+    vis_params: vis,
+  });
+  tools.publishEarthEngineState?.();
+
+  return {
+    success: true,
+    asset_id: assetId,
+    asset_type: stringArg(input, "asset_type") || "Image",
+    layer_name: layerName,
+    source: "maplibre-gl-earth-engine",
+    tile_url: result.tileUrl,
+    vis_params: vis,
+  };
 }
 
-function projectValue(envValue: unknown): string {
-  const params = new URLSearchParams(window.location.search);
+function isEarthEngineToolCommand(command: string): boolean {
   return (
-    params.get("ee_project_id") ||
-    envString(envValue) ||
-    sessionStorage.getItem(`${STORAGE_PREFIX}.earthEngine.projectId`) ||
-    localStorage.getItem(`${STORAGE_PREFIX}.ee_project_id`) ||
-    ""
+    command === "initialize_earth_engine" ||
+    command.startsWith("gee_") ||
+    command.includes("_gee_")
   );
 }
 
-function preloadEarthEngineAuthLibrary(): void {
-  earthEngine.apiclient?.ensureAuthLibLoaded?.(() => undefined);
+function geoAgentEarthEngineOptions(): NonNullable<
+  GeoAgentControlOptions["earthEngine"]
+> {
+  const control = geoAgentControl as unknown as GeoAgentControlInternals | null;
+  return {
+    ...GEOAGENT_OPTIONS.earthEngine,
+    ...(control?.options?.earthEngine ?? {}),
+  };
+}
+
+function recordArg(args: unknown): Record<string, unknown> {
+  return args && typeof args === "object" && !Array.isArray(args)
+    ? (args as Record<string, unknown>)
+    : {};
+}
+
+function stringArg(args: Record<string, unknown>, key: string): string {
+  const value = args[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function numberArg(args: Record<string, unknown>, key: string): number | undefined {
+  const value = args[key];
+  const numberValue =
+    typeof value === "number" || typeof value === "string"
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function geoAgentVisualizeOptions(
+  args: Record<string, unknown>,
+): VisualizeOptions {
+  const vis: VisualizeOptions = {};
+  const bands = stringArg(args, "bands") || stringArg(args, "band");
+  const palette = stringArg(args, "palette");
+  const min = numberArg(args, "min_value") ?? numberArg(args, "min");
+  const max = numberArg(args, "max_value") ?? numberArg(args, "max");
+  const opacity = numberArg(args, "opacity");
+
+  if (bands) vis.bands = bands;
+  if (palette) vis.palette = palette;
+  if (min !== undefined) vis.min = min;
+  if (max !== undefined) vis.max = max;
+  if (opacity !== undefined) vis.opacity = Math.max(0, Math.min(1, opacity));
+  return vis;
+}
+
+function geoAgentSlug(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "layer"
+  );
+}
+
+function projectValue(envValue: unknown): string {
+  return earthEngineProjectValue(envValue, STORAGE_PREFIX);
 }
 
 function enhanceEarthEngineSignIn(): void {
@@ -172,7 +382,7 @@ function enhanceEarthEngineSignIn(): void {
     status.textContent = "Opening Google sign-in...";
     try {
       await authenticateEarthEngine(oauthClientId);
-      applyEarthEngineAccessToken(
+      await applyEarthEngineAccessToken(
         oauthClientId,
         projectValue(projectIdInput.value),
       );
@@ -188,11 +398,11 @@ function enhanceEarthEngineSignIn(): void {
   status.insertAdjacentElement("beforebegin", button);
 }
 
-function applyEarthEngineAccessToken(
+async function applyEarthEngineAccessToken(
   oauthClientId: string,
   projectId: string,
-): void {
-  const accessToken = earthEngineAccessToken();
+): Promise<void> {
+  const accessToken = await earthEngineAccessToken();
   if (!accessToken || !geoAgentControl) return;
 
   const control = geoAgentControl as unknown as GeoAgentControlInternals;
@@ -213,174 +423,23 @@ function applyEarthEngineAccessToken(
   control.invalidateAgent?.();
 }
 
-function earthEngineAccessToken(): string {
+async function earthEngineAccessToken(): Promise<string> {
   if (earthEngineAccessTokenOverride) return earthEngineAccessTokenOverride;
+  if (shouldUseTauriEarthEngineOAuth()) return "";
+  installEarthEngineFunctionInfoFallback();
+  const { default: earthEngine } = await import("@google/earthengine");
   return (earthEngine.data?.getAuthToken?.() ?? "")
     .replace(/^Bearer\s+/i, "")
     .trim();
 }
 
 async function authenticateEarthEngine(oauthClientId: string): Promise<void> {
-  if (isTauriProductionOrigin()) {
-    await authenticateEarthEngineViaTauri(oauthClientId);
-    return;
+  const token = await authenticateEarthEngineForGeoLibre(oauthClientId);
+  if (token?.accessToken) {
+    earthEngineAccessTokenOverride = token.accessToken
+      .replace(/^Bearer\s+/i, "")
+      .trim();
+    earthEngineTokenTypeOverride = token.tokenType || "Bearer";
+    earthEngineTokenExpiresInOverride = token.expiresIn || 3600;
   }
-
-  return new Promise((resolve, reject) => {
-    const onSuccess = () => resolve();
-    const onFailure = (error: unknown) => reject(new Error(errorMessage(error)));
-    const onImmediateFailed = () => {
-      if (!earthEngine.data?.authenticateViaPopup) {
-        reject(new Error("Earth Engine popup authentication is unavailable."));
-        return;
-      }
-      earthEngine.data.authenticateViaPopup(onSuccess, onFailure);
-    };
-
-    if (earthEngine.data?.getAuthToken?.()) {
-      resolve();
-      return;
-    }
-    if (!earthEngine.data?.authenticateViaOauth) {
-      reject(new Error("Earth Engine OAuth authentication is unavailable."));
-      return;
-    }
-    earthEngine.data.authenticateViaOauth(
-      oauthClientId,
-      onSuccess,
-      onFailure,
-      undefined,
-      onImmediateFailed,
-    );
-  });
-}
-
-function isTauriProductionOrigin(): boolean {
-  const { hostname, protocol } = window.location;
-  return (
-    protocol === "tauri:" ||
-    protocol === "file:" ||
-    (hostname.endsWith(".localhost") && hostname !== "localhost")
-  );
-}
-
-async function authenticateEarthEngineViaTauri(
-  oauthClientId: string,
-): Promise<void> {
-  const session = await invoke<TauriEarthEngineOAuthStart>(
-    "start_earth_engine_oauth",
-    { clientId: oauthClientId },
-  );
-  const popup = window.open(
-    session.url,
-    "geolibre-earth-engine-oauth",
-    "popup,width=520,height=680",
-  );
-  if (!popup) {
-    throw new Error("Earth Engine sign-in popup was blocked.");
-  }
-
-  const token = await waitForTauriEarthEngineToken(
-    invoke,
-    session.state,
-    popup,
-  );
-  if (token.error) throw new Error(token.error);
-  if (!token.accessToken) {
-    throw new Error("Earth Engine sign-in did not return an access token.");
-  }
-
-  const accessToken = token.accessToken.replace(/^Bearer\s+/i, "").trim();
-  const tokenType = token.tokenType || "Bearer";
-  const expiresIn = token.expiresIn || 3600;
-  earthEngineAccessTokenOverride = accessToken;
-  earthEngineTokenTypeOverride = tokenType;
-  earthEngineTokenExpiresInOverride = expiresIn;
-  earthEngine.apiclient?.setAuthToken?.(
-    oauthClientId,
-    tokenType,
-    accessToken,
-    expiresIn,
-    [],
-    () => undefined,
-    false,
-  );
-  popup.close();
-}
-
-async function waitForTauriEarthEngineToken(
-  invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
-  state: string,
-  popup: Window,
-): Promise<TauriEarthEngineOAuthToken> {
-  let closedPolls = 0;
-  for (let poll = 0; poll < 300; poll += 1) {
-    const token = await invoke<TauriEarthEngineOAuthToken | null>(
-      "poll_earth_engine_oauth",
-      { stateId: state },
-    );
-    if (token) return token;
-    if (popup.closed) {
-      closedPolls += 1;
-      if (closedPolls > 2) {
-        throw new Error("Earth Engine sign-in was cancelled.");
-      }
-    }
-    await delay(1000);
-  }
-  throw new Error("Earth Engine sign-in timed out.");
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function closeTauriOauthPopups(): Promise<void> {
-  let closedByCommand = false;
-  try {
-    await invoke("close_oauth_popups");
-    closedByCommand = true;
-    setTimeout(() => {
-      void invoke("close_oauth_popups");
-    }, 500);
-  } catch {
-    // Browser builds do not have a Tauri command bridge.
-  }
-
-  try {
-    if (closedByCommand) return;
-    const { getAllWindows } = await import("@tauri-apps/api/window");
-    const windows = await getAllWindows();
-    await Promise.all(
-      windows
-        .filter((window) => window.label.startsWith("oauthPopup"))
-        .map((window) => window.close()),
-    );
-    setTimeout(() => {
-      void getAllWindows().then((openWindows) =>
-        Promise.all(
-          openWindows
-            .filter((window) => window.label.startsWith("oauthPopup"))
-            .map((window) => window.close()),
-        ),
-      );
-    }, 500);
-  } catch {
-    // Browser builds do not have a Tauri window manager.
-  }
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object" && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch {
-    // Fall back to the generic message below.
-  }
-  return "Earth Engine sign-in failed.";
 }

@@ -1,11 +1,12 @@
 export { cn } from "./lib/utils";
 export { Button, type ButtonProps } from "./components/button";
 export { Input } from "./components/input";
+export { Textarea } from "./components/textarea";
 export { Select } from "./components/select";
 export { Label } from "./components/label";
 export { Slider } from "./components/slider";
 export { Separator } from "./components/separator";
-export { ScrollArea } from "./components/scroll-area";
+export { ScrollArea, type ScrollAreaProps } from "./components/scroll-area";
 export {
   Dialog,
   DialogTrigger,
@@ -37,3 +38,8 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./components/dropdown-menu";
+export {
+  ErrorBoundary,
+  type ErrorBoundaryProps,
+  type ErrorBoundaryFallbackProps,
+} from "./components/error-boundary";

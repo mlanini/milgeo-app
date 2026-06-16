@@ -52,6 +52,10 @@ export function ShareProjectDialog({
   const abortRef = useRef<AbortController | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
 
+  // Reset transient state whenever the dialog is (re)opened so a prior result or
+  // error never lingers into a new share. Seed the title from the current
+  // project name, but leave it blank when the project still has its default
+  // placeholder name so the field reads as a prompt.
   useEffect(() => {
     if (open) {
       setTitle(isShareableTitle(currentTitle) ? currentTitle.trim() : "");
@@ -66,6 +70,7 @@ export function ShareProjectDialog({
     }
   }, [open, currentTitle]);
 
+  // Cancel a pending "copied" reset if the dialog unmounts mid-window.
   useEffect(
     () => () => {
       if (copyTimeoutRef.current !== null) {
@@ -79,12 +84,13 @@ export function ShareProjectDialog({
   const titleValid = isShareableTitle(title);
 
   const handleShare = async () => {
+    // Guard re-entry synchronously: a second click before the disabled state
+    // renders would otherwise start a concurrent, non-idempotent upload.
     if (abortRef.current) return;
     setError(null);
     setStatus("uploading");
     const controller = new AbortController();
     abortRef.current = controller;
-
     try {
       const { content, filename } = getProject(title.trim());
       const uploaded = await uploadProjectToShare({
@@ -99,6 +105,8 @@ export function ShareProjectDialog({
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Could not share the project.");
     } finally {
+      // Only the controller that is still current clears state, so an aborted
+      // (superseded) request never flips a newer one back to idle.
       if (abortRef.current === controller) {
         abortRef.current = null;
         setStatus("idle");
@@ -108,6 +116,9 @@ export function ShareProjectDialog({
 
   const handleCopy = () => {
     if (!result) return;
+    // Only show the "copied" checkmark if the write actually succeeds; the
+    // promise rejects when clipboard permission is denied or the page is
+    // unfocused, and swallowing it would flip the icon misleadingly.
     navigator.clipboard
       .writeText(result.projectUrl)
       .then(() => {
@@ -228,6 +239,8 @@ export function ShareProjectDialog({
             )}
 
             <div className="flex justify-end gap-2">
+              {/* Stays enabled during upload: closing the dialog aborts the
+                  in-flight request via the open effect's cleanup. */}
               <Button
                 type="button"
                 variant="outline"

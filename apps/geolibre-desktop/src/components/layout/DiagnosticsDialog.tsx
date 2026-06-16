@@ -12,6 +12,7 @@ import { Clipboard, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   clearDiagnostics,
+  setCaptureNetworkInfo,
   type DiagnosticRecord,
   type DiagnosticLevel,
   type DiagnosticsSnapshot,
@@ -67,6 +68,15 @@ export function DiagnosticsDialog({
     [diagnostics.records, levelFilter],
   );
   const listIsFiltered = levelFilter !== "all";
+  // Derived here rather than assumed from networkCount so the badge label
+  // and count cannot diverge if non-error network levels are introduced.
+  const networkErrorCount = useMemo(
+    () =>
+      diagnostics.records.filter(
+        (record) => record.category === "network" && record.level === "error",
+      ).length,
+    [diagnostics.records],
+  );
 
   useEffect(
     () => () => {
@@ -99,7 +109,10 @@ export function DiagnosticsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(760px,92vh)] max-w-5xl grid-rows-[auto_auto_minmax(0,1fr)] p-0">
+      <DialogContent
+        className="max-h-[min(760px,92vh)] max-w-5xl"
+        bodyClassName="grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden p-0"
+      >
         <DialogHeader className="border-b px-6 py-4 pr-12">
           <DialogTitle>Diagnostics</DialogTitle>
           <DialogDescription>
@@ -146,8 +159,24 @@ export function DiagnosticsDialog({
               {diagnostics.warningCount} warnings
             </button>
             <span className="rounded bg-muted px-2 py-1 text-muted-foreground">
-              {diagnostics.networkCount} network
+              {diagnostics.captureNetworkInfo
+                ? `${diagnostics.networkCount} network`
+                : `${networkErrorCount} network errors`}
             </span>
+            <label
+              className="flex items-center gap-1.5 rounded border px-2 py-1 text-muted-foreground"
+              title="Record successful and aborted network requests from now on; requests made while logging was off are not backfilled. Off by default because logging every request slows the app down."
+            >
+              <input
+                className="h-3.5 w-3.5"
+                type="checkbox"
+                checked={diagnostics.captureNetworkInfo}
+                onChange={(event) =>
+                  setCaptureNetworkInfo(event.target.checked)
+                }
+              />
+              Log all network requests
+            </label>
           </div>
           <div className="flex gap-2">
             <Button

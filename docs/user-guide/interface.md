@@ -1,162 +1,72 @@
 # Interface Overview
 
-MilGeo.app provides a comprehensive military GIS workspace with an intuitive interface designed for tactical planning and geospatial intelligence operations.
+GeoLibre opens to a single workspace that is the same on desktop and in the browser. This page is a tour of that workspace so the rest of the User Guide can refer to its parts by name.
 
-## Main Components
+![GeoLibre interface overview](https://data.geolibre.app/images/geolibre-interface-overview.webp)
 
-### Map Workspace
+## The top toolbar
 
-The central map workspace provides:
+The toolbar across the top of the window groups every action into seven menus:
 
-- **Pan**: Click and drag to move the map
-- **Zoom**: Scroll wheel or pinch gesture to zoom in/out
-- **Rotate**: Ctrl + drag or two-finger rotate on touchpad
-- **Tilt**: Right-click + drag to tilt the 3D view
-- **Reset**: Double-click to reset north orientation
+| Menu | What it does |
+| --- | --- |
+| **Project** | Create, open, save, share, and print projects. See [Projects](projects.md). |
+| **Add Data** | Add layers from files, web services, cloud formats, 3D data, and databases. See [Adding Data](adding-data.md). |
+| **Processing** | Run vector, raster, conversion, Whitebox, and SQL tools, plus the [AI Assistant](ai-assistant.md). See [Processing Tools](processing.md) and [SQL Workspace](sql-workspace.md). |
+| **Controls** | Toggle map controls and component panels (Measure, Bookmark, Minimap, and more). See [Map Controls & Tools](map-controls.md). |
+| **Plugins** | Activate built-in plugins and set their on-map position. See [Plugins & Marketplace](plugins.md). |
+| **Settings** | Map preferences, layout, environment variables, project settings, and Manage Plugins. See [Settings & Preferences](settings.md). |
+| **Help** | The command palette, keyboard shortcuts, diagnostics, feedback, update checks, and the About dialog. |
 
-### Toolbar
+On the right side of the toolbar are the light/dark theme toggle and the editable project name.
 
-Located at the top of the interface, the toolbar provides access to:
+!!! tip "Toolbar labels"
+    On narrow windows the toolbar collapses to icon-only buttons. You can also force icon-only buttons from **Settings → Layout**, or with the `toolbar=icons` URL parameter. See [Embedding & Sharing](embedding.md).
 
-- **File**: Save, Open, Export projects
-- **Data**: Add layers from various sources
-- **Tactical**: Military symbols and graphics tools
-- **Processing**: Vector and raster analysis tools
-- **View**: Toggle panels, controls, and map settings
-- **Plugins**: Activate and configure plugins
-- **Help**: Documentation, about, and diagnostics
+## Command palette and keyboard shortcuts
 
-### Side Panels
+Every menu and toolbar action is also reachable from the keyboard, so you don't have to hunt through nested menus.
 
-**Layers Panel** (Left):
-- View all loaded layers
-- Toggle visibility (eye icon)
-- Adjust opacity (slider)
-- Reorder layers (drag and drop)
-- Zoom to layer extent
-- Open attribute table
-- Remove layers
-- Configure labels
+- **Command palette** — press `Ctrl`/`Cmd` + `K` (or **Help → Command Palette**, or **Settings → Command Palette**) to open a searchable list of actions: Add Data sources, Processing tools, Controls, Plugins, and more. Type to filter, move the highlight with the arrow keys, and press `Enter` to run the highlighted command.
+- **Keyboard shortcuts cheat sheet** — press `?` (or **Help → Keyboard Shortcuts**, or **Settings → Keyboard Shortcuts**) to see the full list of global shortcuts.
 
-**Style Panel** (Left):
-- Live style editing for selected layer
-- Fill color and opacity
-- Stroke color, width, and opacity
-- Circle radius for point features
-- Data-driven symbology options
-
-**Attribute Table Panel** (Bottom):
-- View and edit feature attributes
-- Filter features by attribute values
-- Sort columns ascending/descending
-- Highlight features on map
-- Zoom to selected features
-- Export table data
-
-### Status Bar
-
-Located at the bottom, displays:
-
-- Current map center coordinates (longitude, latitude)
-- Current zoom level
-- Map scale
-- Active CRS/projection
-- Connection status (Python sidecar)
-- Processing progress indicators
-
-## Map Controls
-
-Map controls can be toggled from the **View > Controls** menu:
-
-### Navigation Control
-- **Zoom in/out**: +/- buttons
-- **Reset north**: Compass button
-- **Pitch/bearing**: Rotate and tilt indicators
-
-### Fullscreen Control
-- Expand map to fullscreen mode
-- Press Esc to exit
-
-### Geolocate Control
-- Center map on your current location
-- Requires browser location permission
-- Shows accuracy circle
-
-### Globe Control
-- Toggle 3D globe view
-- Ideal for global-scale visualization
-- Smooth transition to flat map
-
-### Terrain Control
-- Toggle 3D terrain visualization
-- Uses elevation data for realistic terrain
-- Adjustable exaggeration factor
-
-### Scale Control
-- Shows map scale in metric and imperial units
-- Updates dynamically with zoom level
-
-### Attribution Control
-- Credits for basemap and data sources
-- Click to expand full attribution
-
-## Keyboard Shortcuts
+The built-in global shortcuts are:
 
 | Shortcut | Action |
-|----------|--------|
-| `Ctrl+S` | Save project |
-| `Ctrl+O` | Open project |
-| `Ctrl+N` | New project |
-| `Ctrl+Z` | Undo (in editing mode) |
-| `Ctrl+Y` | Redo (in editing mode) |
-| `Escape` | Cancel current operation |
-| `Delete` | Remove selected features |
-| `Tab` | Cycle through panels |
-| `F11` | Toggle fullscreen |
-| `Ctrl+F` | Focus search/filter |
+| --- | --- |
+| `Ctrl`/`Cmd` + `K` | Open the command palette |
+| `?` | Show the keyboard shortcuts |
+| `Ctrl`/`Cmd` + `N` | New project |
+| `Ctrl`/`Cmd` + `O` | Open project from file |
+| `Ctrl`/`Cmd` + `S` | Save project |
+| `Ctrl`/`Cmd` + `Shift` + `S` | Save project as… |
 
-## Workspace Layouts
+Shortcuts are ignored while you are typing in a text field, so they never interfere with search boxes or attribute editing. On macOS the `Cmd` key is used; on Windows and Linux the `Ctrl` key is used.
 
-MilGeo supports multiple workspace layouts:
+## The three panels
 
-### Default Layout
-Full interface with toolbar, all panels, and status bar.
+GeoLibre has three dockable panels around the map:
 
-### Compact Layout (`?layout=compact`)
-Icon-only toolbar buttons, hidden project metadata. Ideal for narrow screens or embedded views.
+- **Layers panel** (left): the layer stack, including the basemap. Toggle visibility, change opacity, reorder layers, zoom to a layer, identify features, and open per-layer actions. See [Managing Layers](layers.md).
+- **Style panel** (right): the styling controls for the selected layer, including data-driven styling for vector layers and image adjustments for rasters. See [Styling Layers](styling.md).
+- **Attribute table** (bottom): the attributes of the selected vector or DuckDB layer. Expand it from the status bar. See [Attribute Table](attribute-table.md).
 
-### Map-Only Layout (`?maponly`)
-Pure map view with no toolbar, panels, or status bar. Perfect for presentations and focused analysis.
+Each panel can be shown or hidden from **Settings → Layout**, and panels auto-hide on small screens. You can resize the Layers and Style panels by dragging their inner edge.
 
-## Customization
+## The map
 
-### Panel Arrangement
-- Drag panel edges to resize
-- Minimize panels to gain more map space
-- Panel states persist in project files
+The map fills the center of the workspace. It uses MapLibre GL JS for vector and raster rendering, with deck.gl for point clouds, 3D tiles, and other advanced overlays. Pan by dragging, zoom with the scroll wheel or the on-map zoom buttons, **rotate** by holding the right mouse button and dragging, **tilt** by holding `Ctrl`/`Cmd` and dragging, and reset north with the compass button.
 
-### Theme
-- Automatic light/dark mode based on system preferences
-- Manual theme toggle in Settings
+On-map controls such as zoom, globe, fullscreen, and the Layer Control appear in the corners. Which controls are shown is set from the [Controls menu](map-controls.md).
 
-### Map Settings
-- Configure default basemap
-- Set initial map center and zoom
-- Enable/disable specific controls
-- Adjust animation settings
+## The status bar
 
-## Context Menus
+The status bar along the bottom shows the live cursor coordinates, zoom, bearing, and pitch, a button to expand the [Attribute Table](attribute-table.md), and a **Diagnostics** button (also under **Help**) that surfaces any runtime errors.
 
-Right-click on:
+## Theme
 
-- **Map**: Add layer, place symbol, measure distance
-- **Layer in panel**: Rename, duplicate, export, properties
-- **Feature**: Edit attributes, delete, zoom to
-- **Symbol**: Edit SIDC, change affiliation, reposition
+Use the sun/moon button on the toolbar to switch between light and dark themes. The theme also follows your operating system preference by default, and you can set it for embeds with the `theme=dark` or `theme=light` URL parameter. See [Embedding & Sharing](embedding.md).
 
-## Tooltips and Help
+## Desktop and browser
 
-- Hover over buttons for descriptive tooltips
-- Question mark icons provide contextual help
-- Status bar shows hints for current tool
-- Help menu links to full documentation
+The same UI runs as an installed desktop app (built with Tauri) and as a web app in the browser. The browser build covers most workflows, but features that need the local filesystem (file dialogs, local MBTiles and raster reads, project save/open, and the Python sidecar tools) require the desktop app. Each affected page notes these differences. See [Getting Started](../getting-started.md) for installation and [Downloads](../downloads.md) for installers.

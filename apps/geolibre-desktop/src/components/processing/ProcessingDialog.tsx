@@ -368,7 +368,7 @@ export function ProcessingDialog({
     // changes; calls within this load still dedup once it is repopulated.
     clearRemoteWhiteboxCatalogSnapshotCache();
 
-    const useRemoteCatalogSnapshot = async (
+    const applyRemoteCatalogSnapshot = async (
       message: string,
       available: boolean,
     ) => {
@@ -400,7 +400,7 @@ export function ProcessingDialog({
       setRuntimeAvailable(status.available);
       setRuntimeMessage(status.message);
       if (!status.available) {
-        await useRemoteCatalogSnapshot(
+        await applyRemoteCatalogSnapshot(
           `${status.message} Showing GitHub catalog only.`,
           false,
         );
@@ -410,7 +410,7 @@ export function ProcessingDialog({
       try {
         nextTools = await fetchWhiteboxTools();
       } catch (err) {
-        await useRemoteCatalogSnapshot(
+        await applyRemoteCatalogSnapshot(
           `${
             err instanceof Error ? err.message : "Could not load live catalog."
           } Showing GitHub catalog only.`,
@@ -419,7 +419,7 @@ export function ProcessingDialog({
         return;
       }
       if (nextTools.length === 0) {
-        await useRemoteCatalogSnapshot(
+        await applyRemoteCatalogSnapshot(
           "Live catalog is empty. Showing GitHub catalog only.",
           true,
         );
@@ -439,7 +439,7 @@ export function ProcessingDialog({
       );
     } catch (err) {
       setRuntimeAvailable(false);
-      await useRemoteCatalogSnapshot(
+      await applyRemoteCatalogSnapshot(
         `${
           err instanceof Error ? err.message : "Could not connect to sidecar."
         } Showing GitHub catalog only.`,
@@ -625,7 +625,10 @@ export function ProcessingDialog({
 
   return (
     <Dialog open={open} onOpenChange={setProcessingOpen}>
-      <DialogContent className="h-[min(760px,92vh)] max-w-6xl grid-rows-[auto_minmax(0,1fr)] gap-3 p-5">
+      <DialogContent
+        className="h-[min(760px,92vh)] max-w-6xl"
+        bodyClassName="grid-rows-[auto_minmax(0,1fr)] gap-3 overflow-hidden p-5"
+      >
         <DialogHeader>
           <DialogTitle>Whitebox toolbox</DialogTitle>
           <DialogDescription>
@@ -981,7 +984,7 @@ function NumberStepperInput({
   };
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_2.25rem] overflow-hidden rounded-md border border-input bg-background shadow-sm focus-within:border-2 focus-within:border-ring">
+    <div className="grid grid-cols-[minmax(0,1fr)_2.25rem] overflow-hidden rounded-md border border-input bg-background shadow-xs focus-within:border-2 focus-within:border-ring">
       <input
         id={id}
         inputMode={integer ? "numeric" : "decimal"}

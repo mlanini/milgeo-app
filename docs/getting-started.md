@@ -1,16 +1,29 @@
 # Getting Started
 
-MilGeo.app is a professional military GIS platform built as an npm workspaces monorepo. The main application resides in `apps/geolibre-desktop` and is built with React, TypeScript, MapLibre GL JS, and DuckDB-WASM Spatial.
+[![live demo](https://img.shields.io/badge/Live-demo-green.svg)](https://viewer.geolibre.app/?url=https://share.geolibre.app/giswqs/3d-tiles.geolibre.json)
+[![GeoLibre shared project](https://img.shields.io/badge/GeoLibre-share-green.svg)](https://share.geolibre.app)
+[![GeoLibre plugins](https://img.shields.io/badge/GeoLibre-plugins-green.svg)](https://plugins.geolibre.app)
+[![image](https://img.shields.io/pypi/v/geolibre.svg)](https://pypi.python.org/pypi/geolibre)
+[![image](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/opengeos/GeoLibre/blob/main/python/examples/getting-started.ipynb)
+[![image](https://img.shields.io/conda/vn/conda-forge/geolibre.svg)](https://anaconda.org/conda-forge/geolibre)
+[![Conda Recipe](https://img.shields.io/badge/recipe-geolibre-green.svg)](https://github.com/conda-forge/geolibre-feedstock)
+[![Open in CodeSandbox](https://img.shields.io/badge/Open%20in-CodeSandbox-blue?logo=codesandbox)](https://codesandbox.io/p/github/opengeos/geolibre)
+[![Open in StackBlitz](https://img.shields.io/badge/Open%20in-StackBlitz-blue?logo=stackblitz)](https://stackblitz.com/github/opengeos/geolibre)
+[![image](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+GeoLibre is a lightweight, cloud-native GIS platform for visualizing, exploring, and analyzing geospatial data across desktop and web environments, with a responsive layout for mobile screens. It is an npm workspaces monorepo: the main app lives in `apps/geolibre-desktop` and is built with Tauri, React, TypeScript, and MapLibre GL JS. The same workspace runs as a native desktop app and as a browser-based web app, and adapts responsively to mobile and small screens.
+
+## Video tutorial
+
+Watch the introduction: [GeoLibre 1.0: A Free, Open-Source Cloud-Native GIS That Runs Anywhere (Browser, Desktop & Jupyter)](https://youtu.be/87Cm0QagtxI)
 
 ## Prerequisites
 
-- **Node.js** 22 or newer
-- **Rust** toolchain for desktop builds ([rustup](https://rustup.rs/))
-- **Linux**: Additional dependencies from [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/) including `webkit2gtk` and `libayatana-appindicator`
+- Node.js 22 or newer
+- Rust toolchain for desktop builds
+- Linux desktop build dependencies from the Tauri v2 prerequisites
 
-## Quick Start
-
-### Clone and Install
+## Install
 
 ```bash
 git clone https://github.com/opengeos/GeoLibre.git
@@ -20,148 +33,73 @@ npm install
 
 Bun users can run `bun install`. The root `trustedDependencies` list allows the known install scripts for `core-js`, `@google/genai`, and `protobufjs`.
 
-### Run Browser Development Server
+## Update
+
+To update an existing source checkout to the latest version, pull the changes, reinstall dependencies (in case `package.json` changed), and rebuild:
+
+```bash
+cd /path/to/GeoLibre   # your GeoLibre checkout
+git pull origin main
+npm install            # or: bun install
+```
+
+If you run a production build, rebuild afterwards with `npm run build` (web) or `npm run tauri:build` (desktop). If you work from the dev servers (`npm run dev` or `npm run tauri:dev`), the `git pull` and `npm install` above are enough — just restart the dev server to pick up the changes.
+
+## Run the browser UI
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:5173`. The browser UI provides:
+Open `http://localhost:5173`. The map and browser vector import support local vector files that DuckDB-WASM Spatial can read, with direct handling for GeoJSON, zipped Shapefiles, and KMZ archives. Use Add Vector Layer or drag files onto the app; GeoTIFF/COG rasters can also be dragged onto the map to add them as raster layers. The browser UI can also add URL-based services and datasets such as XYZ, WMS, GeoJSON URLs, vector tiles, COG rasters, ArcGIS services, FlatGeobuf, PMTiles, Zarr, LiDAR, and Gaussian splats.
 
-- Map workspace with pan, zoom, rotate, and 3D globe/terrain
-- DuckDB-WASM Spatial vector import (GeoJSON, GeoParquet, GeoPackage, Shapefile, FlatGeobuf, KML/KMZ, GML, delimited text, GPX)
-- Direct drag-and-drop handling for GeoJSON, zipped Shapefiles, and KMZ archives
-- Add Data dialogs for URL-based services: XYZ, WMS, WFS, GeoJSON URLs, vector tiles, COG rasters
-- Advanced formats: ArcGIS services, PMTiles, Zarr, LiDAR, 3D Tiles, Gaussian splats
-- Layer styling, attribute inspection, and plugin testing
-- APP-6D tactical symbol placement and tactical graphics drawing
+Desktop filesystem dialogs, local MBTiles, local raster file reads, project save/open, and other filesystem operations require Tauri.
 
-**Browser Limitations**: Desktop-only features (filesystem dialogs, local MBTiles, local raster reads, project save/open to filesystem) require the Tauri desktop application.
+## Run with Docker
 
-### Run Desktop Application
+The repository includes a Dockerfile for the browser version of GeoLibre. It builds the Vite app and serves the production files with nginx:
+
+```bash
+docker build -t geolibre .
+docker run --rm -p 8080:80 geolibre
+```
+
+Open `http://localhost:8080`. The containerized browser UI supports web-capable workflows, but desktop filesystem dialogs, local MBTiles, local raster file reads, project save/open, and other Tauri-only features require the desktop app.
+
+The published image is available from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/opengeos/geolibre:latest
+docker run --rm -p 8080:80 ghcr.io/opengeos/geolibre:latest
+```
+
+For deployments under a URL subpath, pass the app base at build time:
+
+```bash
+docker build --build-arg GEOLIBRE_APP_BASE=/geolibre/ -t geolibre .
+```
+
+The container always serves the app from its root path. The build argument only sets the URL prefix that the app expects, so subpath deployments also require a reverse proxy in front of the container that strips the prefix before forwarding requests (for example, nginx `proxy_pass http://geolibre/;` with a trailing slash).
+
+## Run the desktop app
 
 ```bash
 npm run tauri:dev
 ```
 
-The desktop app provides all browser capabilities plus:
-
-- Native filesystem dialogs for save/open/export
-- Local MBTiles database support
-- Local raster file reads (COG, GeoTIFF)
-- Desktop-native performance and window management
-- Update checking and diagnostics panel
-- External plugin zip loading from app data directory
-
-## Build for Production
-
-### Browser Build
+## Build
 
 ```bash
 npm run build
-```
-
-Creates an optimized production build in `apps/geolibre-desktop/dist/`.
-
-### Desktop Build
-
-```bash
 npm run tauri:build
 ```
 
-Generates platform-specific installers:
+Where to find the output:
 
-- **Windows**: MSIX package
-- **macOS**: DMG installer
-- **Linux**: AppImage, DEB, RPM
+- **Web build** — static files in `apps/geolibre-desktop/dist/`. Serve this directory with any static web server (or the Docker image above).
+- **Desktop installers** — `apps/geolibre-desktop/src-tauri/target/release/bundle/`, with per-platform subfolders: `deb/`, `rpm/`, and `appimage/` on Linux; `msi/` and `nsis/` on Windows; `dmg/` and `macos/` on macOS. The unbundled executable is in `apps/geolibre-desktop/src-tauri/target/release/`. On Linux, `npm run tauri:build` builds `deb` and `rpm` by default; passing `--bundles` replaces that default selection rather than adding to it, so list every format you want, for example `npm run tauri:build -- --bundles deb,rpm,appimage` for all three.
 
-Build artifacts are created in `apps/geolibre-desktop/src-tauri/target/release/bundle/`.
-
-## First Steps with MilGeo
-
-### Loading Your First Map
-
-1. **Open the application** (browser or desktop)
-2. **Choose a basemap**: Menu > Basemaps > Select OpenStreetMap, Satellite, or Terrain
-3. **Navigate**: Click and drag to pan, scroll to zoom, Ctrl+drag to rotate
-4. **Toggle 3D**: Menu > Controls > Globe or Terrain for 3D visualization
-
-### Adding Vector Data
-
-**From Local File** (Desktop or browser with DuckDB-WASM):
-- Menu > Data > Add Vector Layer
-- Select files: GeoJSON, GeoParquet, GeoPackage, Shapefile zip, KML/KMZ, FlatGeobuf
-- Or drag and drop files directly onto the map
-
-**From URL**:
-- Menu > Data > Add Data > GeoJSON URL
-- Enter a public GeoJSON or GeoParquet URL
-- Click Add to load the layer
-
-**From Services**:
-- Menu > Data > Add Data > WFS Layer
-- Enter the WFS service URL and layer name
-- Configure refresh interval if needed
-
-### Adding Tactical Symbols (APP-6D)
-
-1. **Open Symbol Catalog**: Menu > Tactical > Place Symbol
-2. **Search or browse**: Filter by affiliation (Friend, Hostile, Neutral, Unknown)
-3. **Select symbol**: Choose from land units, sea surface, subsurface, air, space, activities
-4. **Place on map**: Click desired location on the map
-5. **Edit attributes**: Right-click symbol to edit SIDC, affiliation, or position
-
-### Creating Tactical Graphics
-
-1. **Open Graphics Tool**: Menu > Tactical > Draw Graphic
-2. **Choose graphic type**:
-   - FLOT (Forward Line of Own Troops)
-   - Boundaries (Phase line, Limit of advance)
-   - Fire Support Areas
-   - Objectives
-   - Control Measures
-3. **Draw on map**: Click points to define the graphic geometry
-4. **Finish**: Double-click or press Enter to complete
-5. **Style**: Use the Style panel to customize colors, line width, and fill
-
-### Running Analysis
-
-**Vector Analysis** (Menu > Processing > Vector):
-- **Buffer**: Create distance-based zones around features
-- **Dissolve**: Merge features with common attributes
-- **Clip**: Extract features within a boundary
-- **Intersection**: Find overlapping areas
-- **Union**: Combine multiple layers
-
-**Raster Analysis** (Menu > Processing > Raster) - requires Python sidecar:
-- **Hillshade**: Generate terrain shading for visualization
-- **Slope**: Calculate terrain slope in degrees or percent
-- **Aspect**: Determine terrain aspect (direction of slope)
-- **Contours**: Generate elevation contour lines
-
-**SQL Workspace** (Menu > Data > SQL Workspace):
-```sql
--- Example: Find features within 5km of a point
-SELECT * FROM layer_name 
-WHERE ST_Distance(geom, ST_Point(-122.4194, 37.7749)) < 5000;
-```
-
-### Saving and Sharing Projects
-
-1. **Save Project**: Menu > File > Save Project
-   - Desktop: Saves `.geolibre.json` to filesystem
-   - Browser: Downloads project file
-2. **Open Project**: Menu > File > Open Project > From File or From URL
-3. **Share Project**: Upload `.geolibre.json` to a public URL, then share:
-   ```
-   https://viewer.geolibre.app/?url=YOUR_PROJECT_URL
-   ```
-
-## Configuration
-
-## Configuration
-
-### Street View Imagery Providers
+## Optional imagery credentials
 
 The Street View plugin can use Google Street View and Mapillary imagery. Create `apps/geolibre-desktop/.env.local` and set one or both provider credentials:
 
@@ -174,63 +112,14 @@ For Google Street View, enable the Maps Embed API for the key in Google Cloud. F
 
 Restart `npm run dev` or `npm run tauri:dev` after changing environment variables.
 
-### Python Processing Sidecar
+## Optional Python sidecar
 
-The optional Python FastAPI sidecar enables raster processing tools, Whitebox geoprocessing, and heavy vector operations. It is not required for basic desktop UI functionality or browser-based vector analysis.
-
-**Setup**:
+The optional FastAPI sidecar is reserved for heavier processing workflows and is not required for the desktop UI.
 
 ```bash
 cd backend/geolibre_server
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e .
 uvicorn geolibre_server.app.main:app --host 127.0.0.1 --port 8765
 ```
-
-**Enabled Features**:
-- Raster processing: hillshade, slope, aspect, reproject, resample, clip, polygonize, contour
-- Whitebox toolbox: 500+ geoprocessing algorithms
-- GeoPandas engine for heavy vector operations
-- Custom processing pipelines and batch workflows
-
-The sidecar runs independently and communicates with MilGeo via REST API at `http://127.0.0.1:8765`.
-
-## Next Steps
-
-- **[Architecture](architecture.md)**: Understand the technical stack and design decisions
-- **[Project Format](project-format.md)**: Learn about the `.geolibre.json` specification
-- **[Plugin API](plugin-api.md)**: Develop custom plugins and integrations
-- **[Roadmap](roadmap.md)**: See planned features and release history
-
-## Troubleshooting
-
-### DuckDB-WASM fails to load
-
-- Ensure you're using Node.js 22+ 
-- Check browser console for SharedArrayBuffer errors (requires secure context)
-- Try Chromium-based browser (Chrome, Edge) for best compatibility
-
-### Tauri build fails
-
-- Verify Rust toolchain is installed: `rustc --version`
-- On Linux, install required dependencies: `webkit2gtk`, `libayatana-appindicator`
-- Check [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for platform-specific requirements
-
-### Python sidecar connection issues
-
-- Verify sidecar is running: check `http://127.0.0.1:8765/docs`
-- Ensure no firewall blocking port 8765
-- Check sidecar logs for errors
-
-### APP-6D symbols not displaying
-
-- Clear browser cache and reload
-- Check console for milsymbol initialization errors
-- Verify SIDC codes are valid APP-6D format
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/opengeos/GeoLibre/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/opengeos/GeoLibre/discussions)
-- **Documentation**: [https://geolibre.app/](https://geolibre.app/)

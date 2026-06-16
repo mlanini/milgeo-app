@@ -4,7 +4,14 @@ import {
   DEFAULT_PROJECT_PREFERENCES,
   useAppStore,
 } from "@geolibre/core";
-import type { GeoLibreLayer, MapPreferences, MapViewState } from "@geolibre/core";
+import type {
+  GeoLibreLayer,
+  MapPreferences,
+  MapProjection,
+  MapViewState,
+  StoryChapterAnimation,
+  StoryChapterLocation,
+} from "@geolibre/core";
 import bbox from "@turf/bbox";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import maplibregl from "maplibre-gl";
@@ -249,6 +256,12 @@ export class MapController {
       renderWorldCopies: mapPreferences.renderWorldCopies,
       attributionControl: false,
       maplibreLogo: false,
+      // preserveDrawingBuffer must stay true: the Print Layout composer and any
+      // future export feature reads the canvas via drawImage / toDataURL outside
+      // of a render callback. Removing this causes blank captures on browsers
+      // that discard the drawing buffer after compositing (most mobile GPUs).
+      // Trade-off: adds one extra framebuffer copy per frame on tiled renderers.
+      canvasContextAttributes: { preserveDrawingBuffer: true },
     });
     // The constructor options above already apply the static constraints.
     // The transform constraint is installed by the MapCanvas effect that
@@ -256,7 +269,7 @@ export class MapController {
     // redundant jumpTo that can interrupt the initial camera.
     const handleStyleReady = () => {
       this.styleReady = true;
-      this.enforceDefaultProjection();
+      this.enforceProjection();
       this.addTerrainSource();
       this.applyBasemapVisibility();
       this.applyBasemapOpacity();
@@ -264,7 +277,7 @@ export class MapController {
     };
     this.map.on("style.load", handleStyleReady);
     this.map.once("load", handleStyleReady);
-    this.map.once("idle", () => this.enforceDefaultProjection());
+    this.map.once("idle", () => this.enforceProjection());
     this.addNavigationControl();
     this.addFullscreenControl();
     this.addGeolocateControl();
@@ -278,6 +291,170 @@ export class MapController {
 
   getMap(): maplibregl.Map | null {
     return this.map;
+  }
+
+  /**
+   * Fade a project layer in or out for story-map playback.
+   *
+   * Story chapters change layer opacity as the reader scrolls. This writes the
+   * MapLibre paint properties directly instead of going through the store, so
+   * playback never marks the project dirty or pushes undo history. Call
+   * {@link restoreLayerStyles} when playback ends to reset opacities.
+   *
+   * @param layerId GeoLibre store layer id to fade.
+   * @param opacity Target opacity, clamped to the 0-1 range.
+   * @param durationMs Optional transition duration in milliseconds.
+   */
+  setStoryLayerOpacity(
+    layerId: string,
+    opacity: number,
+    durationMs?: number,
+  ): void {
+    if (!this.map) return;
+    const clamped = Math.min(1, Math.max(0, opacity));
+    for (const nativeId of this.getNativeLayerIdsByLayerId(layerId)) {
+      const styleLayer = this.map.getLayer(nativeId);
+      if (!styleLayer) continue;
+      const props = OPACITY_PAINT_PROPERTIES[styleLayer.type] ?? [];
+      for (const prop of props) {
+        if (durationMs && durationMs > 0) {
+          this.map.setPaintProperty(nativeId, `${prop}-transition`, {
+            duration: durationMs,
+          });
+        }
+        this.map.setPaintProperty(nativeId, prop, clamped);
+      }
+    }
+  }
+
+  /**
+   * Re-apply layer styles from the last synced layers, undoing any direct paint
+   * changes made during story-map playback by {@link setStoryLayerOpacity}.
+   */
+  restoreLayerStyles(): void {
+    // Invalidate any pending story rotation and halt an in-flight camera move so
+    // a deferred rotateTo cannot fire after the presenter has exited.
+    this.storyCameraToken++;
+    if (this.pendingRotateHandler) {
+      this.map?.off("moveend", this.pendingRotateHandler);
+      this.pendingRotateHandler = null;
+    }
+    this.map?.stop();
+    // Clear any opacity transitions left over from playback first, otherwise the
+    // restored values animate back in (potentially over a multi-second fade).
+    if (this.map) {
+      for (const layer of this.syncedLayers) {
+        for (const nativeId of this.getNativeLayerIdsByLayerId(layer.id)) {
+          const styleLayer = this.map.getLayer(nativeId);
+          if (!styleLayer) continue;
+          for (const prop of OPACITY_PAINT_PROPERTIES[styleLayer.type] ?? []) {
+            this.map.setPaintProperty(nativeId, `${prop}-transition`, {
+              duration: 0,
+            });
+          }
+        }
+      }
+    }
+    this.syncLayers(this.syncedLayers);
+  }
+
+  /** Token guarding deferred story rotations against later chapter changes. */
+  private storyCameraToken = 0;
+  /**
+   * The rotate-on-settle `moveend` listener currently awaiting its move, kept so
+   * it can be detached deterministically (on the next chapter or on presenter
+   * exit) instead of relying solely on self-removal, which never fires for an
+   * instant move whose `moveend` precedes attachment.
+   */
+  private pendingRotateHandler:
+    | ((event: maplibregl.MapLibreEvent & { storyCameraToken?: number }) => void)
+    | null = null;
+
+  /**
+   * Move the camera to a story chapter view during presentation playback.
+   *
+   * Cancels any in-progress movement first so a prior chapter's rotation cannot
+   * fight the new transition, then optionally starts a slow rotation once the
+   * move settles. Keeping this in the controller lets the presenter drive the
+   * camera without reaching into the raw MapLibre instance.
+   *
+   * @param location Target camera (center, zoom, pitch, bearing).
+   * @param animation MapLibre camera method to use.
+   * @param rotate When true, slowly rotate 180° after the move settles.
+   */
+  applyStoryChapterCamera(
+    location: StoryChapterLocation,
+    animation: StoryChapterAnimation = "flyTo",
+    rotate = false,
+  ): void {
+    if (!this.map) return;
+    const map = this.map;
+    // Bump the token first so any pending rotation from a prior chapter is
+    // invalidated. We do NOT call map.stop() here: flyTo/easeTo already
+    // supersede an in-progress camera animation, and calling stop() immediately
+    // before a new movement during rapid chapter changes can drop it entirely.
+    const token = ++this.storyCameraToken;
+    // Detach any rotate-on-settle listener still waiting on a superseded move so
+    // handlers can never accumulate across rapid chapter changes or a presenter
+    // exit. The matching listener for the new move is registered below.
+    if (this.pendingRotateHandler) {
+      map.off("moveend", this.pendingRotateHandler);
+      this.pendingRotateHandler = null;
+    }
+    // Tag the movement so the rotate-on-settle handler can recognize *this*
+    // move's `moveend`. When flyTo/easeTo supersedes a prior chapter's in-flight
+    // rotation, MapLibre fires a deferred `moveend` for that halted rotation; an
+    // untagged `once("moveend")` would catch it and start rotating immediately,
+    // around the previous chapter's center, before the new camera has travelled.
+    // MapLibre re-fires the original move's eventData on this deferred moveend
+    // (Camera._afterEase), so the token survives cancellation. The
+    // pendingRotateHandler cleanup above and in restoreLayerStyles is the
+    // backstop should that ever change, so handlers cannot leak regardless.
+    map[animation](
+      {
+        center: location.center,
+        zoom: location.zoom,
+        pitch: location.pitch,
+        bearing: location.bearing,
+      },
+      { storyCameraToken: token },
+    );
+    if (rotate) {
+      const onMoveEnd = (
+        event: maplibregl.MapLibreEvent & { storyCameraToken?: number },
+      ) => {
+        // Only detach once the token matches. Stay attached through any
+        // preceding moveend (e.g. the deferred moveend of a halted prior
+        // rotateTo, which carries no storyCameraToken) so we can still react to
+        // this move's own matching moveend below.
+        if (event.storyCameraToken !== token) return;
+        map.off("moveend", onMoveEnd);
+        if (this.pendingRotateHandler === onMoveEnd) {
+          this.pendingRotateHandler = null;
+        }
+        if (this.storyCameraToken !== token || !this.map) return;
+        this.map.rotateTo(this.map.getBearing() + 180, {
+          duration: 30000,
+          easing: (time) => time,
+        });
+      };
+      this.pendingRotateHandler = onMoveEnd;
+      map.on("moveend", onMoveEnd);
+    }
+  }
+
+  /**
+   * Fly the camera to a view, used for story authoring previews.
+   *
+   * @param location Target camera (center, zoom, pitch, bearing).
+   */
+  flyToView(location: StoryChapterLocation): void {
+    this.map?.flyTo({
+      center: location.center,
+      zoom: location.zoom,
+      pitch: location.pitch,
+      bearing: location.bearing,
+    });
   }
 
   private isStyleReady(): boolean {
@@ -416,6 +593,9 @@ export class MapController {
     this.map.setMinZoom(minZoom);
     this.map.setMaxPitch(maxPitch);
     this.map.setRenderWorldCopies(preferences.renderWorldCopies);
+    // Reflect a changed projection preference (e.g. loading a project saved in
+    // mercator) onto the live map.
+    this.enforceProjection();
     this.map.setMaxBounds(mapBoundsForPreferences(preferences));
     this.map.setTransformConstrain(
       createMapTransformConstraint(preferences, this.map, minZoom, maxZoom),
@@ -522,6 +702,10 @@ export class MapController {
     }
   }
 
+  getBasemapStyleLayerIds(): string[] {
+    return this.getBasemapStyleLayers().map((layer) => layer.id);
+  }
+
   private getBasemapStyleLayers(): maplibregl.LayerSpecification[] {
     if (!this.isStyleReady() || !this.map) return [];
     const map = this.map;
@@ -608,6 +792,16 @@ export class MapController {
 
   fitBounds(bounds: [number, number, number, number]): void {
     if (!this.map) return;
+    if (bounds.some((value) => !Number.isFinite(value))) return;
+    // A degenerate point-sized box cannot be fit; fly to the point instead.
+    if (bounds[0] === bounds[2] && bounds[1] === bounds[3]) {
+      this.map.flyTo({
+        center: [bounds[0], bounds[1]],
+        zoom: Math.max(this.map.getZoom(), 14),
+        duration: 800,
+      });
+      return;
+    }
     this.map.fitBounds(
       [
         [bounds[0], bounds[1]],
@@ -615,6 +809,84 @@ export class MapController {
       ],
       { padding: 40, duration: 800 },
     );
+  }
+
+  /**
+   * Imperatively animate the camera, for the programmatic scripting API.
+   *
+   * Unlike {@link applyView} (which the store sync uses) this passes straight to
+   * MapLibre's `flyTo`, so a script can request an animated move with an explicit
+   * duration. Only the provided fields are changed; omitted camera properties
+   * keep their current value.
+   *
+   * @param camera Target camera. `center` is `[lng, lat]`.
+   */
+  flyTo(camera: {
+    center?: [number, number];
+    zoom?: number;
+    bearing?: number;
+    pitch?: number;
+    duration?: number;
+  }): void {
+    if (!this.map) return;
+    this.map.flyTo({
+      ...(camera.center ? { center: camera.center } : {}),
+      ...(typeof camera.zoom === "number" ? { zoom: camera.zoom } : {}),
+      ...(typeof camera.bearing === "number" ? { bearing: camera.bearing } : {}),
+      ...(typeof camera.pitch === "number" ? { pitch: camera.pitch } : {}),
+      duration: typeof camera.duration === "number" ? camera.duration : 800,
+    });
+  }
+
+  /**
+   * Query rendered features at a geographic point, for the scripting API's
+   * "identify" command. Mirrors the in-app Identify tool: it queries the same
+   * candidate style layers MapLibre renders for each layer
+   * ({@link getCandidateStyleLayers}) and falls back to property matching when a
+   * feature carries no stable id, so a Python caller gets the same hit a click
+   * would.
+   *
+   * @param lngLat Geographic point as `[lng, lat]`.
+   * @param layerId Optional store layer id to restrict the query to; omit to
+   *   query every layer at the point.
+   * @returns One entry per matched feature, topmost first.
+   */
+  identifyFeatures(
+    lngLat: [number, number],
+    layerId?: string,
+  ): Array<{
+    layerId: string;
+    featureId: string | null;
+    properties: Record<string, unknown>;
+    geometry: Geometry | null;
+  }> {
+    if (!this.map) return [];
+    const point = this.map.project(lngLat);
+    const targets = layerId
+      ? this.syncedLayers.filter((layer) => layer.id === layerId)
+      : this.syncedLayers;
+    const results: Array<{
+      layerId: string;
+      featureId: string | null;
+      properties: Record<string, unknown>;
+      geometry: Geometry | null;
+    }> = [];
+    for (const layer of targets) {
+      const styleIds = this.getNativeLayerIds(layer);
+      if (styleIds.length === 0) continue;
+      const features = this.map.queryRenderedFeatures(point, {
+        layers: styleIds,
+      });
+      for (const feature of features) {
+        results.push({
+          layerId: layer.id,
+          featureId: featureIdForLayer(layer, feature),
+          properties: (feature.properties ?? {}) as Record<string, unknown>,
+          geometry: feature.geometry ?? null,
+        });
+      }
+    }
+    return results;
   }
 
   highlightFeature(
@@ -650,13 +922,26 @@ export class MapController {
     this.syncHighlight(EMPTY_HIGHLIGHT);
   }
 
-  private enforceDefaultProjection(): void {
+  /** Current map projection, normalized to the two values we persist. */
+  readProjection(): MapProjection {
+    return this.map?.getProjection()?.type === "mercator"
+      ? "mercator"
+      : "globe";
+  }
+
+  /**
+   * Apply the projection from the active map preferences. Defaults to globe so
+   * projects saved before projection was persisted keep their previous look.
+   * Retries on the next idle if the style is not ready to accept it yet.
+   */
+  private enforceProjection(): void {
     if (!this.map) return;
+    const desired = this.mapPreferences.projection ?? DEFAULT_PROJECTION.type;
     try {
-      if (this.map.getProjection()?.type === DEFAULT_PROJECTION.type) return;
-      this.map.setProjection(DEFAULT_PROJECTION);
+      if (this.map.getProjection()?.type === desired) return;
+      this.map.setProjection({ type: desired });
     } catch {
-      this.map.once("idle", () => this.enforceDefaultProjection());
+      this.map.once("idle", () => this.enforceProjection());
     }
   }
 
@@ -672,17 +957,7 @@ export class MapController {
   private fitFeature(featureCollection: FeatureCollection): void {
     if (!this.map || featureCollection.features.length === 0) return;
     const box = bbox(featureCollection) as [number, number, number, number];
-    if (box.some((value) => !Number.isFinite(value))) return;
-
-    if (box[0] === box[2] && box[1] === box[3]) {
-      this.map.flyTo({
-        center: [box[0], box[1]],
-        zoom: Math.max(this.map.getZoom(), 14),
-        duration: 800,
-      });
-      return;
-    }
-
+    // fitBounds validates the box and handles point-sized boxes.
     this.fitBounds(box);
   }
 
@@ -1182,6 +1457,10 @@ export class MapController {
       return [{ id: `layer-${layer.id}-raster` }];
     }
 
+    if (layer.type === "video") {
+      return [{ id: `layer-${layer.id}-video` }];
+    }
+
     if (layer.type === "vector-tiles") {
       return vectorTileStyleLayerIds(layer).map((id) => ({
         id,
@@ -1466,6 +1745,50 @@ function constrainMapView(
       clampNumber(preferences.maxPitch, 0, DEFAULT_MAX_PITCH),
     ),
   };
+}
+
+/**
+ * Resolve a stable feature id for an identify hit. Prefers the feature's own id;
+ * for a GeoJSON layer without one, matches the rendered feature back to a source
+ * feature by property equality and returns its id (or array index). Mirrors the
+ * in-app Identify behaviour so the scripting API reports consistent ids.
+ */
+function featureIdForLayer(
+  layer: GeoLibreLayer,
+  feature: maplibregl.MapGeoJSONFeature,
+): string | null {
+  if (feature.id != null) return String(feature.id);
+  if (!layer.geojson) return null;
+  const properties = feature.properties ?? {};
+  const propertyKeys = Object.keys(properties);
+  // With no properties there is nothing to match on, so any "match" would be a
+  // fake id (the array index) that breaks if features are reordered — bail out.
+  if (propertyKeys.length === 0) return null;
+  // Match by full property-set equality (same keys and values), and only accept
+  // an UNAMBIGUOUS hit; a non-unique match returns null (no stable id), like the
+  // feature.id guard above. MapLibre re-parses object/array property values into
+  // fresh references each query, so compare those by JSON rather than identity.
+  const valuesEqual = (a: unknown, b: unknown): boolean => {
+    if (a === b) return true;
+    if (a && b && typeof a === "object" && typeof b === "object") {
+      return JSON.stringify(a) === JSON.stringify(b);
+    }
+    return false;
+  };
+  const matches = layer.geojson.features
+    .map((candidate, index) => ({ candidate, index }))
+    .filter(({ candidate }) => {
+      const candidateProperties = candidate.properties ?? {};
+      if (Object.keys(candidateProperties).length !== propertyKeys.length) {
+        return false;
+      }
+      return propertyKeys.every((key) =>
+        valuesEqual(candidateProperties[key], properties[key]),
+      );
+    });
+  if (matches.length !== 1) return null;
+  const { candidate, index } = matches[0];
+  return String(candidate.id ?? index);
 }
 
 function effectiveMinZoomForPreferences(

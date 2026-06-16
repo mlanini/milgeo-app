@@ -49,53 +49,9 @@ export const countFeaturesAlgorithm: ProcessingAlgorithm = {
   },
 };
 
-export const exportGeoJsonPlaceholder: ProcessingAlgorithm = {
-  id: "export-geojson",
-  name: "Export GeoJSON",
-  description: "Export layer to GeoJSON file",
-  parameters: [
-    { id: "layer", label: "Layer", type: "layer", required: true },
-  ],
-  run: (ctx) => {
-    // TODO(v0.5): Export via Tauri save dialog
-    ctx.log("Not implemented — export GeoJSON planned for v0.5");
-  },
-};
-
-export const bufferPlaceholder: ProcessingAlgorithm = {
-  id: "buffer",
-  name: "Buffer",
-  description: "Buffer geometries by distance",
-  parameters: [
-    { id: "layer", label: "Layer", type: "layer", required: true },
-    { id: "distance", label: "Distance (m)", type: "number", default: 100 },
-  ],
-  run: (ctx) => {
-    // TODO(v0.5): Buffer via Python sidecar or Turf.js
-    ctx.log("Not implemented — buffer planned for v0.5 (Python sidecar)");
-  },
-};
-
-export const reprojectPlaceholder: ProcessingAlgorithm = {
-  id: "reproject",
-  name: "Reproject",
-  description: "Reproject layer to another CRS",
-  parameters: [
-    { id: "layer", label: "Layer", type: "layer", required: true },
-    { id: "crs", label: "Target CRS", type: "string", default: "EPSG:4326" },
-  ],
-  run: (ctx) => {
-    // TODO(v0.5): Reproject via GDAL in Python sidecar
-    ctx.log("Not implemented — reproject planned for v0.5 (GDAL sidecar)");
-  },
-};
-
 export const ALGORITHMS: ProcessingAlgorithm[] = [
   calculateBoundsAlgorithm,
   countFeaturesAlgorithm,
-  exportGeoJsonPlaceholder,
-  bufferPlaceholder,
-  reprojectPlaceholder,
 ];
 
 export function getAlgorithm(id: string): ProcessingAlgorithm | undefined {
