@@ -185,7 +185,7 @@ export class TraccarClient {
 
   /** GET /api/session — check if the session is still valid. */
   async verifySession(): Promise<Record<string, unknown>> {
-    return this._getJson("/api/session");
+    return this._getJson("/api/session") as Promise<Record<string, unknown>>;
   }
 
   /** GET /api/devices?all=true */
@@ -231,7 +231,7 @@ export class TraccarClient {
 
   /** GET /api/server */
   async getServerInfo(): Promise<Record<string, unknown>> {
-    return this._getJson("/api/server");
+    return this._getJson("/api/server") as Promise<Record<string, unknown>>;
   }
 
   /**

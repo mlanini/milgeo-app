@@ -15,6 +15,7 @@
  */
 
 import type { Map as MaplibreMap, GeoJSONSource } from "maplibre-gl";
+import type { Feature } from "geojson";
 import type { TraccarDeviceState, TraccarPosition } from "./traccar-client";
 
 const SRC_TRACKS  = "sillages-tracks";
@@ -24,7 +25,7 @@ const LYR_DOT     = "sillages-positions-dot";
 const LYR_LABEL   = "sillages-positions-label";
 
 /** Empty FeatureCollection. */
-const EMPTY_FC = { type: "FeatureCollection", features: [] } as const;
+const EMPTY_FC = { type: "FeatureCollection" as const, features: [] as Feature[] };
 
 // ─── Public API ────────────────────────────────────────────────────────────────
 

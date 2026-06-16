@@ -60,9 +60,7 @@ import { isTauri } from "../../lib/is-tauri";
 
 /** Mirror the sidecar base-URL logic from @geolibre/processing/sidecar-client. */
 const SIDECAR_BASE_URL: string =
-  (typeof import.meta !== "undefined" &&
-    // @ts-expect-error — Vite replaces import.meta.env at build time
-    (import.meta.env as Record<string, string>).VITE_SIDECAR_URL) ||
+  (import.meta.env.VITE_SIDECAR_URL as string | undefined) ??
   "http://127.0.0.1:8765";
 
 async function fetchSidecarUrl(

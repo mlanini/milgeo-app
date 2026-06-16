@@ -333,8 +333,8 @@ export function PrivacyNoticeDialog({
       <DialogContent
         className={`flex max-h-[90vh] max-w-2xl flex-col gap-0 p-0${startupMode ? " [&>button.absolute]:hidden" : ""}`}
         // Startup mode: block all implicit close gestures.
-        onInteractOutside={startupMode ? (e) => e.preventDefault() : undefined}
-        onEscapeKeyDown={startupMode ? (e) => e.preventDefault() : undefined}
+        onInteractOutside={startupMode ? (e: { preventDefault(): void }) => e.preventDefault() : undefined}
+        onEscapeKeyDown={startupMode ? (e: { preventDefault(): void }) => e.preventDefault() : undefined}
       >
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <DialogHeader className="border-b px-6 py-4 shrink-0">

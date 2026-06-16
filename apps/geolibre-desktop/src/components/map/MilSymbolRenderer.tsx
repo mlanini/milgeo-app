@@ -28,7 +28,7 @@ import type { FeatureCollection, Feature, Point } from "geojson";
 import {
   getTimeSliderDate,
   subscribeTimeSliderDate,
-} from "@geolibre/plugins";
+} from "../../lib/time-slider-state";
 import { useMilLayerStore } from "../../hooks/useMilLayerStore";
 import type { MilGraphicItem } from "@geolibre/core";
 
