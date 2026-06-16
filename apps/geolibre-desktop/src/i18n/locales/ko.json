@@ -59,9 +59,9 @@
       "urlParamsNote": "URL 레이아웃 매개변수는 공유된 뷰어 링크에 있을 때 여전히 적용됩니다."
     },
     "env": {
-      "tokenTitle": "Share.GeoLibre API 토큰",
-      "tokenDescription": "프로젝트 > 공유에서 share.geolibre.app에 프로젝트를 업로드할 때 사용됩니다. <tokenLink>share.geolibre.app/settings</tokenLink>의 설정 > API 토큰에서 생성하세요.",
-      "tokenStorageNote": "이 기기에 로컬로 저장되며 업로드 인증을 위해 share.geolibre.app에만 전송됩니다. 웹 빌드에서는 다른 사이트 데이터와 동일한 브라우저 저장소를 공유하므로, 기기가 손상된 경우 share.geolibre.app에서 토큰을 취소하세요.",
+      "tokenTitle": "Project Sharing API 토큰",
+      "tokenDescription": "프로젝트 > 공유에서 the sharing service에 프로젝트를 업로드할 때 사용됩니다. <tokenLink>Settings</tokenLink>의 설정 > API 토큰에서 생성하세요.",
+      "tokenStorageNote": "이 기기에 로컬로 저장되며 업로드 인증을 위해 the sharing service에만 전송됩니다. 웹 빌드에서는 다른 사이트 데이터와 동일한 브라우저 저장소를 공유하므로, 기기가 손상된 경우 the sharing service에서 토큰을 취소하세요.",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "환경 변수",
       "variablesCount_other": "{{count}}개의 런타임 변수가 활성화되어 있습니다.",

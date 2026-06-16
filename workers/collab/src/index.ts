@@ -1,4 +1,4 @@
-// collab.geolibre.app
+// Collaboration worker — configure deployment domain in wrangler.toml
 //
 // Relay for GeoLibre live-collaboration sessions. A thin router in front of the
 // CollabSession Durable Object:

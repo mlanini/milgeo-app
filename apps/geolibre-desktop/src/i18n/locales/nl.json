@@ -59,9 +59,9 @@
       "urlParamsNote": "URL-indelingsparameters blijven van toepassing wanneer ze aanwezig zijn in gedeelde viewerlinks."
     },
     "env": {
-      "tokenTitle": "Share.GeoLibre API-token",
-      "tokenDescription": "Gebruikt door Project > Delen om projecten te uploaden naar share.geolibre.app. Maak er een aan via Instellingen > API-tokens op <tokenLink>share.geolibre.app/settings</tokenLink>.",
-      "tokenStorageNote": "Lokaal opgeslagen op dit apparaat en alleen verzonden naar share.geolibre.app voor het verifiëren van uploads. In de webbuild deelt het dezelfde browseropslag als andere sitegegevens — verwijder het op share.geolibre.app als uw apparaat gecompromitteerd is.",
+      "tokenTitle": "Project Sharing API-token",
+      "tokenDescription": "Gebruikt door Project > Delen om projecten te uploaden naar the sharing service. Maak er een aan via Instellingen > API-tokens op <tokenLink>Settings</tokenLink>.",
+      "tokenStorageNote": "Lokaal opgeslagen op dit apparaat en alleen verzonden naar the sharing service voor het verifiëren van uploads. In de webbuild deelt het dezelfde browseropslag als andere sitegegevens — verwijder het op the sharing service als uw apparaat gecompromitteerd is.",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "Omgevingsvariabelen",
       "variablesCount_one": "{{count}} ingeschakelde runtime-variabele.",

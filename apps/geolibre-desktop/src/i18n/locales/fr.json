@@ -59,9 +59,9 @@
       "urlParamsNote": "Les paramètres de disposition dans l'URL s'appliquent toujours lorsqu'ils sont présents dans les liens du visualiseur partagé."
     },
     "env": {
-      "tokenTitle": "Jeton d'API Share.GeoLibre",
-      "tokenDescription": "Utilisé par Projet > Partager pour téléverser des projets vers share.geolibre.app. Créez-en un sous Paramètres > Jetons d'API sur <tokenLink>share.geolibre.app/settings</tokenLink>.",
-      "tokenStorageNote": "Stocké localement sur cet appareil et envoyé uniquement à share.geolibre.app pour authentifier les téléversements. Dans la version web, il partage le même stockage de navigateur que les autres données du site — révoquez-le sur share.geolibre.app si votre machine est compromise.",
+      "tokenTitle": "Jeton d'API Project Sharing",
+      "tokenDescription": "Utilisé par Projet > Partager pour téléverser des projets vers the sharing service. Créez-en un sous Paramètres > Jetons d'API sur <tokenLink>Settings</tokenLink>.",
+      "tokenStorageNote": "Stocké localement sur cet appareil et envoyé uniquement à the sharing service pour authentifier les téléversements. Dans la version web, il partage le même stockage de navigateur que les autres données du site — révoquez-le sur the sharing service si votre machine est compromise.",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "Variables d'environnement",
       "variablesCount_one": "{{count}} variable d'exécution activée.",

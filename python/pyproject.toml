@@ -26,7 +26,7 @@ all = ["geopandas", "shapely"]
 dev = ["pytest", "build", "anywidget[dev]", "jupyter-server"]
 
 [project.urls]
-Homepage = "https://geolibre.app"
+Homepage = "https://milgeo.app"
 Repository = "https://github.com/opengeos/GeoLibre"
 
 [tool.hatch.version]

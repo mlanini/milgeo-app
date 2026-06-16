@@ -59,9 +59,9 @@
       "urlParamsNote": "साझा व्यूअर लिंक में मौजूद होने पर URL लेआउट पैरामीटर अभी भी लागू होते हैं।"
     },
     "env": {
-      "tokenTitle": "Share.GeoLibre API टोकन",
-      "tokenDescription": "प्रोजेक्ट > शेयर द्वारा share.geolibre.app पर प्रोजेक्ट अपलोड करने के लिए उपयोग किया जाता है। इसे <tokenLink>share.geolibre.app/settings</tokenLink> पर सेटिंग्स > API टोकन के अंतर्गत बनाएं।",
-      "tokenStorageNote": "इस डिवाइस पर स्थानीय रूप से संग्रहीत और केवल अपलोड प्रमाणित करने के लिए share.geolibre.app को भेजा जाता है। वेब बिल्ड में यह अन्य साइट डेटा के साथ एक ही ब्राउज़र स्टोरेज साझा करता है, इसलिए यदि आपकी मशीन से छेड़छाड़ हो तो share.geolibre.app पर इसे रद्द करें।",
+      "tokenTitle": "Project Sharing API टोकन",
+      "tokenDescription": "प्रोजेक्ट > शेयर द्वारा the sharing service पर प्रोजेक्ट अपलोड करने के लिए उपयोग किया जाता है। इसे <tokenLink>Settings</tokenLink> पर सेटिंग्स > API टोकन के अंतर्गत बनाएं।",
+      "tokenStorageNote": "इस डिवाइस पर स्थानीय रूप से संग्रहीत और केवल अपलोड प्रमाणित करने के लिए the sharing service को भेजा जाता है। वेब बिल्ड में यह अन्य साइट डेटा के साथ एक ही ब्राउज़र स्टोरेज साझा करता है, इसलिए यदि आपकी मशीन से छेड़छाड़ हो तो the sharing service पर इसे रद्द करें।",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "परिवेश चर",
       "variablesCount_one": "{{count}} सक्रिय रनटाइम चर।",

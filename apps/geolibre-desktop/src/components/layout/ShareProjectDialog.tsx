@@ -142,17 +142,17 @@ export function ShareProjectDialog({
             Share project
           </DialogTitle>
           <DialogDescription>
-            Upload the current project to share.geolibre.app and get a shareable
-            link.
+            Upload the current project to the sharing service and get a
+            shareable link.
           </DialogDescription>
         </DialogHeader>
 
         {!hasToken ? (
           <div className="space-y-3 text-sm">
             <p className="text-muted-foreground">
-              Add a share.geolibre.app API token in Settings &gt; Environment
+              Add a Project Sharing API token in Settings &gt; Environment
               before sharing. Create one under Settings &gt; API tokens on the
-              website.
+              sharing service website.
             </p>
             <Button
               type="button"
@@ -160,7 +160,7 @@ export function ShareProjectDialog({
               onClick={() => void openExternalLink(SETTINGS_TOKEN_URL)}
             >
               <ExternalLink className="mr-2 h-3.5 w-3.5" />
-              Open share.geolibre.app settings
+              Open sharing service settings
             </Button>
           </div>
         ) : result ? (

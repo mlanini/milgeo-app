@@ -59,9 +59,9 @@
       "urlParamsNote": "URL düzen parametreleri, paylaşılan görüntüleyici bağlantılarında mevcut olduğunda hâlâ geçerlidir."
     },
     "env": {
-      "tokenTitle": "Share.GeoLibre API belirteci",
-      "tokenDescription": "Proje > Paylaş seçeneği tarafından projeleri share.geolibre.app adresine yüklemek için kullanılır. <tokenLink>share.geolibre.app/settings</tokenLink> adresindeki Ayarlar > API belirteçleri bölümünden oluşturun.",
-      "tokenStorageNote": "Bu cihazda yerel olarak saklanır ve yalnızca yüklemeleri doğrulamak için share.geolibre.app adresine gönderilir. Web derlemesinde diğer site verileriyle aynı tarayıcı deposunu paylaşır; dolayısıyla makinenizin güvenliği ihlal edilirse share.geolibre.app üzerinden iptal edin.",
+      "tokenTitle": "Project Sharing API belirteci",
+      "tokenDescription": "Proje > Paylaş seçeneği tarafından projeleri the sharing service adresine yüklemek için kullanılır. <tokenLink>Settings</tokenLink> adresindeki Ayarlar > API belirteçleri bölümünden oluşturun.",
+      "tokenStorageNote": "Bu cihazda yerel olarak saklanır ve yalnızca yüklemeleri doğrulamak için the sharing service adresine gönderilir. Web derlemesinde diğer site verileriyle aynı tarayıcı deposunu paylaşır; dolayısıyla makinenizin güvenliği ihlal edilirse the sharing service üzerinden iptal edin.",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "Ortam değişkenleri",
       "variablesCount_one": "{{count}} etkin çalışma zamanı değişkeni.",

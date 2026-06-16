@@ -59,9 +59,9 @@
       "urlParamsNote": "URL-Layout-Parameter werden angewendet, wenn sie in freigegebenen Viewer-Links vorhanden sind."
     },
     "env": {
-      "tokenTitle": "Share.GeoLibre API-Token",
-      "tokenDescription": "Wird von Projekt > Teilen verwendet, um Projekte auf share.geolibre.app hochzuladen. Erstellen Sie einen unter Einstellungen > API-Tokens auf <tokenLink>share.geolibre.app/settings</tokenLink>.",
-      "tokenStorageNote": "Wird lokal auf diesem Gerät gespeichert und nur an share.geolibre.app gesendet, um Uploads zu authentifizieren. Im Web-Build teilt es denselben Browser-Speicher wie andere Website-Daten — widerrufen Sie das Token auf share.geolibre.app, wenn Ihr Gerät kompromittiert ist.",
+      "tokenTitle": "Project Sharing API-Token",
+      "tokenDescription": "Wird von Projekt > Teilen verwendet, um Projekte auf the sharing service hochzuladen. Erstellen Sie einen unter Einstellungen > API-Tokens auf <tokenLink>Settings</tokenLink>.",
+      "tokenStorageNote": "Wird lokal auf diesem Gerät gespeichert und nur an the sharing service gesendet, um Uploads zu authentifizieren. Im Web-Build teilt es denselben Browser-Speicher wie andere Website-Daten — widerrufen Sie das Token auf the sharing service, wenn Ihr Gerät kompromittiert ist.",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "Umgebungsvariablen",
       "variablesCount_one": "{{count}} aktivierte Laufzeitvariable.",

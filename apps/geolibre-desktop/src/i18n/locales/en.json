@@ -125,9 +125,9 @@
       "urlParamsNote": "URL layout parameters still apply when present in shared viewer links."
     },
     "env": {
-      "tokenTitle": "Share.GeoLibre API token",
-      "tokenDescription": "Used by Project > Share to upload projects to share.geolibre.app. Create one under Settings > API tokens at <tokenLink>share.geolibre.app/settings</tokenLink>.",
-      "tokenStorageNote": "Stored locally on this device and sent only to share.geolibre.app to authenticate uploads. On the web build it shares the same browser storage as other site data, so revoke it on share.geolibre.app if your machine is compromised.",
+      "tokenTitle": "Project Sharing API token",
+      "tokenDescription": "Used by Project > Share to upload projects to the configured sharing service. Create one under Settings > API tokens at <tokenLink>Settings</tokenLink>.",
+      "tokenStorageNote": "Stored locally on this device and sent only to the sharing service to authenticate uploads. On the web build it shares the same browser storage as other site data, so revoke it in the service settings if your machine is compromised.",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "Environment variables",
       "variablesCount_one": "{{count}} enabled runtime variable.",

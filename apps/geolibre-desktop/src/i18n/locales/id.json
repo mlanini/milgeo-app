@@ -59,9 +59,9 @@
       "urlParamsNote": "Parameter tata letak URL tetap berlaku jika ada dalam tautan penampil bersama."
     },
     "env": {
-      "tokenTitle": "Token API Share.GeoLibre",
-      "tokenDescription": "Digunakan oleh Proyek > Bagikan untuk mengunggah proyek ke share.geolibre.app. Buat token di Pengaturan > Token API di <tokenLink>share.geolibre.app/settings</tokenLink>.",
-      "tokenStorageNote": "Disimpan secara lokal di perangkat ini dan hanya dikirim ke share.geolibre.app untuk mengautentikasi unggahan. Pada build web, token ini berbagi penyimpanan browser yang sama dengan data situs lain, jadi cabut token di share.geolibre.app jika perangkat Anda disusupi.",
+      "tokenTitle": "Token API Project Sharing",
+      "tokenDescription": "Digunakan oleh Proyek > Bagikan untuk mengunggah proyek ke the sharing service. Buat token di Pengaturan > Token API di <tokenLink>Settings</tokenLink>.",
+      "tokenStorageNote": "Disimpan secara lokal di perangkat ini dan hanya dikirim ke the sharing service untuk mengautentikasi unggahan. Pada build web, token ini berbagi penyimpanan browser yang sama dengan data situs lain, jadi cabut token di the sharing service jika perangkat Anda disusupi.",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "Variabel lingkungan",
       "variablesCount_other": "{{count}} variabel runtime yang diaktifkan.",

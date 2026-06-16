@@ -59,9 +59,9 @@
       "urlParamsNote": "共有ビューアーリンクに URL レイアウトパラメーターが含まれている場合、それらは引き続き適用されます。"
     },
     "env": {
-      "tokenTitle": "Share.GeoLibre API トークン",
-      "tokenDescription": "プロジェクト > 共有 で share.geolibre.app にプロジェクトをアップロードする際に使用します。<tokenLink>share.geolibre.app/settings</tokenLink> の設定 > API トークン でトークンを作成してください。",
-      "tokenStorageNote": "このデバイスにローカルで保存され、アップロードの認証のためにのみ share.geolibre.app に送信されます。ウェブビルドでは他のサイトデータと同じブラウザーストレージを共有するため、デバイスが侵害された場合は share.geolibre.app でトークンを失効させてください。",
+      "tokenTitle": "Project Sharing API トークン",
+      "tokenDescription": "プロジェクト > 共有 で the sharing service にプロジェクトをアップロードする際に使用します。<tokenLink>Settings</tokenLink> の設定 > API トークン でトークンを作成してください。",
+      "tokenStorageNote": "このデバイスにローカルで保存され、アップロードの認証のためにのみ the sharing service に送信されます。ウェブビルドでは他のサイトデータと同じブラウザーストレージを共有するため、デバイスが侵害された場合は the sharing service でトークンを失効させてください。",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "環境変数",
       "variablesCount_other": "{{count}} 個の有効なランタイム変数。",

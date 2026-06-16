@@ -59,9 +59,9 @@
       "urlParamsNote": "Параметры макета URL применяются, если они присутствуют в ссылках общего просмотра."
     },
     "env": {
-      "tokenTitle": "API-токен Share.GeoLibre",
-      "tokenDescription": "Используется в разделе Проект > Поделиться для загрузки проектов на share.geolibre.app. Создайте токен в Настройки > API-токены на <tokenLink>share.geolibre.app/settings</tokenLink>.",
-      "tokenStorageNote": "Хранится локально на этом устройстве и передаётся только на share.geolibre.app для аутентификации загрузок. В веб-сборке используется то же хранилище браузера, что и для других данных сайта; отзовите токен на share.geolibre.app, если ваше устройство скомпрометировано.",
+      "tokenTitle": "API-токен Project Sharing",
+      "tokenDescription": "Используется в разделе Проект > Поделиться для загрузки проектов на the sharing service. Создайте токен в Настройки > API-токены на <tokenLink>Settings</tokenLink>.",
+      "tokenStorageNote": "Хранится локально на этом устройстве и передаётся только на the sharing service для аутентификации загрузок. В веб-сборке используется то же хранилище браузера, что и для других данных сайта; отзовите токен на the sharing service, если ваше устройство скомпрометировано.",
       "tokenPlaceholder": "glb_…",
       "variablesTitle": "Переменные среды",
       "variablesCount_one": "Включена {{count}} переменная времени выполнения.",

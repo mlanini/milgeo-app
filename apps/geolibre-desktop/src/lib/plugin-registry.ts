@@ -27,10 +27,9 @@ export interface PluginRegistry {
   registryUrl: string;
 }
 
-// The curated registry is hosted at plugins.geolibre.app (the geolibre-plugins
-// repo, deployed to GitHub Pages). Override per build via env for forks or
-// local testing.
-const DEFAULT_REGISTRY_URL = "https://plugins.geolibre.app/plugin-registry.json";
+// No default registry URL — opt-in via VITE_GEOLIBRE_PLUGIN_REGISTRY_URL build-time
+// env var. Set it to a hosted plugin-registry.json to enable the marketplace.
+const DEFAULT_REGISTRY_URL = "";
 
 /**
  * Resolve the registry URL. Honors VITE_GEOLIBRE_PLUGIN_REGISTRY_URL (resolved

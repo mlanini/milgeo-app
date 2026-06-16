@@ -21,7 +21,8 @@ export interface DesktopSettings {
   demSource: DemSource;
   localDtmPath: string;
   /**
-   * Personal API token for uploading projects to share.geolibre.app. Stored in
+   * Personal API token for uploading projects to the configured sharing
+   * service (VITE_GEOLIBRE_SHARE_URL). Stored in
    * the same localStorage-backed settings as everything else, so on the web
    * build it shares the exposure surface of any other localStorage entry (a
    * same-origin script could read it). This is the well-understood "PAT in local

@@ -62,6 +62,7 @@ import {
   type DesktopLayoutSettings,
 } from "../../hooks/useDesktopSettings";
 import { useLanguage } from "../../hooks/useLanguage";
+import { resolveShareBaseUrl } from "../../lib/share-geolibre";
 
 type SettingsSection =
   | "map"
@@ -1061,7 +1062,7 @@ export function SettingsDialog({
                           tokenLink: (
                             <a
                               className="underline"
-                              href="https://share.geolibre.app/settings"
+                              href={resolveShareBaseUrl() ? `${resolveShareBaseUrl()}/settings` : "#"}
                               target="_blank"
                               rel="noreferrer noopener"
                             />

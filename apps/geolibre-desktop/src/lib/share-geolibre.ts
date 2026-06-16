@@ -1,6 +1,7 @@
-// Uploads a serialized GeoLibre project to share.geolibre.app via its
+// Uploads a serialized project to a share service via its
 // `POST /api/projects` endpoint, authenticated with a personal API token the
 // user created on the website. Used by the Project > Share action.
+// Configure the service URL with the VITE_GEOLIBRE_SHARE_URL build-time env var.
 
 import { DEFAULT_PROJECT_NAME } from "@geolibre/core";
 
@@ -26,7 +27,8 @@ export interface ShareUploadOptions {
   fetchImpl?: typeof fetch;
 }
 
-export const DEFAULT_SHARE_BASE_URL = "https://share.geolibre.app";
+// No default share URL — opt-in via VITE_GEOLIBRE_SHARE_URL build-time env var.
+export const DEFAULT_SHARE_BASE_URL = "";
 
 // Upload deadline; a hung connection rejects with a TimeoutError rather than
 // spinning forever.
@@ -84,7 +86,7 @@ export function resolveShareBaseUrl(
       // Invalid URL; fall through to the production default.
     }
   }
-  return DEFAULT_SHARE_BASE_URL;
+  return ""; // no default — caller should guard against empty string
 }
 
 interface ShareProjectResponse {
@@ -103,11 +105,16 @@ export async function uploadProjectToShare(
   const token = options.token.trim();
   if (!token) {
     throw new Error(
-      "Add a share.geolibre.app API token in Settings before sharing.",
+      "Add a Project Sharing API token in Settings > Environment before sharing.",
     );
   }
 
   const base = (options.baseUrl ?? resolveShareBaseUrl()).replace(/\/+$/, "");
+  if (!base) {
+    throw new Error(
+      "No sharing service configured. Set VITE_GEOLIBRE_SHARE_URL to enable project sharing.",
+    );
+  }
   const fetchImpl = options.fetchImpl ?? fetch;
 
   // Bound the request so a stalled server can't leave the dialog spinning
@@ -141,7 +148,7 @@ export async function uploadProjectToShare(
       }
     }
     throw new Error(
-      "Could not reach share.geolibre.app. Check your internet connection.",
+      "Could not reach the sharing service. Check your internet connection.",
     );
   }
 
@@ -152,7 +159,7 @@ export async function uploadProjectToShare(
   const payload = (await response.json().catch(() => ({}))) as ShareProjectResponse;
   const project = payload.project;
   if (!project?.projectUrl || !project.rawJsonUrl) {
-    throw new Error("share.geolibre.app returned an unexpected response.");
+    throw new Error("The sharing service returned an unexpected response.");
   }
   return {
     username: project.username ?? "",

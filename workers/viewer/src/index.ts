@@ -1,29 +1,36 @@
-// viewer.geolibre.app
+// Viewer proxy worker
 //
-// Serves the GeoLibre web viewer at a clean subdomain by proxying to the build
-// already published at https://geolibre.app/demo (GitHub Pages). We proxy rather
-// than re-host the files because the viewer bundles a 32 MiB DuckDB WASM asset,
-// which exceeds Cloudflare's 25 MiB per-asset limit for Workers/Pages. GitHub
-// Pages has no such limit, so it stays the origin of record.
+// Serves the web app at a clean subdomain by proxying to the build deployed
+// at a static host. Configure the origin via the ORIGIN_URL environment
+// variable (set in wrangler.toml [vars] or Cloudflare dashboard secrets).
 //
-// The viewer build uses relative asset paths, so requests map 1:1:
-//   viewer.geolibre.app/<path>?<query> -> geolibre.app/demo/<path>?<query>
+// The app build uses relative asset paths, so requests map 1:1:
+//   <worker-domain>/<path>?<query> -> ORIGIN_URL/<path>?<query>
 //
-// Origin redirects (e.g. trailing slash) are followed server-side so the public
-// viewer.geolibre.app URL is preserved and geolibre.app/demo is never exposed.
+// Origin redirects are followed server-side so the worker public URL is
+// preserved and ORIGIN_URL is never exposed to the client.
 
-const ORIGIN = "https://geolibre.app/demo";
-
-interface Env {}
+interface Env {
+  /** Base URL of the static build to proxy, e.g. https://example.com/demo */
+  ORIGIN_URL?: string;
+}
 
 export default {
   async fetch(
     request: Request,
-    _env: Env,
+    env: Env,
     _ctx: ExecutionContext,
   ): Promise<Response> {
+    const origin = (env.ORIGIN_URL ?? "").replace(/\/+$/, "");
+    if (!origin) {
+      return new Response(
+        "ORIGIN_URL is not configured. Set it in wrangler.toml [vars] or the Cloudflare dashboard.",
+        { status: 503 },
+      );
+    }
+
     const url = new URL(request.url);
-    const target = `${ORIGIN}${url.pathname}${url.search}`;
+    const target = `${origin}${url.pathname}${url.search}`;
 
     // Drop credential headers a public static-asset proxy never needs; keep the
     // rest (e.g. Range, Accept-Encoding) so large-asset requests work.
@@ -32,8 +39,7 @@ export default {
     headers.delete("authorization");
 
     // Follow origin redirects (e.g. trailing slash) server-side to preserve the
-    // public URL. This assumes geolibre.app/demo never redirects back to
-    // viewer.geolibre.app, which would otherwise make the worker loop on itself.
+    // public URL.
     try {
       return await fetch(target, {
         method: request.method,

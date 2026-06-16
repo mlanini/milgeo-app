@@ -36,9 +36,21 @@ import { getPluginManager, upgradeExternalPlugin } from "../../hooks/usePlugins"
 import {
   fetchPluginRegistry,
   isNewerVersion,
+  resolveRegistryUrl,
   satisfiesMinVersion,
   type PluginRegistryEntry,
 } from "../../lib/plugin-registry";
+
+/** Base URL of the plugin marketplace website (derived from the configured registry URL). */
+const REGISTRY_HOMEPAGE = (() => {
+  const url = resolveRegistryUrl();
+  if (!url) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+})();
 import { mergeStringLists } from "../../lib/string-lists";
 import { pickLocalPathWithFallback } from "../../lib/tauri-io";
 import { openExternalLink } from "../../lib/open-external";
@@ -350,21 +362,25 @@ export function ManagePluginsDialog({
         <DialogHeader className="border-b px-6 pb-4 pt-6">
           <DialogTitle>Manage Plugins</DialogTitle>
           <DialogDescription>
-            Browse, install, update, and remove external GeoLibre plugins.{" "}
+            Browse, install, update, and remove external plugins.{" "}
             Plugins are listed in the{" "}
-            <a
-              href="https://plugins.geolibre.app"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-2 hover:text-primary"
-              onClick={(event) => {
-                event.preventDefault();
-                void openExternalLink("https://plugins.geolibre.app");
-              }}
-            >
-              GeoLibre plugin registry
-              <ExternalLink className="h-3 w-3" />
-            </a>
+            {REGISTRY_HOMEPAGE ? (
+              <a
+                href={REGISTRY_HOMEPAGE}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                onClick={(event) => {
+                  event.preventDefault();
+                  void openExternalLink(REGISTRY_HOMEPAGE);
+                }}
+              >
+                plugin registry
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              "plugin registry"
+            )}
             .
           </DialogDescription>
         </DialogHeader>
