@@ -38,6 +38,7 @@ export interface DesktopLayoutSettings {
   showProjectInfo: boolean;
   stylePanelVisible: boolean;
   toolbarLabels: boolean;
+}
 
 interface DesktopSettingsState {
   desktopSettings: DesktopSettings;
