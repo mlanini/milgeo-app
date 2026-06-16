@@ -463,6 +463,18 @@ function renderTemplate(
         if (config.footer) { var f = document.createElement('p'); f.innerHTML = config.footer; footer.appendChild(f); }
         if (footer.children.length > 0) { footer.classList.add(config.theme); footer.setAttribute('id', 'footer'); story.appendChild(footer); }
 
+        // Shape right-to-left scripts (Arabic, Hebrew, Persian, …) correctly so
+        // basemap labels are not rendered reversed. Lazy-loaded, so it only
+        // downloads when an RTL label is actually encountered. The URL is loaded
+        // by a Web Worker via importScripts(), which (unlike a <script> tag)
+        // cannot carry an SRI integrity hash; we pin the exact version instead,
+        // matching the CDN trust already extended to maplibre-gl/scrollama above.
+        if (maplibregl.getRTLTextPluginStatus?.() === 'unavailable') {
+            // MapLibre GL v4+ signature is (url, lazy?) returning a Promise; the
+            // lazy flag is the SECOND arg, and the Promise must be caught.
+            maplibregl.setRTLTextPlugin('https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.4.0/dist/mapbox-gl-rtl-text.js', true).catch(function (e) { console.error('[GeoLibre] RTL plugin failed', e); });
+        }
+
         var map = new maplibregl.Map({
             container: 'map',
             style: config.style,
