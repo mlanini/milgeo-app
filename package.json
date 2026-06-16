@@ -1,7 +1,7 @@
 {
   "name": "milgeo",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "MilGeo.app — geospatial web app with APP-6D military tactical tools (based on GeoLibre)",
   "workspaces": [
     "apps/*",

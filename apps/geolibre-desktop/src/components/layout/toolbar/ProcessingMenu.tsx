@@ -23,6 +23,7 @@ interface ProcessingMenuProps {
   earthEnginePanel: ToolbarPanel;
   onOpenNetworkTool: (kind: "isochrone" | "od-matrix") => void;
   onOpenPlanetaryComputer: () => void;
+  onOpenGeoreferencer: () => void;
 }
 
 /** The Processing menu: assistant, toolboxes, conversion/vector/network/statistics/raster submenus. */
@@ -31,6 +32,7 @@ export function ProcessingMenu({
   earthEnginePanel,
   onOpenNetworkTool,
   onOpenPlanetaryComputer,
+  onOpenGeoreferencer,
 }: ProcessingMenuProps) {
   const { t } = useTranslation();
   const setProcessingOpen = useAppStore((s) => s.setProcessingOpen);
@@ -347,6 +349,9 @@ export function ProcessingMenu({
             <DropdownMenuItem onSelect={() => setRasterToolOpen("raster-calc")}>
               {t("toolbar.rasterTool.rasterCalc")}
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setRasterToolOpen("spectral-index")}>
+              {t("toolbar.rasterTool.spectralIndex")}
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setRasterToolOpen("reclassify")}>
               {t("toolbar.rasterTool.reclassify")}
             </DropdownMenuItem>
@@ -355,6 +360,10 @@ export function ProcessingMenu({
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => setRasterToolOpen("focal")}>
               {t("toolbar.rasterTool.focal")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onOpenGeoreferencer}>
+              {t("toolbar.item.georeferencing")}
             </DropdownMenuItem>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
