@@ -73,3 +73,4 @@ export {
 } from "./geocoding";
 // MilGeo local types
 export * from "./mil-types";
+export { getRuntimeEnvironment } from "./runtime-env";
