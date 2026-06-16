@@ -183,6 +183,11 @@ export function syncLayer(
     syncVideoLayer(map, layer, beforeId);
     return;
   }
+
+  if (layer.type === "image") {
+    syncImageLayer(map, layer, beforeId);
+    return;
+  }
 }
 
 function isExternalNativeLayer(layer: GeoLibreLayer): boolean {
@@ -1497,15 +1502,15 @@ function syncRasterTileLayer(
   );
 }
 
-type VideoCoordinates = [
+type CornerCoordinates = [
   [number, number],
   [number, number],
   [number, number],
   [number, number],
 ];
 
-/** Validate persisted video corners: four in-range [lng, lat] pairs. */
-function isVideoCoordinates(value: unknown): value is VideoCoordinates {
+/** Validate persisted overlay corners (video/image): four in-range [lng, lat] pairs. */
+function isCornerCoordinates(value: unknown): value is CornerCoordinates {
   return (
     Array.isArray(value) &&
     value.length === 4 &&
@@ -1545,7 +1550,7 @@ function syncVideoLayer(
           typeof value === "string" && value.trim().length > 0,
       )
     : [];
-  const coordinates = isVideoCoordinates(layer.source.coordinates)
+  const coordinates = isCornerCoordinates(layer.source.coordinates)
     ? layer.source.coordinates
     : undefined;
   if (urls.length === 0 || !coordinates) return;
@@ -1553,6 +1558,51 @@ function syncVideoLayer(
     map.addSource(src, { type: "video", urls, coordinates });
     // MapLibre's VideoSource exposes setCoordinates() but no URL setter, so a
     // future edit-layer flow would need to remove + re-add to change urls.
+  }
+  ensureLayer(
+    map,
+    lid,
+    {
+      id: lid,
+      type: "raster",
+      source: src,
+      ...styleLayerZoomRange(layer.style),
+      paint: rasterPaint(layer.style, layer.opacity),
+      layout: { visibility: layer.visible ? "visible" : "none" },
+    },
+    beforeId,
+  );
+}
+
+/**
+ * A georeferenced image overlay (MapLibre `type: "image"` source rendered as a
+ * raster layer), produced by the Raster Georeferencer. The source carries a
+ * single image `url` (an http(s) or data URL) and the four corner `coordinates`
+ * in [lng, lat] order: top-left, top-right, bottom-right, bottom-left.
+ */
+function syncImageLayer(
+  map: maplibregl.Map,
+  layer: GeoLibreLayer,
+  beforeId?: string,
+): void {
+  const src = sourceId(layer.id);
+  const lid = `layer-${layer.id}-image`;
+  const url =
+    typeof layer.source.url === "string" && layer.source.url.length > 0
+      ? layer.source.url
+      : undefined;
+  const coordinates = isCornerCoordinates(layer.source.coordinates)
+    ? layer.source.coordinates
+    : undefined;
+  if (!url || !coordinates) return;
+  const existing = map.getSource(src);
+  if (!existing) {
+    map.addSource(src, { type: "image", url, coordinates });
+  } else if (existing.type === "image") {
+    // Unlike VideoSource, MapLibre's ImageSource can replace both the url and
+    // the corners in place, so a re-render (e.g. a future edit-GCPs flow) keeps
+    // the overlay in sync instead of leaving the old image pinned.
+    (existing as maplibregl.ImageSource).updateImage({ url, coordinates });
   }
   ensureLayer(
     map,
@@ -2189,6 +2239,7 @@ export function removeLayerFromMap(
     textLayerId(layerId),
     `layer-${layerId}-raster`,
     `layer-${layerId}-video`,
+    `layer-${layerId}-image`,
     ...(layer ? vectorTileAllStyleLayerIds(layer) : []),
     vectorTileCircleLayerId(layerId),
     vectorTileLineLayerId(layerId),

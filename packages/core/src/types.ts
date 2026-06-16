@@ -60,7 +60,8 @@ export type LayerType =
   | "mil-symbol"
   | "mil-graphic"
   | "deckgl-viz"
-  | "video";
+  | "video"
+  | "image";
 
 export type VectorStyleMode =
   | "single"
