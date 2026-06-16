@@ -14,9 +14,9 @@
     "protobufjs"
   ],
   "scripts": {
-    "dev": "npm run dev -w geolibre-desktop",
-    "build": "npm run build -w geolibre-desktop",
-    "build:render": "npm run build:render -w geolibre-desktop",
+    "dev": "npm run dev -w milgeo-app",
+    "build": "npm run build -w milgeo-app",
+    "build:render": "npm run build:render -w milgeo-app",
     "build:embed": "node scripts/build-embed.mjs",
     "typecheck": "npm run build",
     "lint": "eslint apps packages workers tests",
@@ -29,8 +29,8 @@
     "test:e2e": "playwright test",
     "check:rust": "cargo check --manifest-path apps/geolibre-desktop/src-tauri/Cargo.toml",
     "ci": "npm run lint && npm run build && npm run test:frontend:coverage && npm run test:worker && npm run test:backend:coverage && npm run check:rust",
-    "tauri": "npm run tauri -w geolibre-desktop",
-    "tauri:dev": "npm run tauri dev -w geolibre-desktop",
+    "tauri": "npm run tauri -w milgeo-app",
+    "tauri:dev": "npm run tauri dev -w milgeo-app",
     "tauri:build": "node scripts/tauri-build.mjs",
     "msix:build": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-msix.ps1",
     "milsymbol-server": "node servers/milsymbol-server.mjs",
