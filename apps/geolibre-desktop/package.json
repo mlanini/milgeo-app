@@ -72,6 +72,7 @@
     "maplibre-gl-raster": "^0.2.4",
     "maplibre-gl-streetview": "^0.6.0",
     "maplibre-gl-swipe": "^0.7.1",
+    "mgrs": "^1.0.0",
     "milsymbol": "^3.0.4",
     "maplibre-gl-time-slider": "^1.0.3",
     "maplibre-gl-vector": "^0.3.0",

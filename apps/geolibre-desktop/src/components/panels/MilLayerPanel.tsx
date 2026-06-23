@@ -38,7 +38,7 @@ import {
   sidcWithAffiliation,
   type CatalogEntry,
 } from "../../lib/milsymbol-catalog";
-import { parseSidc, buildSidc, ECHELON_OPTIONS, getModifierSet } from "../../lib/mil-sidc";
+import { parseSidc, buildSidc, ECHELON_OPTIONS, getModifierSet, modifierOptions } from "../../lib/mil-sidc";
 import { exportMilGeoJson, readMilGeoJsonFile } from "../../lib/mil-export-json";
 import { exportMilGeoKmz } from "../../lib/mil-export-kmz";
 import { exportMilGeoMilX } from "../../lib/mil-export-milx";
@@ -285,14 +285,8 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   }, [pendingEntry, filtered]);
 
   const catalogMods = useMemo(() => getModifierSet(activeSymbolSet), [activeSymbolSet]);
-  const mod1Options = useMemo(
-    () => Object.entries(catalogMods.m1).map(([code, label]) => ({ code, label })),
-    [catalogMods]
-  );
-  const mod2Options = useMemo(
-    () => Object.entries(catalogMods.m2).map(([code, label]) => ({ code, label })),
-    [catalogMods]
-  );
+  const mod1Options = useMemo(() => modifierOptions(catalogMods.m1), [catalogMods]);
+  const mod2Options = useMemo(() => modifierOptions(catalogMods.m2), [catalogMods]);
 
   // Reset mods when symbol set changes so invalid codes are cleared.
   const prevSymbolSetRef = useRef(activeSymbolSet);

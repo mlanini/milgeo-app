@@ -24,8 +24,16 @@ import {
   HQTF_OPTIONS,
   ECHELON_OPTIONS,
   getModifierSet,
+  modifierOptions,
   type SidcOption,
 } from "../../lib/mil-sidc";
+import {
+  lonLatToMgrs,
+  mgrsToLonLat,
+  normalizeLat,
+  normalizeLon,
+  roundCoord,
+} from "../../lib/coordinates";
 
 const MilSymbol = ms.Symbol;
 const PREVIEW_SIZE = 60;
@@ -41,6 +49,11 @@ interface MilSymbolEditorProps {
   onSave: (patch: MilSymbolPatch) => void;
   /** Optional cancel handler. */
   onCancel?: () => void;
+  /**
+   * Show the Position section (Lat/Lon + MGRS). Defaults to true when the
+   * symbol already has coordinates (i.e. it has been placed on the map).
+   */
+  showPosition?: boolean;
   className?: string;
 }
 
@@ -196,7 +209,7 @@ function SymbolPreview({ sidc, uniqueDesignation, higherFormation }: {
 
 // ─── Main editor ──────────────────────────────────────────────────────────────
 
-export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSymbolEditorProps) {
+export function MilSymbolEditor({ initial, onSave, onCancel, showPosition, className }: MilSymbolEditorProps) {
   const initSidc = initial.sidc ?? "10031000000000000000";
   const parts = parseSidc(initSidc);
 
@@ -231,19 +244,63 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
   const [startDate, setStartDate] = useState(isoToInputValue(initial.startDate));
   const [endDate,   setEndDate]   = useState(isoToInputValue(initial.endDate));
 
+  // ── Position (Lat/Lon + MGRS) ──────────────────────────────────────────────
+  // Whether to show the position editor: explicit prop, or auto when the symbol
+  // already carries coordinates (i.e. it has been placed on the map).
+  const positionEnabled =
+    showPosition ?? (initial.lat !== undefined && initial.lon !== undefined);
+  const [lat, setLat] = useState<number | undefined>(initial.lat);
+  const [lon, setLon] = useState<number | undefined>(initial.lon);
+  const [mgrsText, setMgrsText] = useState<string>(
+    initial.lat !== undefined && initial.lon !== undefined
+      ? lonLatToMgrs(initial.lon, initial.lat)
+      : "",
+  );
+  const [mgrsError, setMgrsError] = useState(false);
+
+  /** Refresh the MGRS field from the current lat/lon (when both are valid). */
+  function syncMgrsFromLatLon(nextLat?: number, nextLon?: number) {
+    if (nextLat !== undefined && nextLon !== undefined) {
+      setMgrsText(lonLatToMgrs(nextLon, nextLat));
+      setMgrsError(false);
+    }
+  }
+
+  function handleLatChange(v: number | undefined) {
+    const next = v === undefined ? undefined : (normalizeLat(v) ?? undefined);
+    setLat(next);
+    syncMgrsFromLatLon(next, lon);
+  }
+
+  function handleLonChange(v: number | undefined) {
+    const next = v === undefined ? undefined : (normalizeLon(v) ?? undefined);
+    setLon(next);
+    syncMgrsFromLatLon(lat, next);
+  }
+
+  function handleMgrsChange(v: string) {
+    setMgrsText(v);
+    if (!v.trim()) {
+      setMgrsError(false);
+      return;
+    }
+    const point = mgrsToLonLat(v);
+    if (point) {
+      setLon(roundCoord(point[0]));
+      setLat(roundCoord(point[1]));
+      setMgrsError(false);
+    } else {
+      setMgrsError(true);
+    }
+  }
+
   // Active tab for amplifiers (SIDC | Amplifiers)
   const [tab, setTab] = useState<"sidc" | "amplifiers">("sidc");
 
   // Modifier options per symbol set
   const mods = useMemo(() => getModifierSet(symbolSet), [symbolSet]);
-  const mod1Options: SidcOption[] = useMemo(
-    () => Object.entries(mods.m1).map(([code, label]) => ({ code, label })),
-    [mods]
-  );
-  const mod2Options: SidcOption[] = useMemo(
-    () => Object.entries(mods.m2).map(([code, label]) => ({ code, label })),
-    [mods]
-  );
+  const mod1Options: SidcOption[] = useMemo(() => modifierOptions(mods.m1), [mods]);
+  const mod2Options: SidcOption[] = useMemo(() => modifierOptions(mods.m2), [mods]);
 
   // Reset mods when symbol set changes
   useEffect(() => {
@@ -262,6 +319,9 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
     onSave({
       name: name || uniqueDesignation || "Symbol",
       sidc: currentSidc,
+      ...(positionEnabled && lat !== undefined && lon !== undefined
+        ? { lat: roundCoord(lat), lon: roundCoord(lon) }
+        : {}),
       uniqueDesignation:    uniqueDesignation   || undefined,
       higherFormation:      higherFormation     || undefined,
       staffComments:        staffComments       || undefined,
@@ -306,6 +366,47 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
         {tab === "sidc" && (
           <>
             <TextField label="Nome simbolo" value={name} placeholder="es. 1° Battaglione" onChange={setName} />
+            {positionEnabled && (
+              <div className="pt-1 mt-1 border-t">
+                <div className="pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Posizione
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <NumberField
+                    label="Latitudine"
+                    value={lat}
+                    placeholder="es. 41.9028"
+                    min={-90}
+                    max={90}
+                    onChange={handleLatChange}
+                  />
+                  <NumberField
+                    label="Longitudine"
+                    value={lon}
+                    placeholder="es. 12.4964"
+                    min={-180}
+                    max={180}
+                    onChange={handleLonChange}
+                  />
+                </div>
+                <label className="mt-2 flex flex-col gap-0.5">
+                  <span className="text-xs text-muted-foreground font-medium">MGRS</span>
+                  <input
+                    type="text"
+                    className={cn(
+                      "h-7 rounded border bg-background px-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-ring",
+                      mgrsError ? "border-destructive" : "border-input",
+                    )}
+                    value={mgrsText}
+                    placeholder="es. 33TTG9300316007"
+                    onChange={(e) => handleMgrsChange(e.target.value)}
+                  />
+                  {mgrsError && (
+                    <span className="text-[10px] text-destructive">Coordinata MGRS non valida</span>
+                  )}
+                </label>
+              </div>
+            )}
             <SelectField label="Contesto"    value={context}   options={CONTEXT_OPTIONS}    onChange={setContext}   />
             <SelectField label="Identità"    value={identity}  options={IDENTITY_OPTIONS}   onChange={setIdentity}  />
             <SelectField label="Symbol Set"  value={symbolSet} options={SYMBOL_SET_OPTIONS} onChange={setSymbolSet} />

@@ -359,6 +359,8 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
    */
   const onImageMissingRef = useRef<((e: { id: string }) => void) | null>(null);
   const onStyleLoadRef    = useRef<(() => void) | null>(null);
+  /** Removes all drag-to-move handlers; set when they are registered. */
+  const dragCleanupRef    = useRef<(() => void) | null>(null);
 
   // ── One-time map event wiring ─────────────────────────────────────────
   //
@@ -406,6 +408,76 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       map.on("styleimagemissing", onImageMissing);
       map.on("style.load", onStyleLoad);
       // Cleanup is handled by the unmount effect which holds the handler refs.
+
+      // ── Drag-to-move: reposition a symbol by dragging its icon ───────────
+      const canvas = map.getCanvas();
+      let dragId: string | null = null;
+
+      const moveDragged = (lng: number, lat: number) => {
+        if (!dragId) return;
+        const feature = lastFcRef.current.features.find(
+          (ft) => ft.properties?.id === dragId,
+        );
+        if (feature) {
+          feature.geometry.coordinates = [lng, lat];
+          (map.getSource(SYM_SOURCE_ID) as GeoJSONSource | undefined)?.setData(
+            lastFcRef.current,
+          );
+        }
+      };
+
+      const onDragMove      = (e: maplibregl.MapMouseEvent) => moveDragged(e.lngLat.lng, e.lngLat.lat);
+      const onDragMoveTouch = (e: maplibregl.MapTouchEvent) => moveDragged(e.lngLat.lng, e.lngLat.lat);
+
+      const endDrag = (lng: number, lat: number) => {
+        if (!dragId) return;
+        const id = dragId;
+        dragId = null;
+        canvas.style.cursor = "";
+        map.off("mousemove", onDragMove);
+        map.off("touchmove", onDragMoveTouch);
+        map.dragPan.enable();
+        // Commit the final position to the store (re-renders the symbol).
+        useMilLayerStore.getState().updateSymbol(id, { lon: lng, lat: lat });
+      };
+
+      const onMouseEnter = () => { if (!dragId) canvas.style.cursor = "move"; };
+      const onMouseLeave = () => { if (!dragId) canvas.style.cursor = ""; };
+
+      const onMouseDown = (e: maplibregl.MapLayerMouseEvent) => {
+        const feature = e.features?.[0];
+        if (!feature?.properties) return;
+        e.preventDefault();           // stop the map from panning
+        dragId = String(feature.properties.id);
+        canvas.style.cursor = "grabbing";
+        map.dragPan.disable();
+        map.on("mousemove", onDragMove);
+        map.once("mouseup", (ev) => endDrag(ev.lngLat.lng, ev.lngLat.lat));
+      };
+
+      const onTouchStart = (e: maplibregl.MapLayerTouchEvent) => {
+        const feature = e.features?.[0];
+        if (!feature?.properties || e.points.length !== 1) return;
+        e.preventDefault();
+        dragId = String(feature.properties.id);
+        map.dragPan.disable();
+        map.on("touchmove", onDragMoveTouch);
+        map.once("touchend", (ev) => endDrag(ev.lngLat.lng, ev.lngLat.lat));
+      };
+
+      map.on("mouseenter", SYM_LAYER_ID, onMouseEnter);
+      map.on("mouseleave", SYM_LAYER_ID, onMouseLeave);
+      map.on("mousedown",  SYM_LAYER_ID, onMouseDown);
+      map.on("touchstart", SYM_LAYER_ID, onTouchStart);
+
+      dragCleanupRef.current = () => {
+        map.off("mouseenter", SYM_LAYER_ID, onMouseEnter);
+        map.off("mouseleave", SYM_LAYER_ID, onMouseLeave);
+        map.off("mousedown",  SYM_LAYER_ID, onMouseDown);
+        map.off("touchstart", SYM_LAYER_ID, onTouchStart);
+        map.off("mousemove",  onDragMove);
+        map.off("touchmove",  onDragMoveTouch);
+      };
     }
 
     const features: Feature<Point>[] = [];
@@ -558,6 +630,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       if (!map) return;
       if (onImageMissingRef.current) map.off("styleimagemissing", onImageMissingRef.current);
       if (onStyleLoadRef.current)    map.off("style.load",        onStyleLoadRef.current);
+      dragCleanupRef.current?.();
       if (map.getLayer(SYM_LABEL_ID))   map.removeLayer(SYM_LABEL_ID);
       if (map.getLayer(SYM_LAYER_ID))   map.removeLayer(SYM_LAYER_ID);
       if (map.getSource(SYM_SOURCE_ID)) map.removeSource(SYM_SOURCE_ID);

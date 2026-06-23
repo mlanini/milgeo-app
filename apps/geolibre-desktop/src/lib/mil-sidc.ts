@@ -21,6 +21,8 @@
  *  19-20  Modifier 2     2-digit code (symbol-set specific)
  */
 
+import ms from "milsymbol";
+
 export const SIDC_BLANK = "10031000000000000000";
 
 // ─── Decompose ────────────────────────────────────────────────────────────────
@@ -146,7 +148,14 @@ export const ECHELON_OPTIONS: SidcOption[] = [
 ];
 
 // ─── Modifier labels by symbol set ────────────────────────────────────────────
-// Source: APP-6D Ed.4, Table A-V to A-XII (same as kadas-app6d-plugin _MOD_LABELS)
+// The modifier code → label tables are derived AT RUNTIME from the milsymbol
+// library itself, so they always match exactly what the installed milsymbol
+// version can render (single source of truth: spatialillusions/milsymbol).
+//
+// milsymbol stores, per symbol set, builder functions in `ms._iconSIDC.number`.
+// Each builder fills `sIdm1` / `sIdm2` maps (modifier code → icon reference).
+// We invoke them with stub arguments and an `icn` proxy that returns the icon
+// key string, then turn that key into a human-readable label.
 
 export interface ModifierSet { m1: Record<string, string>; m2: Record<string, string>; }
 
@@ -155,85 +164,155 @@ const NONE_MODS: ModifierSet = {
   m2: { "00": "None" },
 };
 
-export const MODIFIER_LABELS: Record<string, ModifierSet> = {
-  "01": { // Air
-    m1: {
-      "00": "None", "01": "Attack", "02": "Bomber", "03": "Cargo",
-      "04": "Fighter", "05": "Interceptor", "06": "Tanker", "07": "Utility",
-      "08": "VSTOL", "09": "Passenger", "10": "Ultra Light",
-      "11": "Airborne Command Post", "12": "AEW", "13": "Government",
-      "14": "Medevac", "15": "Escort", "16": "Jammer/ECM", "17": "Patrol",
-      "18": "Reconnaissance", "19": "Trainer",
-    },
-    m2: {
-      "00": "None", "01": "Airborne", "02": "Arctic", "03": "Fixed Wing",
-      "04": "Multi-Rotor", "05": "Rotary Wing", "06": "VTOL",
-      "07": "Tiltrotor", "08": "Unmanned", "09": "Lighter Than Air",
-    },
-  },
-  "10": { // Land Unit
-    m1: {
-      "00": "None",
-      "01": "Anti-armor/AT", "02": "Air Defense", "03": "Airborne", "04": "Aviation",
-      "05": "Biological", "06": "Chemical", "07": "Combat Service Support",
-      "08": "Combat Support", "09": "Civil Affairs", "10": "CBRN",
-      "11": "Engineer", "12": "Field Artillery", "13": "Headquarters",
-      "14": "Infantry", "15": "Maintenance", "16": "Medical",
-      "17": "Military Intelligence", "18": "Military Police",
-      "19": "Mortar", "20": "Nuclear", "21": "Psychological Operations",
-      "22": "Reconnaissance", "23": "Signal", "24": "Special Operations",
-      "25": "Transportation", "26": "Unmanned", "27": "Watercraft",
-      "28": "Combat", "29": "CJTF", "30": "Fire Support",
-    },
-    m2: {
-      "00": "None",
-      "01": "Airborne", "02": "Arctic", "03": "Digital", "04": "Dismounted",
-      "05": "Heavy", "06": "Light", "07": "Mechanized", "08": "Motorized",
-      "09": "Mountain", "10": "Wheeled", "11": "Air Assault",
-      "12": "Amphibious", "13": "Armored", "14": "Bicycle",
-    },
-  },
-  "15": { // Land Equipment
-    m1: {
-      "00": "None",
-      "01": "Air Defense", "02": "Ammunition", "03": "Bridge",
-      "04": "Combat Engineer", "05": "Communication", "06": "Engineer",
-      "07": "Fire Control", "08": "Launch", "09": "Medical",
-      "10": "Missile", "11": "Radar", "12": "Rocket",
-    },
-    m2: {
-      "00": "None",
-      "01": "Airborne", "02": "Arctic", "03": "Armored", "04": "Armored Tracked",
-      "05": "Armored Wheeled", "06": "Towed", "07": "Wheeled",
-    },
-  },
-  "20": { // Land Installation
-    m1: { "00": "None", "01": "Command Post", "02": "Communication", "03": "Maintenance" },
-    m2: { "00": "None" },
-  },
-  "30": { // Sea Surface
-    m1: {
-      "00": "None", "01": "Amphibious", "02": "Carrier", "03": "Combatant",
-      "04": "Medical", "05": "Mine Warfare", "06": "Patrol",
-      "07": "Replenishment", "08": "Submarine", "09": "Support",
-    },
-    m2: { "00": "None", "01": "Auxiliary", "02": "Combat" },
-  },
-  "35": { // Sea Subsurface
-    m1: {
-      "00": "None", "01": "Attack", "02": "Ballistic Missile",
-      "03": "Cruise Missile", "04": "Diesel", "05": "Nuclear",
-    },
-    m2: { "00": "None", "01": "Auxiliary" },
-  },
-  "40": { // Activities
-    m1: { "00": "None", "01": "Air Activity", "02": "Land Activity", "03": "Sea Activity" },
-    m2: { "00": "None" },
-  },
-};
+interface MsInternal {
+  _iconSIDC?: { number?: Array<(...args: unknown[]) => void> };
+  _scale?: (...a: unknown[]) => unknown;
+  _translate?: (...a: unknown[]) => unknown;
+  _STD2525?: boolean;
+}
+
+const msInternal = ms as unknown as MsInternal;
+
+/** Proxy that returns the requested property name — used as a stub `icn` table. */
+const ICN_PROXY = new Proxy(
+  {},
+  { get: (_t, prop) => (typeof prop === "string" ? prop : "") },
+) as Record<string, string>;
+
+/** Acronyms that must stay upper-cased in generated labels. */
+const ACRONYMS = new Set([
+  "CBRN", "EOD", "RFID", "SOF", "NATO", "UAV", "MISO", "MSE", "SWAT", "CDR",
+  "SIC", "HQ", "TF", "RHIB", "C2", "NBC", "CP", "MP", "EW", "AAA", "SAM",
+]);
+
+/** Connective words kept lower-case in the middle of a label. */
+const MINOR_WORDS = new Set(["and", "or", "of", "the", "to", "for", "with"]);
+
+/** Convert an ALL-CAPS milsymbol modifier name to a readable Title Case label. */
+function titleCaseModifier(raw: string): string {
+  return raw
+    .split(" ")
+    .map((word, i) => {
+      if (!word) return word;
+      const alnum = word.replace(/[^A-Za-z0-9]/g, "");
+      const upper = alnum.toUpperCase();
+      if (upper && ACRONYMS.has(upper)) return word.replace(alnum, upper);
+      const lower = word.toLowerCase();
+      if (i > 0 && MINOR_WORDS.has(lower)) return lower;
+      // Capitalise the first letter of each sub-token (handles "/" and "-").
+      return lower.replace(/(^|[/-])([a-z0-9])/g, (_m, sep, ch) => sep + ch.toUpperCase());
+    })
+    .join(" ");
+}
+
+/** Flatten a (possibly nested) icn-proxy value to the first string found. */
+function firstString(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const s = firstString(v);
+      if (s) return s;
+    }
+  }
+  return null;
+}
+
+/**
+ * Pick the best icon key from a sIdm entry and turn it into a label.
+ * Prefers the key that carries the ".M1."/".M2." modifier segment.
+ */
+function iconKeyToLabel(value: unknown): string | null {
+  // Gather all candidate strings.
+  const candidates: string[] = [];
+  const walk = (v: unknown) => {
+    if (typeof v === "string") candidates.push(v);
+    else if (Array.isArray(v)) v.forEach(walk);
+  };
+  walk(value);
+  if (candidates.length === 0) return null;
+
+  const modKey = candidates.find((c) => /\.M[12]\./.test(c)) ?? candidates[0];
+  const seg = modKey.split(/\.M[12]\./);
+  const name = seg.length > 1 ? seg[1] : modKey.slice(modKey.lastIndexOf(".") + 1);
+  const cleaned = name.trim();
+  return cleaned ? titleCaseModifier(cleaned) : null;
+}
+
+/** Memoised extraction results, keyed by symbol set. */
+const MODIFIER_CACHE = new Map<string, ModifierSet>();
+
+/**
+ * Extract the modifier-1 / modifier-2 tables for a symbol set straight from
+ * milsymbol. Falls back to a "None"-only set if the internals are unavailable.
+ */
+function extractModifierSet(symbolSet: string): ModifierSet {
+  const m1: Record<string, string> = { "00": "None" };
+  const m2: Record<string, string> = { "00": "None" };
+
+  const builders = msInternal._iconSIDC?.number;
+  if (!Array.isArray(builders)) return { m1, m2 };
+
+  // The icon builders use ms._scale / ms._translate on real geometry; replace
+  // them with pass-throughs so they tolerate our string-returning icn proxy.
+  const origScale = msInternal._scale;
+  const origTranslate = msInternal._translate;
+  msInternal._scale = (_factor: unknown, instr: unknown) => instr;
+  msInternal._translate = (_x: unknown, _y: unknown, instr: unknown) => instr;
+  const std2525 = msInternal._STD2525 ?? false;
+
+  try {
+    for (const build of builders) {
+      const sIdm1: Record<string, unknown> = {};
+      const sIdm2: Record<string, unknown> = {};
+      try {
+        // Signature: (sId, sIdm1, sIdm2, bbox, symbolSet, icn, STD2525, edition)
+        build.call(undefined, {}, sIdm1, sIdm2, {}, symbolSet, ICN_PROXY, std2525, "D");
+      } catch {
+        continue; // a builder for another symbol set / unexpected shape
+      }
+      for (const code in sIdm1) {
+        if (code === "00") continue;
+        const label = iconKeyToLabel(sIdm1[code]);
+        if (label) m1[code] = label;
+      }
+      for (const code in sIdm2) {
+        if (code === "00") continue;
+        const label = iconKeyToLabel(sIdm2[code]);
+        if (label) m2[code] = label;
+      }
+    }
+  } finally {
+    msInternal._scale = origScale;
+    msInternal._translate = origTranslate;
+  }
+
+  return { m1, m2 };
+}
 
 export function getModifierSet(symbolSet: string): ModifierSet {
-  return MODIFIER_LABELS[symbolSet] ?? NONE_MODS;
+  const cached = MODIFIER_CACHE.get(symbolSet);
+  if (cached) return cached;
+  let result: ModifierSet;
+  try {
+    result = extractModifierSet(symbolSet);
+  } catch {
+    result = NONE_MODS;
+  }
+  MODIFIER_CACHE.set(symbolSet, result);
+  return result;
+}
+
+/**
+ * Turn a modifier record (code → label) into dropdown options sorted
+ * alphabetically by label, with "None" (code "00") always pinned first.
+ */
+export function modifierOptions(record: Record<string, string>): SidcOption[] {
+  const entries = Object.entries(record)
+    .filter(([code]) => code !== "00")
+    .map(([code, label]) => ({ code, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const none = record["00"] ?? "None";
+  return [{ code: "00", label: none }, ...entries];
 }
 
 // ─── Label helpers ────────────────────────────────────────────────────────────
