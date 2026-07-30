@@ -1,16 +1,44 @@
 import type { GeoLibreLayer } from "@geolibre/core";
+import { csvCell as quoteCsvCell } from "./csv";
 import type { FeatureCollection } from "geojson";
 import type { GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";
-import {
-  saveBinaryFileWithFallback,
-  saveTextFileWithFallback,
-} from "./tauri-io";
-import {
-  type BinaryVectorExportFormat,
-  exportBinaryVectorLayer,
-} from "./vector-exporter";
+import { saveBinaryFileWithFallback, saveTextFileWithFallback } from "./tauri-io";
+import { type BinaryVectorExportFormat, exportBinaryVectorLayer } from "./vector-exporter";
 
-export type VectorExportFormat = "geojson" | "csv" | BinaryVectorExportFormat;
+export { KmlCoordinateError, kmlExportErrorMessage } from "./vector-export-errors";
+
+type TextVectorExportFormat = "geojson" | "csv" | "kml";
+
+export type VectorExportFormat = TextVectorExportFormat | BinaryVectorExportFormat;
+
+const TEXT_EXPORT_FORMATS: Record<
+  TextVectorExportFormat,
+  {
+    extension: string;
+    filterExtensions: string[];
+    label: string;
+    mimeType: string;
+  }
+> = {
+  geojson: {
+    extension: "geojson",
+    filterExtensions: ["geojson", "json"],
+    label: "GeoJSON",
+    mimeType: "application/geo+json",
+  },
+  csv: {
+    extension: "csv",
+    filterExtensions: ["csv"],
+    label: "CSV",
+    mimeType: "text/csv",
+  },
+  kml: {
+    extension: "kml",
+    filterExtensions: ["kml"],
+    label: "KML",
+    mimeType: "application/vnd.google-earth.kml+xml",
+  },
+};
 
 /** Render an attribute value as the plain string used in CSV cells and inputs. */
 export function formatAttributeValue(value: unknown): string {
@@ -31,8 +59,7 @@ export function sanitizeExportFileName(name: string): string {
 }
 
 function csvCell(value: unknown): string {
-  const text = formatAttributeValue(value);
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  return quoteCsvCell(formatAttributeValue(value));
 }
 
 function geojsonToCsv(geojson: FeatureCollection): string {
@@ -48,10 +75,7 @@ function geojsonToCsv(geojson: FeatureCollection): string {
   const rows = geojson.features.map((feature, index) => {
     const featureId = String(feature.id ?? index);
     const properties = feature.properties ?? {};
-    const values = [
-      featureId,
-      ...orderedKeys.map((key) => properties[key]),
-    ];
+    const values = [featureId, ...orderedKeys.map((key) => properties[key])];
     return values.map(csvCell).join(",");
   });
 
@@ -66,6 +90,8 @@ function exportFormatLabel(format: BinaryVectorExportFormat): string {
       return "GeoPackage";
     case "shapefile":
       return "Shapefile (zipped)";
+    case "kmz":
+      return "KMZ";
   }
 }
 
@@ -77,6 +103,8 @@ function exportFileExtension(format: BinaryVectorExportFormat): string {
       return "gpkg";
     case "shapefile":
       return "zip";
+    case "kmz":
+      return "kmz";
   }
 }
 
@@ -88,6 +116,8 @@ function exportMimeType(format: BinaryVectorExportFormat): string {
       return "application/geopackage+sqlite3";
     case "shapefile":
       return "application/zip";
+    case "kmz":
+      return "application/vnd.google-earth.kmz";
   }
 }
 
@@ -130,21 +160,20 @@ export function shapefileFieldWarnings(geojson: FeatureCollection): string[] {
   const longNames = fieldNames.filter((name) => name.length > 10);
   const warnings: string[] = [];
   if (longNames.length > 0) {
-    warnings.push(
-      `Shapefile truncates field names to 10 characters: ${longNames.join(", ")}`,
-    );
+    warnings.push(`Shapefile truncates field names to 10 characters: ${longNames.join(", ")}`);
   }
 
   // Normalise non-alphanumerics to "_" before truncating, exactly as the DBF
   // writer does, so collisions caused by character replacement are detected.
   const byTruncated = new Map<string, string[]>();
   for (const name of fieldNames) {
-    const key = name.replace(/[^0-9A-Za-z_]/g, "_").slice(0, 10).toLowerCase();
+    const key = name
+      .replace(/[^0-9A-Za-z_]/g, "_")
+      .slice(0, 10)
+      .toLowerCase();
     byTruncated.set(key, [...(byTruncated.get(key) ?? []), name]);
   }
-  const collisions = Array.from(byTruncated.values()).filter(
-    (group) => group.length > 1,
-  );
+  const collisions = Array.from(byTruncated.values()).filter((group) => group.length > 1);
   if (collisions.length > 0) {
     warnings.push(
       `Truncating to 10 characters produces duplicate field names: ${collisions
@@ -157,9 +186,7 @@ export function shapefileFieldWarnings(geojson: FeatureCollection): string[] {
   // geometries become attribute-only Null shapes, which is silent data loss.
   let fileFamily: ShapefileFamily | null = null;
   for (const feature of geojson.features) {
-    const family = feature.geometry
-      ? shapefileFamily(feature.geometry.type)
-      : null;
+    const family = feature.geometry ? shapefileFamily(feature.geometry.type) : null;
     if (family) {
       fileFamily = family;
       break;
@@ -170,9 +197,7 @@ export function shapefileFieldWarnings(geojson: FeatureCollection): string[] {
   let demoted = 0;
   if (fileFamily !== null) {
     for (const feature of geojson.features) {
-      const family = feature.geometry
-        ? shapefileFamily(feature.geometry.type)
-        : null;
+      const family = feature.geometry ? shapefileFamily(feature.geometry.type) : null;
       if (family && family !== fileFamily) demoted += 1;
     }
   }
@@ -186,31 +211,41 @@ export function shapefileFieldWarnings(geojson: FeatureCollection): string[] {
   return warnings;
 }
 
+async function textExportContent(
+  format: TextVectorExportFormat,
+  geojson: FeatureCollection,
+  documentName: string,
+): Promise<string> {
+  switch (format) {
+    case "geojson":
+      return JSON.stringify(geojson, null, 2);
+    case "csv":
+      return geojsonToCsv(geojson);
+    case "kml":
+      return (await import("./kml-writer")).writeKml(geojson, documentName);
+  }
+}
+
 async function exportTextLayer(
-  format: "geojson" | "csv",
+  format: TextVectorExportFormat,
   geojson: FeatureCollection,
   baseName: string,
+  documentName: string,
 ): Promise<string | null> {
-  const isCsv = format === "csv";
-  const content = isCsv
-    ? geojsonToCsv(geojson)
-    : JSON.stringify(geojson, null, 2);
+  const content = await textExportContent(format, geojson, documentName);
+  const { extension, filterExtensions, label, mimeType } = TEXT_EXPORT_FORMATS[format];
   return saveTextFileWithFallback(content, {
-    defaultName: `${baseName}.${isCsv ? "csv" : "geojson"}`,
-    filters: [
-      isCsv
-        ? { name: "CSV", extensions: ["csv"] }
-        : { name: "GeoJSON", extensions: ["geojson", "json"] },
-    ],
+    defaultName: `${baseName}.${extension}`,
+    filters: [{ name: label, extensions: filterExtensions }],
     browserTypes: [
       {
-        description: isCsv ? "CSV" : "GeoJSON",
-        accept: isCsv
-          ? { "text/csv": [".csv"] }
-          : { "application/geo+json": [".geojson", ".json"] },
+        description: label,
+        accept: {
+          [mimeType]: filterExtensions.map((candidate) => `.${candidate}`),
+        },
       },
     ],
-    mimeType: isCsv ? "text/csv" : "application/geo+json",
+    mimeType,
   });
 }
 
@@ -218,8 +253,9 @@ async function exportBinaryLayer(
   format: BinaryVectorExportFormat,
   geojson: FeatureCollection,
   baseName: string,
+  documentName: string,
 ): Promise<string | null> {
-  const result = await exportBinaryVectorLayer(geojson, format, baseName);
+  const result = await exportBinaryVectorLayer(geojson, format, baseName, documentName);
   const label = exportFormatLabel(format);
   const extension = exportFileExtension(format);
   return saveBinaryFileWithFallback(result.data, {
@@ -239,16 +275,19 @@ async function exportBinaryLayer(
  * Save a vector layer's features to disk in the requested format, prompting
  * with the native (Tauri) or browser file-save dialog. Returns the saved path
  * (a name in the browser), or null when the user cancels the save dialog.
+ * The optional document name preserves the human-readable layer title inside
+ * KML and KMZ while the base name remains safe for the filesystem.
  */
 export async function exportVectorLayer(
   geojson: FeatureCollection,
   format: VectorExportFormat,
   baseName: string,
+  documentName = baseName,
 ): Promise<string | null> {
-  if (format === "geojson" || format === "csv") {
-    return exportTextLayer(format, geojson, baseName);
+  if (format === "geojson" || format === "csv" || format === "kml") {
+    return exportTextLayer(format, geojson, baseName, documentName);
   }
-  return exportBinaryLayer(format, geojson, baseName);
+  return exportBinaryLayer(format, geojson, baseName, documentName);
 }
 
 /**
@@ -257,9 +296,7 @@ export async function exportVectorLayer(
  * GeoJSON source rather than in `layer.geojson`, so callers read the data back
  * from the map. Tiles-mode (DuckDB) vector layers are excluded.
  */
-export function geojsonVectorSourceId(
-  layer: GeoLibreLayer | undefined,
-): string | null {
+export function geojsonVectorSourceId(layer: GeoLibreLayer | undefined): string | null {
   if (
     !layer ||
     layer.type !== "geojson" ||
