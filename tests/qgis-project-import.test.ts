@@ -291,7 +291,7 @@ describe("QGIS project import", () => {
       result.project.layerGroups?.map((group) => [group.name, group.visible]),
       [
         ["Transport", false],
-        ["Transport / Places", false],
+        ["Places", false],
       ],
     );
     const rendered = applyGroupEffects(result.project.layers, result.project.layerGroups ?? []);
