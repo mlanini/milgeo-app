@@ -160,7 +160,300 @@ pub fn run() {
 
 #[tauri::command]
 fn read_project_file(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|error| format!("Could not read project file: {error}"))
+    if !is_allowed_project_path(&path) {
+        return Err(format!(
+            "Refusing to read \"{path}\": not an absolute local project file path"
+        ));
+    }
+    // Resolve symlinks and re-check the extension, so a symlink named
+    // `*.geolibre`/`*.geolibre.json` can't redirect the read to an arbitrary
+    // target (e.g. `~/notes.geolibre.json -> ~/.ssh/id_rsa`). Only the resolved
+    // extension is re-checked (not the full guard): `canonicalize` yields a
+    // `\\?\C:\…` verbatim path on Windows, which the UNC check would reject.
+    let canonical =
+        fs::canonicalize(&path).map_err(|error| format!("Could not read project file: {error}"))?;
+    let resolved = canonical.to_string_lossy().to_ascii_lowercase();
+    if !(resolved.ends_with(".geolibre") || resolved.ends_with(".geolibre.json")) {
+        return Err(format!(
+            "Refusing to read \"{path}\": resolves to a non-project file"
+        ));
+    }
+    fs::read_to_string(&canonical).map_err(|error| format!("Could not read project file: {error}"))
+}
+
+/// Local vector file extensions the restore path may re-read (lowercased, no
+/// dot). Mirrors `VECTOR_FILE_DIALOG_EXTENSIONS` in `tauri-io.ts`; keep the two
+/// in step.
+// SYNC: VECTOR_FILE_DIALOG_EXTENSIONS in src/lib/tauri-io.ts — grep "SYNC:" to
+// find the partner list and update both together.
+const RESTORABLE_VECTOR_EXTENSIONS: [&str; 17] = [
+    "geojson",
+    "json",
+    "gpkg",
+    "geoparquet",
+    "parquet",
+    "fgb",
+    "flatgeobuf",
+    "csv",
+    "tsv",
+    "kml",
+    "kmz",
+    "gml",
+    "gpx",
+    "dxf",
+    "tab",
+    "shp",
+    "zip",
+];
+
+/// Whether the renderer is permitted to re-read `path` through `read_local_file`:
+/// an absolute local path (POSIX `/...` or a Windows drive-letter `C:\...`, never
+/// a UNC `\\host\share`), free of `..` traversal segments, ending in a known
+/// vector extension.
+///
+/// This is a Rust-side backstop mirroring the frontend guard
+/// (`isAbsoluteLocalPath` + `hasPathTraversal` + `isRestorableVectorPath` in
+/// `tauri-io.ts`). It narrows the attack surface of a compromised webview or
+/// rogue plugin: arbitrary system files (`/etc/passwd`, SSH keys, most shell and
+/// app configs) are blocked. It does not make the command harmless — the
+/// allowlist still includes broad extensions like `json`, so a script that knows
+/// the path of a JSON-shaped secret could still read it — but it bounds reads to
+/// the vector formats the restore path actually needs. The checks are
+/// byte-oriented rather than `std::path` based so they behave identically for the
+/// Windows-style paths a project may carry regardless of the host the binary
+/// runs on.
+pub(crate) fn is_allowed_local_vector_path(path: &str) -> bool {
+    // Absolute, non-UNC, no `..` traversal — split into `is_safe_absolute_path`
+    // so the security-relevant byte-parsing lives in one place rather than being
+    // duplicated.
+    if !is_safe_absolute_path(path) {
+        return false;
+    }
+
+    // Known vector extension, case-insensitive, matching the JS
+    // `RESTORABLE_VECTOR_PATH` regex (built from `VECTOR_FILE_DIALOG_EXTENSIONS`).
+    // `rsplit_once` takes the text after the final dot without allocating.
+    let lower = path.to_ascii_lowercase();
+    lower
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| RESTORABLE_VECTOR_EXTENSIONS.contains(&extension))
+}
+
+/// Read a local file's raw bytes so a project's file-referenced vector layers
+/// can be re-read when the project is reopened.
+///
+/// On reopen, a layer saved as a file reference carries only its absolute
+/// `sourcePath` (stored in the `.geolibre.json`); that path was never picked or
+/// dropped this session, so it sits outside the `fs` plugin's runtime scope and
+/// the JS `readFile`/`readTextFile` reject it. This reads the file directly,
+/// mirroring `read_project_file` (which bypasses the same scope to read the
+/// project file itself). The path is validated here by
+// `is_allowed_local_vector_path` (absolute, no `..` traversal, known vector
+// extension), and `open_vector_file` still presents the native file picker for
+/// `ArrayBuffer` on the JS side) so a large GeoJSON does not pay the cost of a
+/// JSON number array.
+#[tauri::command]
+fn read_local_file(path: String) -> Result<tauri::ipc::Response, String> {
+    if !is_allowed_local_vector_path(&path) {
+        return Err(format!(
+            "Refusing to read \"{path}\": not an absolute local vector file path"
+        ));
+    }
+    fs::read(&path)
+        .map(tauri::ipc::Response::new)
+        .map_err(|error| format!("Could not read local file: {error}"))
+}
+
+/// Add one GeoTIFF to the asset-protocol scope. The filesystem and asset scopes
+/// are separate in Tauri; dialogs and native drops grant the former, but
+/// maplibre-gl-raster fetches through the latter for range reads. A GeoTIFF
+/// referenced by an imported QGIS project is also accepted when that project
+/// file itself was explicitly selected by the user.
+#[tauri::command]
+fn allow_raster_asset(
+    app: tauri::AppHandle,
+    path: String,
+    qgis_project_path: Option<String>,
+) -> Result<(), String> {
+    let lower = path.to_ascii_lowercase();
+    if !is_safe_absolute_path(&path) || !(lower.ends_with(".tif") || lower.ends_with(".tiff")) {
+        return Err(format!(
+            "Refusing to expose \"{path}\": not an absolute GeoTIFF path"
+        ));
+    }
+    let selected_qgis_project = qgis_project_path.is_some_and(|project_path| {
+        let lower = project_path.to_ascii_lowercase();
+        is_safe_absolute_path(&project_path)
+            && (lower.ends_with(".qgs") || lower.ends_with(".qgz"))
+            && app.fs_scope().is_allowed(&project_path)
+    });
+    if !app.fs_scope().is_allowed(&path) && !selected_qgis_project {
+        return Err(format!(
+            "Refusing to expose \"{path}\": neither the file nor its QGIS project was selected by the user"
+        ));
+    }
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|error| format!("Could not authorize local raster: {error}"))
+}
+
+/// Shapefile sidecar extensions read alongside a `.shp` (lowercased, no dot).
+const SHAPEFILE_SIDECAR_EXTENSIONS: [&str; 16] = [
+    "shx", "dbf", "prj", "cpg", "sbn", "sbx", "qix", "qpj", "cst", "aih", "ain", "atx", "ixs",
+    "mxs", "fbn", "fbx",
+];
+
+#[derive(Serialize)]
+struct ShapefileSibling {
+    /// `<shp base>.<lowercased sidecar extension>`, matching the `.shp` base name
+    /// so GDAL resolves the sidecar when reading the `.shp` directly.
+    name: String,
+    data: Vec<u8>,
+}
+
+/// Read a shapefile's sidecar files (`.shx`, `.dbf`, `.prj`, `.cpg`, ...) sitting
+/// next to the given `.shp`, so a loose `.shp` can be loaded without the user
+/// selecting every component.
+///
+/// The JS `fs` plugin can only read paths the user explicitly picked or dropped,
+/// so it cannot reach a sidecar that was not selected; this reads them directly.
+/// It is scoped to shapefile sidecar extensions, so it cannot read arbitrary
+/// files. The directory is matched case-insensitively (handling `.SHX`/`.DBF` and
+/// mixed-case base names), and each sidecar is returned under the `.shp`'s base
+/// name with a lowercased extension so the registered names line up. Missing
+/// siblings are skipped; an unreadable directory yields an empty list.
+#[tauri::command]
+fn read_shapefile_siblings(path: String) -> Result<Vec<ShapefileSibling>, String> {
+    let shp = Path::new(&path);
+    let Some(parent) = shp.parent() else {
+        return Ok(Vec::new());
+    };
+    let Some(stem) = shp.file_stem().and_then(|stem| stem.to_str()) else {
+        return Ok(Vec::new());
+    };
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut siblings = Vec::new();
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if !entry_path.is_file() {
+            continue;
+        }
+        let (Some(entry_stem), Some(extension)) = (
+            entry_path.file_stem().and_then(|stem| stem.to_str()),
+            entry_path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+        ) else {
+            continue;
+        };
+        if !entry_stem.eq_ignore_ascii_case(stem) {
+            continue;
+        }
+        let extension = extension.to_ascii_lowercase();
+        if !SHAPEFILE_SIDECAR_EXTENSIONS.contains(&extension.as_str()) {
+            continue;
+        }
+        if let Ok(data) = fs::read(&entry_path) {
+            siblings.push(ShapefileSibling {
+                name: format!("{stem}.{extension}"),
+                data,
+            });
+        }
+    }
+    Ok(siblings)
+}
+
+/// Whether `path` is a safe absolute local path: an absolute POSIX (`/...`) or
+/// Windows drive-letter (`C:\...`) path, never a UNC (`\\host\share`) share, and
+/// free of `..` traversal segments. The shared absolute/non-UNC/no-traversal
+/// guard behind [`is_allowed_local_vector_path`], kept separate so that
+/// byte-parsing lives in one place rather than being duplicated per caller.
+fn is_safe_absolute_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let is_separator = |byte: u8| byte == b'/' || byte == b'\\';
+    if bytes.len() >= 2 && is_separator(bytes[0]) && is_separator(bytes[1]) {
+        return false;
+    }
+    let is_posix_absolute = bytes.first() == Some(&b'/');
+    let is_windows_drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && is_separator(bytes[2]);
+    if !is_posix_absolute && !is_windows_drive {
+        return false;
+    }
+    !path.split(['/', '\\']).any(|segment| segment == "..")
+}
+
+/// Read the optional admin UI-profile file (`<app_config_dir>/admin-profile.json`).
+///
+/// Returns `Ok(None)` when the file is absent so a missing file is not an error;
+/// administrators drop one in to pre-configure and optionally lock the UI profile
+/// for a deployment. See `docs/ui-profiles.md`.
+#[tauri::command]
+fn read_admin_profile(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Could not resolve config directory: {error}"))?;
+    let path = config_dir.join("admin-profile.json");
+    match fs::read_to_string(&path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Could not read admin profile: {error}")),
+    }
+}
+
+/// The only environment variable names `read_env_vars` will ever return. This
+/// is a hard, server-side boundary: external plugins and any other JavaScript
+/// run in the same (unsandboxed) webview can `invoke("read_env_vars", …)` with
+/// arbitrary names, so the allowlist cannot live in the frontend alone or a
+/// malicious caller could exfiltrate unrelated shell secrets (SSH_AUTH_SOCK,
+/// GITHUB_TOKEN, ambient cloud credentials, …). Kept in sync with
+/// `OS_ENV_VAR_NAMES` in `apps/geolibre-desktop/src/lib/assistant/provider.ts`
+/// — the `assistant-os-env` test parses this list and asserts the two match.
+const ALLOWED_ENV_VARS: &[&str] = &[
+    "GEOLIBRE_ASSISTANT_PROVIDER",
+    "GEOLIBRE_ASSISTANT_MODEL",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "OPENAI_COMPATIBLE_BASE_URL",
+    "OPENAI_COMPATIBLE_API_KEY",
+    "OPENAI_COMPATIBLE_MODEL",
+    "TAVILY_API_KEY",
+];
+
+/// Read the AI Assistant's allowlisted variables from the OS environment.
+///
+/// Only names in `ALLOWED_ENV_VARS` that the caller requests are returned,
+/// and only when present and non-empty, so the desktop app never leaks the full
+/// process environment — nor any variable outside the allowlist — into the
+/// webview. This lets the assistant source provider API keys from the user's
+/// system/shell environment instead of the project file (issue #1141), keeping
+/// secrets out of the saved `.geolibre.json`.
+#[tauri::command]
+fn read_env_vars(names: Vec<String>) -> std::collections::HashMap<String, String> {
+    names
+        .into_iter()
+        .filter(|name| ALLOWED_ENV_VARS.contains(&name.as_str()))
+        .filter_map(|name| {
+            let value = env::var(&name).ok()?;
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some((name, trimmed.to_string()))
+            }
+        })
+        .collect()
 }
 
 #[tauri::command]

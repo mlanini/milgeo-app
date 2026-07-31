@@ -207,15 +207,36 @@ export function openRasterLayerPanel(app: GeoLibreAppAPI): void {
 export async function addRasterToMap(
   app: GeoLibreAppAPI,
   source: string | File,
-  options: { name?: string } = {},
-): Promise<void> {
+  options: {
+    name?: string;
+    localPath?: string;
+    defaults?: RasterVisualizationDefaults;
+    /** Initial renderer state supplied by programmatic COG callers. */
+    state?: Partial<RasterLayerState>;
+    /** Existing map style layer beneath which the raster is inserted. */
+    beforeId?: string;
+    /** Whether to fit the map to the raster after loading. Defaults to true. */
+    zoomTo?: boolean;
+  } = {},
+): Promise<string> {
   const control = await ensureRasterControl(app);
   if (!control) {
     throw new Error("The raster control could not be initialized.");
   }
   const id = await control.addRaster(source, {
     name: options.name,
-    zoomTo: true,
+    zoomTo: options.zoomTo ?? true,
+    // Safe to pass before the band count is known: the renderer applies a
+    // colormap only in single-band mode and ignores it otherwise.
+    ...(options.state || options.defaults?.colormap
+      ? {
+          state: {
+            ...(options.defaults?.colormap ? { colormap: options.defaults.colormap } : {}),
+            ...options.state,
+          },
+        }
+      : {}),
+    ...(options.beforeId ? { beforeId: options.beforeId } : {}),
   });
   // Retain the source bytes for File-backed rasters. The store layer only
   // records the file name (no fetchable URL), so in-browser tools (the WASM
@@ -236,10 +257,13 @@ export async function addRasterToMap(
         metadata: {
           ...layer.metadata,
           localBytesUrl: blobUrl,
+          ...(options.localPath ? { sourcePath: options.localPath } : {}),
         },
       });
     }
   }
+
+  return id;
 }
 
 /**

@@ -91,6 +91,7 @@ import {
   getPluginManager,
   usePluginRegistry,
 } from "../../hooks/usePlugins";
+import { useProjectFileActions } from "../../hooks/useProjectFileActions";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
 import type { ThemeMode } from "../../hooks/useThemeMode";
 import {
@@ -107,6 +108,7 @@ import { AddDataDialog, type AddDataKind } from "./AddDataDialog";
 import { AboutDialog } from "./AboutDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { SettingsDialog } from "./SettingsDialog";
+import { ProjectFileDialogs } from "./toolbar/ProjectFileDialogs";
 
 interface TopToolbarProps {
   compact?: boolean;
@@ -223,6 +225,7 @@ export function TopToolbar({
   const [checkForUpdatesRequest, setCheckForUpdatesRequest] = useState(0);
   const projectUrlAbortRef = useRef<AbortController | null>(null);
   const recentAbortRef = useRef<AbortController | null>(null);
+  const projectFiles = useProjectFileActions(mapControllerRef);
 
   const handleOpenFromFile = async () => {
     const result = await openProjectFile();
@@ -520,6 +523,12 @@ export function TopToolbar({
           <DropdownMenuItem onSelect={() => setProjectUrlDialogOpen(true)}>
             <Link2 className="mr-2 h-3.5 w-3.5" />
             Open Project from URL...
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => void projectFiles.handleImportQgisProject()}
+          >
+            <FolderOpen className="mr-2 h-3.5 w-3.5" />
+            Import QGIS / ArcGIS Project...
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuLabel>Recent projects</DropdownMenuLabel>
@@ -964,6 +973,7 @@ export function TopToolbar({
           </div>
         </DialogContent>
       </Dialog>
+      <ProjectFileDialogs projectFiles={projectFiles} />
       <AboutDialog
         checkForUpdatesRequest={checkForUpdatesRequest}
         open={aboutOpen}
