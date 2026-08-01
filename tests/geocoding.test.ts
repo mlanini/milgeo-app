@@ -5,11 +5,14 @@ import {
   buildReverseGeocodeUrl,
   csvRowsToGeocodeRequests,
   geocodeMatchToFeature,
+  geocodeForward,
   geocoderMinIntervalMs,
   geocoderNeedsApiKey,
+  geocodeReverse,
   GEOCODING_PROVIDERS,
   getGeocodingProvider,
   nextDelayMs,
+  setGeocodingFetch,
   nominatimResultToFeature,
   nominatimReverseResultToDisplay,
   normalizeGeocodingProviderId,
@@ -18,6 +21,7 @@ import {
   resolveGeocoderConfig,
   rowCap,
   shouldThrottle,
+  unmatchedGeocodeFeature,
   type GeocoderConfig,
   type NominatimForwardResult,
 } from "@geolibre/core";
@@ -28,9 +32,7 @@ const SELF_HOSTED = "https://geocoder.example.org/search";
 
 describe("buildForwardGeocodeUrl", () => {
   it("encodes the query and sets jsonv2 defaults", () => {
-    const url = new URL(
-      buildForwardGeocodeUrl(PUBLIC_FORWARD, "1600 Pennsylvania Ave, DC"),
-    );
+    const url = new URL(buildForwardGeocodeUrl(PUBLIC_FORWARD, "1600 Pennsylvania Ave, DC"));
     assert.equal(url.searchParams.get("q"), "1600 Pennsylvania Ave, DC");
     assert.equal(url.searchParams.get("format"), "jsonv2");
     assert.equal(url.searchParams.get("addressdetails"), "1");
@@ -87,10 +89,7 @@ describe("nominatimResultToFeature", () => {
     assert.equal(feature.properties?.id, "1");
     assert.equal(feature.properties?.geocode_lat, 38.8977);
     assert.equal(feature.properties?.geocode_lon, -77.0365);
-    assert.equal(
-      feature.properties?.geocode_display_name,
-      "White House, Washington, DC",
-    );
+    assert.equal(feature.properties?.geocode_display_name, "White House, Washington, DC");
     // importance is coerced from string to number.
     assert.equal(feature.properties?.geocode_importance, 0.85);
   });
@@ -103,10 +102,7 @@ describe("nominatimResultToFeature", () => {
   });
 
   it("returns null when coordinates are not finite", () => {
-    assert.equal(
-      nominatimResultToFeature({ lat: "nope", lon: "x" }),
-      null,
-    );
+    assert.equal(nominatimResultToFeature({ lat: "nope", lon: "x" }), null);
   });
 
   it("coerces a missing importance to null", () => {
@@ -131,10 +127,7 @@ describe("nominatimReverseResultToDisplay", () => {
   });
 
   it("returns null on an error result, null input, or empty name", () => {
-    assert.equal(
-      nominatimReverseResultToDisplay({ error: "Unable to geocode" }),
-      null,
-    );
+    assert.equal(nominatimReverseResultToDisplay({ error: "Unable to geocode" }), null);
     assert.equal(nominatimReverseResultToDisplay(null), null);
     assert.equal(nominatimReverseResultToDisplay({ display_name: "  " }), null);
   });
@@ -199,20 +192,14 @@ describe("shouldThrottle / rowCap", () => {
 
 describe("geocoderMinIntervalMs", () => {
   it("paces by hostname: only the public Nominatim host", () => {
-    assert.equal(
-      geocoderMinIntervalMs(PUBLIC_FORWARD),
-      NOMINATIM_MIN_INTERVAL_MS,
-    );
+    assert.equal(geocoderMinIntervalMs(PUBLIC_FORWARD), NOMINATIM_MIN_INTERVAL_MS);
     assert.equal(geocoderMinIntervalMs(SELF_HOSTED), 0);
     assert.equal(geocoderMinIntervalMs("https://api.mapbox.com/x"), 0);
   });
 
   it("paces any provider pointed at the public Nominatim host (matches rowCap)", () => {
     // A non-Nominatim provider aimed at the public host must still be paced.
-    assert.equal(
-      geocoderMinIntervalMs(PUBLIC_FORWARD),
-      NOMINATIM_MIN_INTERVAL_MS,
-    );
+    assert.equal(geocoderMinIntervalMs(PUBLIC_FORWARD), NOMINATIM_MIN_INTERVAL_MS);
     assert.equal(rowCap(PUBLIC_FORWARD), PUBLIC_GEOCODE_ROW_CAP);
   });
 });
@@ -220,10 +207,7 @@ describe("geocoderMinIntervalMs", () => {
 describe("geocoderNeedsApiKey", () => {
   it("requires a key for the keyed providers", () => {
     for (const providerId of ["arcgis", "mapbox", "google"] as const) {
-      assert.equal(
-        geocoderNeedsApiKey(resolveGeocoderConfig({ providerId, apiKeys: {} })),
-        true,
-      );
+      assert.equal(geocoderNeedsApiKey(resolveGeocoderConfig({ providerId, apiKeys: {} })), true);
     }
   });
 
@@ -281,10 +265,7 @@ describe("resolveGeocoderConfig", () => {
     });
     assert.equal(config.providerId, "mapbox");
     assert.equal(config.apiKey, "pk.test");
-    assert.equal(
-      config.forwardEndpoint,
-      "https://api.mapbox.com/geocoding/v5/mapbox.places",
-    );
+    assert.equal(config.forwardEndpoint, "https://api.mapbox.com/geocoding/v5/mapbox.places");
   });
 
   it("lets a custom endpoint override the default", () => {
@@ -358,9 +339,7 @@ describe("Mapbox provider", () => {
   const config = configFor("mapbox", "pk.tok");
 
   it("builds a path-style forward URL with the access token", () => {
-    const url = new URL(
-      provider.buildForwardUrl(config, "San Francisco, CA", { limit: 1 }),
-    );
+    const url = new URL(provider.buildForwardUrl(config, "San Francisco, CA", { limit: 1 }));
     assert.ok(url.pathname.endsWith("/San%20Francisco%2C%20CA.json"));
     assert.equal(url.searchParams.get("access_token"), "pk.tok");
     assert.equal(url.searchParams.get("limit"), "1");
@@ -368,9 +347,7 @@ describe("Mapbox provider", () => {
 
   it("parses features using center coordinates and relevance", () => {
     const matches = provider.parseForward({
-      features: [
-        { place_name: "San Francisco", center: [-122.42, 37.77], relevance: 0.9 },
-      ],
+      features: [{ place_name: "San Francisco", center: [-122.42, 37.77], relevance: 0.9 }],
     });
     assert.deepEqual(
       [matches[0].lon, matches[0].lat, matches[0].displayName, matches[0].score],
@@ -459,9 +436,7 @@ describe("Pelias provider", () => {
   const config = configFor("pelias", "pel-key");
 
   it("builds a text forward URL with size and api_key", () => {
-    const url = new URL(
-      provider.buildForwardUrl(config, "Oslo", { limit: 3 }),
-    );
+    const url = new URL(provider.buildForwardUrl(config, "Oslo", { limit: 3 }));
     assert.equal(url.searchParams.get("text"), "Oslo");
     assert.equal(url.searchParams.get("size"), "3");
     assert.equal(url.searchParams.get("api_key"), "pel-key");
@@ -497,9 +472,102 @@ describe("geocodeMatchToFeature", () => {
   });
 
   it("returns null for non-finite coordinates", () => {
-    assert.equal(
-      geocodeMatchToFeature({ lat: NaN, lon: 0, displayName: "", score: null }),
-      null,
+    assert.equal(geocodeMatchToFeature({ lat: NaN, lon: 0, displayName: "", score: null }), null);
+  });
+
+  it("stamps provider and matched status only when extra.providerId is passed", () => {
+    const withoutExtra = geocodeMatchToFeature(
+      { lat: 48.85, lon: 2.35, displayName: "Paris", score: 0.9 },
+      { id: "1" },
     );
+    assert.ok(withoutExtra);
+    assert.equal(withoutExtra.properties?.geocode_provider, undefined);
+    assert.equal(withoutExtra.properties?.geocode_status, undefined);
+
+    const withExtra = geocodeMatchToFeature(
+      { lat: 48.85, lon: 2.35, displayName: "Paris", score: 0.9 },
+      { id: "1" },
+      { providerId: "nominatim" },
+    );
+    assert.ok(withExtra);
+    assert.equal(withExtra.properties?.geocode_provider, "nominatim");
+    assert.equal(withExtra.properties?.geocode_status, "matched");
+  });
+});
+
+describe("unmatchedGeocodeFeature", () => {
+  it("builds a null-geometry feature flagged unmatched, keeping the original row", () => {
+    const feature = unmatchedGeocodeFeature({ id: "2", address: "nowhere" }, "nominatim");
+    assert.equal(feature.geometry, null);
+    assert.equal(feature.properties?.id, "2");
+    assert.equal(feature.properties?.address, "nowhere");
+    assert.equal(feature.properties?.geocode_status, "unmatched");
+    assert.equal(feature.properties?.geocode_provider, "nominatim");
+  });
+
+  it("de-duplicates against an existing geocode_status column instead of clobbering it", () => {
+    const feature = unmatchedGeocodeFeature({ geocode_status: "original value" }, "mapbox");
+    assert.equal(feature.properties?.geocode_status, "original value");
+    assert.equal(feature.properties?.geocode_status_2, "unmatched");
+  });
+});
+
+describe("setGeocodingFetch", () => {
+  const NOMINATIM: GeocoderConfig = {
+    providerId: "nominatim",
+    forwardEndpoint: PUBLIC_FORWARD,
+    reverseEndpoint: PUBLIC_REVERSE,
+  };
+
+  it("routes forward geocoding through the injected fetch", async () => {
+    const seen: string[] = [];
+    const fake: typeof globalThis.fetch = (input) => {
+      seen.push(String(input));
+      return Promise.resolve(
+        new Response(JSON.stringify([{ lat: "48.85", lon: "2.35", display_name: "Paris" }]), {
+          status: 200,
+        }),
+      );
+    };
+    setGeocodingFetch(fake);
+    try {
+      const matches = await geocodeForward("Paris", { config: NOMINATIM });
+      assert.equal(matches.length, 1);
+      assert.equal(matches[0]?.displayName, "Paris");
+      assert.equal(seen.length, 1);
+      assert.ok(seen[0]?.startsWith(PUBLIC_FORWARD));
+    } finally {
+      setGeocodingFetch(null);
+    }
+  });
+
+  it("routes reverse geocoding through the injected fetch", async () => {
+    const seen: string[] = [];
+    const fake: typeof globalThis.fetch = (input) => {
+      seen.push(String(input));
+      return Promise.resolve(
+        new Response(JSON.stringify({ display_name: "Paris, France", address: {} }), {
+          status: 200,
+        }),
+      );
+    };
+    setGeocodingFetch(fake);
+    try {
+      const result = await geocodeReverse(2.35, 48.85, { config: NOMINATIM });
+      assert.equal(result?.displayName, "Paris, France");
+      assert.equal(seen.length, 1);
+      assert.ok(seen[0]?.startsWith(PUBLIC_REVERSE));
+    } finally {
+      setGeocodingFetch(null);
+    }
+  });
+
+  it("propagates a non-ok response from the injected fetch as an error", async () => {
+    setGeocodingFetch(() => Promise.resolve(new Response("nope", { status: 429 })));
+    try {
+      await assert.rejects(() => geocodeForward("Paris", { config: NOMINATIM }), /HTTP 429/);
+    } finally {
+      setGeocodingFetch(null);
+    }
   });
 });
