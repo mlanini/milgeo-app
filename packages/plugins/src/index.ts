@@ -146,6 +146,7 @@ export {
   openThreeDTilesLayerPanel,
   restoreThreeDTilesLayers,
 } from "./plugins/maplibre-3d-tiles";
+export { isRecoverableNonTiledRasterError } from "./plugins/non-tiled-raster-error";
 export {
   addRasterToMap,
   applyRasterLayerOrder,

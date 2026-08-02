@@ -1131,6 +1131,20 @@ export async function openQgisProjectFile(): Promise<{
   return { data: result.data, path: result.path };
 }
 
+/** Pick an ArcGIS Pro project/map and return its raw bytes for the CIM converter. */
+export async function openArcgisProjectFile(): Promise<{
+  data: ArrayBuffer;
+  path: string;
+} | null> {
+  const result = await openLocalDataFileWithFallback({
+    filters: [{ name: "ArcGIS Pro Project", extensions: ["aprx", "mapx"] }],
+    accept: ".aprx,.mapx",
+    readBinary: true,
+  });
+  if (!result?.data) return null;
+  return { data: result.data, path: result.path };
+}
+
 /**
  * Thrown when a recent project is permanently gone (HTTP 404/410 or a local
  * file that no longer exists), signalling the caller that the entry can be
@@ -1400,10 +1414,12 @@ export async function loadDroppedVectorFiles(
 export interface DroppedRaster {
   name: string;
   /**
-   * The GeoTIFF/COG as a File. The raster control accepts a File directly and
-   * manages its object URL, matching how the Add Raster panel loads local files.
+   * The GeoTIFF/COG source consumed by the raster control.
+   * Browser loads use a `File`; desktop imports can use a Tauri asset URL.
    */
-  source: File;
+  source: File | string;
+  /** Absolute local path, when known (desktop imports). */
+  path?: string;
 }
 
 function fileBaseName(path: string): string {
@@ -1426,19 +1442,110 @@ export function loadDroppedRasterFiles(
  */
 export async function loadDroppedRasterPaths(
   paths: string[],
-  _options?: { qgisProjectPath?: string },
+  options?: {
+    /**
+     * The project file the raster paths came from, when they were read out of
+     * an imported project rather than picked directly. Accepts QGIS
+     * (`.qgs`/`.qgz`) and ArcGIS Pro (`.aprx`/`.mapx`); the Rust side grants
+     * the asset scope only because the user selected that project themselves.
+     */
+    importProjectPath?: string;
+  },
 ): Promise<DroppedRaster[]> {
   const rasterPaths = paths.filter(isRasterFileName);
-  const rasters: DroppedRaster[] = [];
-  for (const path of rasterPaths) {
-    const bytes = await readFile(path);
-    const name = fileBaseName(path);
-    rasters.push({
-      name,
-      source: new File([bytes], name, { type: "image/tiff" }),
-    });
+  await Promise.all(
+    rasterPaths.map((path) =>
+      invoke("allow_raster_asset", {
+        path,
+        ...(options?.importProjectPath ? { importProjectPath: options.importProjectPath } : {}),
+      }),
+    ),
+  );
+  return rasterPaths.map((path) => ({
+    name: fileBaseName(path),
+    source: convertFileSrc(path),
+    path,
+  }));
+}
+
+/**
+ * Read one raster file off disk into a browser `File`, for reloading a raster a
+ * saved project references by path (issue #1463). Rejects when the file is
+ * gone; the caller then drops that layer with a notice.
+ *
+ * @param path - The absolute path recorded when the raster was first added.
+ * @returns The file, named after its basename.
+ */
+export async function readRasterFileAtPath(path: string): Promise<string> {
+  await invoke("allow_raster_asset", { path });
+  return convertFileSrc(path);
+}
+
+/**
+ * Open a native file dialog for raster files and read each pick, keeping the
+ * absolute path alongside the bytes. Used in place of the raster panel's own
+ * `<input type="file">`, whose `File` carries no path. Resolves to an empty
+ * array when the dialog is cancelled or the app is not running under Tauri.
+ *
+ * @returns The picked rasters, each with its file and path.
+ */
+export async function pickLocalRasterFiles(): Promise<{ file: File | string; path: string }[]> {
+  if (!isTauri()) return [];
+  const selected = await open({
+    multiple: true,
+    filters: [
+      {
+        name: i18next.t("raster.filePickerLabel"),
+        extensions: [...RASTER_DROP_EXTENSIONS],
+      },
+    ],
+  });
+  if (!selected) return [];
+  const paths = (Array.isArray(selected) ? selected : [selected]).filter(isRasterFileName);
+  const picked: { file: File | string; path: string }[] = [];
+  for (const path of paths) {
+    // Read each pick independently so one unreadable file does not abandon the
+    // rest of the selection, matching pickImageFilesWithFallback.
+    try {
+      picked.push({ file: await readRasterFileAtPath(path), path });
+    } catch (error) {
+      console.warn(`Could not read the selected raster "${path}".`, error);
+    }
   }
-  return rasters;
+  return picked;
+}
+
+/**
+ * Open a multi-select image picker and read each pick into a browser `File`, so
+ * the geotagged-photo importer reads EXIF and renders thumbnails the same way on
+ * desktop (Tauri) and in the browser. Resolves to an empty array when the dialog
+ * is cancelled.
+ */
+export async function pickImageFilesWithFallback(): Promise<File[]> {
+  if (isTauri()) {
+    const selected = await open({
+      multiple: true,
+      filters: [{ name: "Images", extensions: [...PHOTO_IMAGE_EXTENSIONS] }],
+    });
+    if (!selected) return [];
+    const paths = Array.isArray(selected) ? selected : [selected];
+    const files: File[] = [];
+    for (const path of paths) {
+      const bytes = await readFile(path);
+      const name = fileBaseName(path);
+      const type = photoMimeTypeFromName(name);
+      files.push(new File([bytes], name, type ? { type } : undefined));
+    }
+    return files;
+  }
+  return new Promise<File[]>((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = PHOTO_IMAGE_ACCEPT;
+    input.multiple = true;
+    input.onchange = () => resolve(Array.from(input.files ?? []));
+    input.click();
+  });
 }
 
 export async function loadDroppedVectorPaths(

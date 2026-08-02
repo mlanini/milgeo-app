@@ -528,7 +528,13 @@ export function TopToolbar({
             onSelect={() => void projectFiles.handleImportQgisProject()}
           >
             <FolderOpen className="mr-2 h-3.5 w-3.5" />
-            Import QGIS / ArcGIS Project...
+            Import QGIS Project...
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => void projectFiles.handleImportArcgisProject()}
+          >
+            <FolderOpen className="mr-2 h-3.5 w-3.5" />
+            Import ArcGIS Pro Project...
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuLabel>Recent projects</DropdownMenuLabel>

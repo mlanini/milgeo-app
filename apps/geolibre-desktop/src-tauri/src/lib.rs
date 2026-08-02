@@ -267,13 +267,14 @@ fn read_local_file(path: String) -> Result<tauri::ipc::Response, String> {
 /// Add one GeoTIFF to the asset-protocol scope. The filesystem and asset scopes
 /// are separate in Tauri; dialogs and native drops grant the former, but
 /// maplibre-gl-raster fetches through the latter for range reads. A GeoTIFF
-/// referenced by an imported QGIS project is also accepted when that project
-/// file itself was explicitly selected by the user.
+/// referenced by an imported project -- QGIS (`.qgs`/`.qgz`) or ArcGIS Pro
+/// (`.aprx`/`.mapx`) -- is also accepted when that project file itself was
+/// explicitly selected by the user.
 #[tauri::command]
 fn allow_raster_asset(
     app: tauri::AppHandle,
     path: String,
-    qgis_project_path: Option<String>,
+    import_project_path: Option<String>,
 ) -> Result<(), String> {
     let lower = path.to_ascii_lowercase();
     if !is_safe_absolute_path(&path) || !(lower.ends_with(".tif") || lower.ends_with(".tiff")) {
@@ -281,15 +282,18 @@ fn allow_raster_asset(
             "Refusing to expose \"{path}\": not an absolute GeoTIFF path"
         ));
     }
-    let selected_qgis_project = qgis_project_path.is_some_and(|project_path| {
+    let selected_import_project = import_project_path.is_some_and(|project_path| {
         let lower = project_path.to_ascii_lowercase();
         is_safe_absolute_path(&project_path)
-            && (lower.ends_with(".qgs") || lower.ends_with(".qgz"))
+            && (lower.ends_with(".qgs")
+                || lower.ends_with(".qgz")
+                || lower.ends_with(".aprx")
+                || lower.ends_with(".mapx"))
             && app.fs_scope().is_allowed(&project_path)
     });
-    if !app.fs_scope().is_allowed(&path) && !selected_qgis_project {
+    if !app.fs_scope().is_allowed(&path) && !selected_import_project {
         return Err(format!(
-            "Refusing to expose \"{path}\": neither the file nor its QGIS project was selected by the user"
+            "Refusing to expose \"{path}\": neither the file nor its imported project was selected by the user"
         ));
     }
     app.asset_protocol_scope()

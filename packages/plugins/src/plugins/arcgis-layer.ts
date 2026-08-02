@@ -24,6 +24,16 @@ export interface ArcGISLayerOptions {
   sourceType: ArcGISSourceType;
   token?: string;
   url?: string;
+  /**
+   * Whether to fit the map to the layer once its bounds are known. Defaults to
+   * true, which is what an interactive Add Data flow wants.
+   *
+   * Project import sets it false: the view has already been restored from the
+   * project file, and fitting each imported service in turn would pan the map
+   * away from the extent the project saved. Mirrors `addRasterToMap`'s option
+   * of the same name.
+   */
+  zoomTo?: boolean;
 }
 
 interface ArcGISFeatureLayerInfo {
@@ -106,7 +116,7 @@ export async function addArcGISLayer(
   });
   const store = useAppStore.getState();
   store.addLayer(layer, options.beforeLayerId);
-  if (bounds) app.fitBounds?.(bounds);
+  if (bounds && options.zoomTo !== false) app.fitBounds?.(bounds);
   return id;
 }
 
@@ -235,24 +245,80 @@ async function createFallbackFeatureLayer(
     where: "1=1",
   });
 
-  return createStaticArcGISRuntimeLayer({
-    bounds: arcgisExtentToBounds(layerInfo.extent),
-    layers: [
-      {
-        id: styleLayerId,
-        source: sourceId,
-        type: styleLayerType,
-        paint: arcgisFallbackPaint(styleLayerType),
-      } as maplibregl.LayerSpecification,
-    ],
-    sources: {
-      [sourceId]: {
-        type: "geojson",
-        data: queryUrl,
-        attribution: layerInfo.copyrightText || "ArcGIS Feature Service",
-      },
-    },
-  });
+  const geojson = await fetchArcGISGeoJson(requestUrl);
+
+  const name =
+    options.name?.trim() || layerInfo.name || layerNameFromArcGISInput(layerUrl, "ArcGIS Layer");
+  const store = useAppStore.getState();
+  // Persist the GeoJSON query endpoint (not the service-description base URL) as
+  // the source path so the layer's GeoJSON refresh re-fetches valid features.
+  const id = store.addGeoJsonLayer(name, geojson, refreshUrl, options.beforeLayerId ?? null);
+
+  // Preserve the service's copyright watermark in MapLibre's attribution
+  // control, matching the prior URL-source behavior.
+  const attribution = layerInfo.copyrightText?.trim();
+  if (attribution) {
+    store.updateLayer(id, { source: { type: "geojson", attribution } });
+  }
+
+  const bounds = arcgisExtentToBounds(layerInfo.extent);
+  if (bounds && options.zoomTo !== false) app.fitBounds?.(bounds);
+  return id;
+}
+
+/**
+ * Fetch and validate a GeoJSON FeatureCollection from an ArcGIS query URL.
+ *
+ * ArcGIS can answer a `f=geojson` request with a JSON error envelope rather than
+ * GeoJSON, so both the transport status and the payload shape are checked. A
+ * result truncated at the service's `maxRecordCount` is loaded as-is but warned
+ * about, so a partial attribute table or export is not mistaken for the full
+ * dataset.
+ *
+ * @param url - The fully-built `/query?f=geojson` request URL.
+ * @returns The parsed FeatureCollection.
+ */
+async function fetchArcGISGeoJson(url: string): Promise<FeatureCollection> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`ArcGIS feature query failed with ${response.status}.`);
+  }
+  // ArcGIS Enterprise (and services behind a WAF) can answer 200 with an HTML
+  // login/redirect page when a token is missing or expired. Read the body as
+  // text first so that surfaces as a clear message instead of a raw
+  // `SyntaxError: Unexpected token '<'` from JSON.parse.
+  const text = await response.text();
+  if (/^\s*</.test(text)) {
+    throw new Error(
+      "The ArcGIS service returned HTML instead of GeoJSON (the layer may require a token or sign-in).",
+    );
+  }
+  let json: FeatureCollection & {
+    error?: { message?: string };
+    exceededTransferLimit?: boolean;
+  };
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error("The ArcGIS feature layer did not return GeoJSON features.");
+  }
+  if (json.error) {
+    throw new Error(json.error.message || "ArcGIS feature query failed.");
+  }
+  if (json.type !== "FeatureCollection" || !Array.isArray(json.features)) {
+    throw new Error("The ArcGIS feature layer did not return GeoJSON features.");
+  }
+  // ArcGIS caps a single query at the service's maxRecordCount and flags the
+  // shortfall with `exceededTransferLimit`. The partial data still loads (it is
+  // the same subset the previous URL-source path rendered), but the truncation
+  // is surfaced so the caller knows the layer is not the complete dataset.
+  if (json.exceededTransferLimit) {
+    console.warn(
+      `[GeoLibre] ArcGIS feature query was truncated at the service record ` +
+        `limit; loaded ${json.features.length} features (partial dataset).`,
+    );
+  }
+  return json;
 }
 
 async function resolveFeatureLayerUrl(
