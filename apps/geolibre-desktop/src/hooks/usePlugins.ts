@@ -19,6 +19,17 @@ import {
   maplibreNationalMapPlugin,
   maplibreOvertureMapsPlugin,
   maplibreGraticulePlugin,
+  maplibreH3Plugin,
+  maplibreS2Plugin,
+  maplibreA5Plugin,
+  maplibreDggridPlugin,
+  maplibreDggalPlugin,
+  maplibreOlcPlugin,
+  maplibreGeohashPlugin,
+  maplibreTilecodePlugin,
+  maplibreCloudsPlugin,
+  maplibrePrecipitationPlugin,
+  maplibreMapillaryPlugin,
   maplibreReverseGeocodePlugin,
   maplibreStreetViewPlugin,
   maplibreSwipePlugin,
@@ -138,6 +149,19 @@ manager.registerAll([
   maplibreStreetViewPlugin,
   maplibreSwipePlugin,
   maplibreGraticulePlugin,
+  // The DGGS grid plugins (grouped into the Plugins menu's "DGGS" submenu,
+  // rendered where the first of them appears in this order).
+  maplibreH3Plugin,
+  maplibreS2Plugin,
+  maplibreA5Plugin,
+  maplibreDggridPlugin,
+  maplibreDggalPlugin,
+  maplibreOlcPlugin,
+  maplibreGeohashPlugin,
+  maplibreTilecodePlugin,
+  maplibreMapillaryPlugin,
+  maplibreCloudsPlugin,
+  maplibrePrecipitationPlugin,
   maplibreEffectsPlugin,
   maplibreDirectionsPlugin,
   maplibreReverseGeocodePlugin,
@@ -774,6 +798,32 @@ async function fetchArrayBuffer(url: string): Promise<ArrayBuffer> {
 function isTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return Boolean((window as TauriRuntimeWindow).__TAURI_INTERNALS__);
+}
+
+const GITHUB_RAW_VECTOR_PROXY = "https://tiles.geolibre.app/github-raw";
+
+function githubRawVectorProxyUrl(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "github.com" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    (url.port !== "" && url.port !== "443") ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/raw\/.+$/.test(url.pathname)
+  ) {
+    return null;
+  }
+  const proxy = new URL(GITHUB_RAW_VECTOR_PROXY);
+  proxy.searchParams.set("url", url.href);
+  return proxy.href;
 }
 
 function setExternalPluginsLoaded(loaded: boolean): void {
