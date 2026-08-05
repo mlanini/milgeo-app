@@ -44,7 +44,7 @@ interface MilLayerPanelProps {
 
 // ─── Mini symbol preview ──────────────────────────────────────────────────────
 
-function SymPreview({ sidc, size = LIST_ICON }: { sidc: string; size?: number }) {
+function SymPreview({ sidc, size = CATALOG_ICON }: { sidc: string; size?: number }) {
   const svg = useMemo(() => {
     try {
       const sym = new MilSymbol(sidc, { size });
