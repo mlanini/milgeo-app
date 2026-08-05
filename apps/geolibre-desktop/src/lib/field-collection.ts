@@ -43,6 +43,23 @@ export interface CollectionSchema {
   fields: CollectionField[];
 }
 
+/** Draft shape used by built-in collection templates before key slugification. */
+export interface TemplateFieldDraft {
+  label: string;
+  type: FieldType;
+  required?: boolean;
+  optionsText?: string;
+}
+
+/** Built-in clean-room templates for tactical redlining workflows. */
+export interface CollectionTemplate {
+  id: string;
+  name: string;
+  layerName: string;
+  geometry: GeometryType;
+  fields: TemplateFieldDraft[];
+}
+
 /** `metadata` keys used to tag a collection layer and store its schema. */
 export const FIELD_COLLECTION_FLAG = "fieldCollection";
 export const COLLECTION_SCHEMA_KEY = "collectionSchema";
@@ -59,6 +76,82 @@ export const RESERVED_PROPERTY_KEYS: readonly string[] = [PHOTO_PROPERTY];
  * bound. Photos are stored inline as data URLs, so this is a hard per-photo cap.
  */
 export const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
+
+const COLLECTION_TEMPLATES: readonly CollectionTemplate[] = [
+  {
+    id: "redline-point",
+    name: "Redline point report",
+    layerName: "Redline points",
+    geometry: "point",
+    fields: [
+      { label: "Title", type: "text", required: true },
+      {
+        label: "Category",
+        type: "choice",
+        required: true,
+        optionsText: "observation, hazard, checkpoint, equipment",
+      },
+      {
+        label: "Priority",
+        type: "choice",
+        optionsText: "low, medium, high, critical",
+      },
+      { label: "Notes", type: "text" },
+    ],
+  },
+  {
+    id: "redline-line",
+    name: "Route and corridor",
+    layerName: "Redline routes",
+    geometry: "line",
+    fields: [
+      { label: "Title", type: "text", required: true },
+      {
+        label: "Segment type",
+        type: "choice",
+        required: true,
+        optionsText: "route, boundary, corridor, patrol",
+      },
+      {
+        label: "Status",
+        type: "choice",
+        optionsText: "planned, active, blocked, completed",
+      },
+      { label: "Notes", type: "text" },
+    ],
+  },
+  {
+    id: "redline-area",
+    name: "AOI and area markings",
+    layerName: "Redline areas",
+    geometry: "polygon",
+    fields: [
+      { label: "Title", type: "text", required: true },
+      {
+        label: "Area type",
+        type: "choice",
+        required: true,
+        optionsText: "aoi, no-go, assembly, objective",
+      },
+      {
+        label: "Priority",
+        type: "choice",
+        optionsText: "low, medium, high, critical",
+      },
+      { label: "Notes", type: "text" },
+    ],
+  },
+];
+
+/** Return the built-in collection templates used by the setup UI. */
+export function getCollectionTemplates(): readonly CollectionTemplate[] {
+  return COLLECTION_TEMPLATES;
+}
+
+/** Resolve a built-in template by id, or null when it does not exist. */
+export function getCollectionTemplateById(id: string): CollectionTemplate | null {
+  return COLLECTION_TEMPLATES.find((template) => template.id === id) ?? null;
+}
 
 /** Minimal structural view of a layer — avoids coupling this module to the store. */
 export interface CollectionLayerLike {

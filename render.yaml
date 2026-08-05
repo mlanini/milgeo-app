@@ -1,111 +1,17 @@
-# Render.com Blueprint — https://render.com/docs/blueprint-spec
-# Connect this repo on Render → it auto-detects this file → one-click deploy.
-#
-# Services
-# ────────
-#  milgeo-backend  Python FastAPI sidecar (free tier, port 8765 mapped to 443).
-#                  Provides Whitebox processing endpoints consumed by the SPA.
-#  milgeo-app      Vite static SPA.  VITE_SIDECAR_URL points at milgeo-backend.
-
 services:
-
-  # ── Python processing backend ────────────────────────────────────────────────
-  - type: web
-    name: milgeo-backend
-    runtime: python
-    rootDir: backend/geolibre_server
-    buildCommand: pip install -e ".[raster]"
-    startCommand: uvicorn geolibre_server.app.main:app --host 0.0.0.0 --port $PORT
-    plan: free
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.12"
-      # Allow the Render frontend origin in addition to localhost / Tauri.
-      # Set this to the milgeo-app service URL once it is known, e.g.:
-      #   https://milgeo-app.onrender.com
-      # or use a wildcard origin for the whole onrender.com subdomain:
-      - key: GEOLIBRE_CORS_ORIGIN
-        value: "https://dev.milgeo.app"
-      # Comma-separated list of Traccar server base URLs allowed as proxy targets.
-      # The default list already includes https://traccar.intelligeo.net.
-      # Extend here for additional servers, e.g.:
-      #   https://traccar.myorg.com,https://other.example.com
-      - key: TRACCAR_ALLOWED_ORIGINS
-        value: "https://traccar.intelligeo.net"
-
-  # ── Static frontend SPA ──────────────────────────────────────────────────────
   - type: web
     name: milgeo-app
     runtime: static
-
-    # ── Build ──────────────────────────────────────────────────────────────
-    # npm install (not npm ci) so a stale or absent lock file never aborts
-    # the build. Render caches node_modules between builds automatically.
-    buildCommand: npm install && npm run build:render
-    staticPublishPath: build
-
-    # ── Environment ────────────────────────────────────────────────────────
+    buildCommand: npm ci && npm run build:render && node scripts/verify-render-output.mjs
+    staticPublishPath: apps/geolibre-desktop/dist
     envVars:
       - key: NODE_VERSION
         value: "22"
       - key: NODE_ENV
-        value: production      # URL of the milgeo-backend Render service — injected at Vite build time
-      # so the compiled SPA bundle points directly at the Python API.
-      # Update this value whenever the backend service URL changes.
-      - key: VITE_SIDECAR_URL
-        value: "https://milgeo-backend.onrender.com"      # Hard cap the V8 heap for the Render build process.
-      # The app's build:render script also passes --max-old-space-size=4096
-      # directly to `node` as a flag, so both mechanisms apply.
+        value: production
       - key: NODE_OPTIONS
         value: "--max-old-space-size=4096"
-      # ── Real-time collaboration (optional) ─────────────────────────────────
-      # Collaboration requires a separate Cloudflare Workers relay.
-      # 1. Deploy workers/collab/ to Cloudflare (update wrangler.toml route).
-      # 2. Set this variable to your deployed worker URL, e.g.:
-      #      https://geolibre-collab.<your-account>.workers.dev
-      # 3. Set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in GitHub Secrets
-      #    to enable auto-deploy via .github/workflows/deploy-collab.yml.
-      # - key: VITE_GEOLIBRE_COLLAB_URL
-      #   value: "https://geolibre-collab.<your-account>.workers.dev"
-
-    # ── SPA routing ────────────────────────────────────────────────────────
-    # All paths fall back to index.html so React Router / query-param project
-    # loading works on direct URLs.
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
-
-    # ── HTTP headers ───────────────────────────────────────────────────────
-    headers:
-      # Vite content-hashed assets are immutable.
-      - path: /assets/*
-        name: Cache-Control
-        value: "public, max-age=31536000, immutable"
-
-      # DuckDB WASM workers and main bundle — same immutable fingerprinting.
-      - path: /assets/*.wasm
-        name: Cache-Control
-        value: "public, max-age=31536000, immutable"
-
-      # Always re-validate the entry point so users pick up new deployments.
-      - path: /index.html
-        name: Cache-Control
-        value: "no-cache, no-store, must-revalidate"
-
-      # Security headers applied to all responses.
-      - path: /*
-        name: X-Content-Type-Options
-        value: nosniff
-
-      - path: /*
-        name: X-Frame-Options
-        value: SAMEORIGIN
-
-      - path: /*
-        name: Referrer-Policy
-        value: strict-origin-when-cross-origin
-
-      - path: /*
-        name: Permissions-Policy
-        value: "geolocation=(self), camera=(), microphone=()"

@@ -12,6 +12,8 @@ import {
   drawPreview,
   emptyFeatureCollection,
   FIELD_COLLECTION_FLAG,
+  getCollectionTemplateById,
+  getCollectionTemplates,
   getGeometryType,
   getSchema,
   isCollectionLayer,
@@ -81,6 +83,28 @@ describe("buildSchema", () => {
       label: "Note",
       type: "text",
     });
+  });
+});
+
+describe("collection templates", () => {
+  it("exposes clean-room tactical templates", () => {
+    const templates = getCollectionTemplates();
+    assert.equal(templates.length, 3);
+    assert.deepEqual(
+      templates.map((template) => template.id),
+      ["redline-point", "redline-line", "redline-area"],
+    );
+  });
+
+  it("resolves template metadata and geometry", () => {
+    const line = getCollectionTemplateById("redline-line");
+    assert.ok(line);
+    assert.equal(line.geometry, "line");
+    assert.ok(line.fields.some((field) => field.label === "Segment type"));
+  });
+
+  it("returns null for unknown template ids", () => {
+    assert.equal(getCollectionTemplateById("does-not-exist"), null);
   });
 });
 
