@@ -304,7 +304,20 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
                 name: nextName,
                 SIDC: nextSidc,
                 affiliation: affiliationFromSidc(nextSidc),
-                uniqueDesignation: nextName,
+                uniqueDesignation: patch.uniqueDesignation ?? symbol.uniqueDesignation ?? nextName,
+                higherFormation: patch.higherFormation,
+                staffComments: patch.staffComments,
+                additionalInformation: patch.additionalInformation,
+                dtg: patch.dtg,
+                altitudeDepth: patch.altitudeDepth,
+                direction: patch.direction,
+                quantity: patch.quantity,
+                iffSif: patch.iffSif,
+                speed: patch.speed,
+                typeStr: patch.typeStr,
+                reinforcedReduced: patch.reinforcedReduced,
+                combatEffectiveness: patch.combatEffectiveness,
+                evaluationRating: patch.evaluationRating,
               }
             : symbol
         );
@@ -346,7 +359,7 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
                   lon: lng,
                   lat,
                   affiliation: affiliationFromSidc(unit.sidc),
-                  uniqueDesignation: unit.name,
+                  uniqueDesignation: symbol.uniqueDesignation ?? unit.name,
                 }
               : symbol
           );

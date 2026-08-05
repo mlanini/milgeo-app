@@ -10,7 +10,7 @@
  *
  * The editor calls `onSave(patch)` when the user confirms.
  */
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import ms from "milsymbol";
 import { cn } from "@geolibre/ui";
 import type { MilSymbolItem } from "@geolibre/core";
@@ -23,11 +23,12 @@ import {
   STATUS_OPTIONS,
   HQTF_OPTIONS,
   ECHELON_OPTIONS,
+  getModifierSet,
   type SidcOption,
 } from "../../lib/mil-sidc";
 
 const MilSymbol = ms.Symbol;
-const PREVIEW_SIZE = 80;
+const PREVIEW_SIZE = 56;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -141,11 +142,11 @@ function SymbolPreview({ sidc, uniqueDesignation, higherFormation }: {
   }, [sidc, uniqueDesignation, higherFormation]);
 
   return (
-    <div className="flex items-center justify-center w-full py-2">
+    <div className="flex items-center justify-center w-full py-1.5">
       {svg ? (
         <div
           className="overflow-hidden [&>svg]:block"
-          style={{ width: PREVIEW_SIZE + 40, height: PREVIEW_SIZE + 40 }}
+          style={{ width: PREVIEW_SIZE + 24, height: PREVIEW_SIZE + 24 }}
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : (
@@ -169,8 +170,8 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
   const [hqTf,      setHqTf]      = useState(parts.hqTfDummy);
   const [echelon,   setEchelon]   = useState(parts.echelon);
   const [entity,    setEntity]    = useState(parts.entity);
-  const [fixedModifier1]          = useState(parts.modifier1);
-  const [fixedModifier2]          = useState(parts.modifier2);
+  const [modifier1, setModifier1] = useState(parts.modifier1);
+  const [modifier2, setModifier2] = useState(parts.modifier2);
 
   // Amplifiers state
   const [name,                setName]                = useState(initial.name ?? "");
@@ -182,6 +183,7 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
   const [altitudeDepth,       setAltitudeDepth]       = useState(initial.altitudeDepth ?? "");
   const [direction,           setDirection]           = useState<number | undefined>(initial.direction);
   const [quantity,            setQuantity]            = useState(initial.quantity ?? "");
+  const [iffSif,              setIffSif]              = useState(initial.iffSif ?? "");
   const [speed,               setSpeed]               = useState(initial.speed ?? "");
   const [typeStr,             setTypeStr]             = useState(initial.typeStr ?? "");
   const [reinforcedReduced,   setReinforcedReduced]   = useState(initial.reinforcedReduced ?? "");
@@ -190,6 +192,21 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
 
   // Active tab for amplifiers (SIDC | Amplifiers)
   const [tab, setTab] = useState<"sidc" | "amplifiers">("sidc");
+
+  const modifierSet = useMemo(() => getModifierSet(symbolSet), [symbolSet]);
+  const modifier1Options = useMemo<SidcOption[]>(
+    () => Object.entries(modifierSet.m1).map(([code, label]) => ({ code, label })),
+    [modifierSet]
+  );
+  const modifier2Options = useMemo<SidcOption[]>(
+    () => Object.entries(modifierSet.m2).map(([code, label]) => ({ code, label })),
+    [modifierSet]
+  );
+
+  useEffect(() => {
+    if (!modifierSet.m1[modifier1]) setModifier1("00");
+    if (!modifierSet.m2[modifier2]) setModifier2("00");
+  }, [modifierSet, modifier1, modifier2]);
 
   const currentSidc = useMemo(() =>
     buildSidc({
@@ -200,10 +217,10 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
       hqTfDummy: hqTf,
       echelon,
       entity,
-      modifier1: fixedModifier1,
-      modifier2: fixedModifier2,
+      modifier1,
+      modifier2,
     }),
-    [context, identity, symbolSet, status, hqTf, echelon, entity, fixedModifier1, fixedModifier2]
+    [context, identity, symbolSet, status, hqTf, echelon, entity, modifier1, modifier2]
   );
 
   function handleSave() {
@@ -218,6 +235,7 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
       altitudeDepth:        altitudeDepth       || undefined,
       direction,
       quantity:             quantity            || undefined,
+      iffSif:               iffSif              || undefined,
       speed:                speed               || undefined,
       typeStr:              typeStr             || undefined,
       reinforcedReduced:    reinforcedReduced   || undefined,
@@ -264,6 +282,8 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
               placeholder="000000"
               onChange={(v) => setEntity((v.replace(/\D/g, "") + "000000").slice(0, 6))}
             />
+            <SelectField label="Modifier 1" value={modifier1} options={modifier1Options} onChange={setModifier1} />
+            <SelectField label="Modifier 2" value={modifier2} options={modifier2Options} onChange={setModifier2} />
           </>
         )}
 
@@ -277,6 +297,7 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
             <TextField     label="Quota / Profondità (X)"  value={altitudeDepth}       placeholder="es. 2000m"    onChange={setAltitudeDepth}        />
             <NumberField   label="Direzione (Q) °"         value={direction}           min={0} max={360}          onChange={setDirection}            />
             <TextField     label="Quantità (C)"            value={quantity}            placeholder=""             onChange={setQuantity}             />
+            <TextField     label="IFF/SIF (P)"             value={iffSif}              placeholder=""             onChange={setIffSif}               />
             <TextField     label="Velocità (Z)"            value={speed}               placeholder="es. 30 km/h"  onChange={setSpeed}                />
             <TextField     label="Tipo (T)"                value={typeStr}             placeholder=""             onChange={setTypeStr}              />
             <SelectField   label="Rinforzato / Ridotto (F)" value={reinforcedReduced}

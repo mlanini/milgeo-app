@@ -17,6 +17,7 @@ import { cn } from "@geolibre/ui";
 import ms from "milsymbol";
 import {
   Check,
+  Crosshair,
   MapPin,
   Pencil,
   X,
@@ -80,6 +81,21 @@ const AFF_OPTIONS: { id: MilAffiliation; label: string; color: string }[] = [
   { id: "UNKNOWN",  label: "Ignoto",   color: "#AAAAAA" },
 ];
 
+function affiliationFromSidc(sidc: string): MilAffiliation {
+  switch (parseSidc(sidc).identity) {
+    case "2":
+    case "3":
+      return "FRIENDLY";
+    case "4":
+      return "NEUTRAL";
+    case "5":
+    case "6":
+      return "HOSTILE";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 // ─── CATALOG tab ──────────────────────────────────────────────────────────────
 
 interface CatalogTabProps {
@@ -113,8 +129,11 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   const [symbolSizePx, setSymbolSizePx] = useState(DEFAULT_MIL_SYMBOL_SIZE_PX);
   const [placingSidc, setPlacingSidc] = useState<string | null>(null);
   const [pendingPatch, setPendingPatch] = useState<MilSymbolPatch | null>(null);
+  const [pendingMove, setPendingMove] = useState<{ layerId: string; symbolId: string } | null>(null);
   const [editingEntry, setEditingEntry] = useState<CatalogEntry | null>(null);
   const [editingPatch, setEditingPatch] = useState<MilSymbolPatch | null>(null);
+  const [editingSymbol, setEditingSymbol] = useState<{ layerId: string; symbolId: string } | null>(null);
+  const [editingPlacedPatch, setEditingPlacedPatch] = useState<MilSymbolPatch | null>(null);
 
   const milSymbolLayers = useMemo(
     () => layers.filter((layer) => layer.type === "mil-symbol"),
@@ -137,12 +156,17 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     [search, category]
   );
 
+  const targetLayer = useMemo(() => resolveTargetLayer(), [resolveTargetLayer]);
+  const targetSymbols = useMemo(
+    () => (targetLayer ? parseMilSymbolLayerSource(targetLayer.source).symbols : []),
+    [targetLayer]
+  );
+
   useEffect(() => {
-    const target = resolveTargetLayer();
-    if (!target) return;
-    const parsed = parseMilSymbolLayerSource(target.source);
+    if (!targetLayer) return;
+    const parsed = parseMilSymbolLayerSource(targetLayer.source);
     setSymbolSizePx(parsed.symbolSize);
-  }, [resolveTargetLayer]);
+  }, [targetLayer]);
 
   // Applies echelon to the SIDC before placing, preserving catalog modifiers.
   function applyEchelon(baseSidc: string): string {
@@ -172,6 +196,24 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   const { enable: enableClick, disable: disableClick } = useMapClick(
     mapControllerRef,
     useCallback((lon, lat) => {
+      if (pendingMove) {
+        const layer = layers.find((item) => item.id === pendingMove.layerId);
+        if (layer?.type === "mil-symbol") {
+          const parsed = parseMilSymbolLayerSource(layer.source);
+          const symbols = parsed.symbols.map((symbol) =>
+            symbol.id === pendingMove.symbolId
+              ? { ...symbol, lon, lat }
+              : symbol
+          );
+          updateLayer(layer.id, {
+            source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize),
+          });
+          selectLayer(layer.id);
+        }
+        setPendingMove(null);
+        return;
+      }
+
       if (!pendingPatch?.sidc) return;
 
       const target = resolveTargetLayer();
@@ -181,10 +223,21 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
         SIDC: pendingPatch.sidc,
         lon,
         lat,
-        affiliation,
+        affiliation: affiliationFromSidc(pendingPatch.sidc),
         uniqueDesignation: pendingPatch.uniqueDesignation,
         higherFormation: pendingPatch.higherFormation,
+        staffComments: pendingPatch.staffComments,
+        additionalInformation: pendingPatch.additionalInformation,
+        dtg: pendingPatch.dtg,
+        altitudeDepth: pendingPatch.altitudeDepth,
         direction: pendingPatch.direction,
+        quantity: pendingPatch.quantity,
+        iffSif: pendingPatch.iffSif,
+        speed: pendingPatch.speed,
+        typeStr: pendingPatch.typeStr,
+        reinforcedReduced: pendingPatch.reinforcedReduced,
+        combatEffectiveness: pendingPatch.combatEffectiveness,
+        evaluationRating: pendingPatch.evaluationRating,
       };
 
       if (!target) {
@@ -201,8 +254,9 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
 
       setPlacingSidc(null);
       setPendingPatch(null);
+      setPendingMove(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pendingPatch, affiliation, symbolSizePx, addLayer, resolveTargetLayer, updateLayer, selectLayer]),
+    }, [pendingPatch, pendingMove, symbolSizePx, addLayer, resolveTargetLayer, updateLayer, selectLayer, layers]),
     true,
   );
 
@@ -211,6 +265,8 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   }
 
   function handleEditEntry(entry: CatalogEntry) {
+    setEditingSymbol(null);
+    setEditingPlacedPatch(null);
     setEditingEntry(entry);
     setEditingPatch(buildDefaultPatch(entry));
   }
@@ -219,6 +275,81 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     queuePlacement(patch);
     setEditingEntry(null);
     setEditingPatch(null);
+  }
+
+  function handleEditPlacedSymbol(symbol: MilSymbolLayerItem) {
+    if (!targetLayer) return;
+    setEditingEntry(null);
+    setEditingPatch(null);
+    setEditingSymbol({ layerId: targetLayer.id, symbolId: symbol.id });
+    setEditingPlacedPatch({
+      name: symbol.name,
+      sidc: symbol.SIDC,
+      uniqueDesignation: symbol.uniqueDesignation,
+      higherFormation: symbol.higherFormation,
+      staffComments: symbol.staffComments,
+      additionalInformation: symbol.additionalInformation,
+      dtg: symbol.dtg,
+      altitudeDepth: symbol.altitudeDepth,
+      direction: symbol.direction,
+      quantity: symbol.quantity,
+      iffSif: symbol.iffSif,
+      speed: symbol.speed,
+      typeStr: symbol.typeStr,
+      reinforcedReduced: symbol.reinforcedReduced,
+      combatEffectiveness: symbol.combatEffectiveness,
+      evaluationRating: symbol.evaluationRating,
+    });
+  }
+
+  function handleSaveEditedPlacedSymbol(patch: MilSymbolPatch) {
+    if (!editingSymbol) return;
+    const layer = layers.find((item) => item.id === editingSymbol.layerId);
+    if (layer?.type !== "mil-symbol") return;
+
+    const parsed = parseMilSymbolLayerSource(layer.source);
+    const symbols = parsed.symbols.map((symbol) => {
+      if (symbol.id !== editingSymbol.symbolId) return symbol;
+      const nextSidc = patch.sidc ?? symbol.SIDC;
+      return {
+        ...symbol,
+        name: patch.name ?? symbol.name,
+        SIDC: nextSidc,
+        affiliation: affiliationFromSidc(nextSidc),
+        uniqueDesignation: patch.uniqueDesignation,
+        higherFormation: patch.higherFormation,
+        staffComments: patch.staffComments,
+        additionalInformation: patch.additionalInformation,
+        dtg: patch.dtg,
+        altitudeDepth: patch.altitudeDepth,
+        direction: patch.direction,
+        quantity: patch.quantity,
+        iffSif: patch.iffSif,
+        speed: patch.speed,
+        typeStr: patch.typeStr,
+        reinforcedReduced: patch.reinforcedReduced,
+        combatEffectiveness: patch.combatEffectiveness,
+        evaluationRating: patch.evaluationRating,
+      };
+    });
+
+    updateLayer(layer.id, {
+      source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize),
+    });
+    setEditingSymbol(null);
+    setEditingPlacedPatch(null);
+  }
+
+  function handleMovePlacedSymbol(symbol: MilSymbolLayerItem) {
+    if (!targetLayer) return;
+    setEditingEntry(null);
+    setEditingPatch(null);
+    setEditingSymbol(null);
+    setEditingPlacedPatch(null);
+    setPendingPatch(null);
+    setPlacingSidc(null);
+    setPendingMove({ layerId: targetLayer.id, symbolId: symbol.id });
+    enableClick();
   }
 
   function handleChangeSymbolSize(value: number) {
@@ -234,6 +365,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   function cancelPlace() {
     setPendingPatch(null);
     setPlacingSidc(null);
+    setPendingMove(null);
     disableClick();
   }
 
@@ -313,9 +445,10 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       </div>
 
       {/* Placing banner */}
-      {placingSidc && (
+      {(placingSidc || pendingMove) && (
         <div className="mx-3 mb-1 px-2 py-1 bg-blue-500/10 rounded border border-blue-500/30 flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300">
-          <MapPin size={11} /> Clicca sulla mappa per posizionare…
+          {pendingMove ? <Crosshair size={11} /> : <MapPin size={11} />}
+          {pendingMove ? "Clicca nuova posizione per il simbolo…" : "Clicca sulla mappa per posizionare…"}
           <button className="ml-auto" onClick={cancelPlace}><X size={11} /></button>
         </div>
       )}
@@ -360,14 +493,62 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
         )}
       </div>
 
+      {targetLayer && targetSymbols.length > 0 && (
+        <div className="border-t px-3 py-2">
+          <div className="mb-1 text-[10px] font-medium text-muted-foreground">
+            Simboli nel layer selezionato ({targetSymbols.length})
+          </div>
+          <div className="max-h-28 overflow-y-auto space-y-0.5">
+            {targetSymbols.map((symbol) => (
+              <div key={symbol.id} className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-muted/50">
+                <SymPreview sidc={symbol.SIDC} size={18} />
+                <div className="flex-1 min-w-0 text-[10px]">
+                  <div className="truncate font-medium">{symbol.name}</div>
+                  <div className="truncate text-muted-foreground">{symbol.uniqueDesignation || symbol.SIDC}</div>
+                </div>
+                <button
+                  className="p-1 rounded hover:bg-muted"
+                  onClick={() => handleMovePlacedSymbol(symbol)}
+                  title="Sposta simbolo"
+                >
+                  <Crosshair size={11} />
+                </button>
+                <button
+                  className="p-1 rounded hover:bg-muted"
+                  onClick={() => handleEditPlacedSymbol(symbol)}
+                  title="Modifica simbolo"
+                >
+                  <Pencil size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {editingEntry && editingPatch && (
         <div className="border-t bg-background">
           <MilSymbolEditor
+            className="h-[56vh] min-h-[320px] max-h-[560px]"
             initial={editingPatch}
             onSave={handleSaveEditedEntry}
             onCancel={() => {
               setEditingEntry(null);
               setEditingPatch(null);
+            }}
+          />
+        </div>
+      )}
+
+      {editingSymbol && editingPlacedPatch && (
+        <div className="border-t bg-background">
+          <MilSymbolEditor
+            className="h-[56vh] min-h-[320px] max-h-[560px]"
+            initial={editingPlacedPatch}
+            onSave={handleSaveEditedPlacedSymbol}
+            onCancel={() => {
+              setEditingSymbol(null);
+              setEditingPlacedPatch(null);
             }}
           />
         </div>

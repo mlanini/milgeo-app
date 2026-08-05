@@ -216,10 +216,22 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       for (const symbol of parsed.symbols) {
         const opts: SymbolOptions = {
           size:              layerSize,
+          infoFields:        true,
           uniqueDesignation: symbol.uniqueDesignation,
           higherFormation:   symbol.higherFormation,
+          staffComments:     symbol.staffComments,
+          additionalInformation: symbol.additionalInformation,
+          dtg:               symbol.dtg,
+          altitudeDepth:     symbol.altitudeDepth,
           outlineColor:      "white",
           outlineWidth:      6,
+          quantity:          symbol.quantity,
+          iffSif:            symbol.iffSif,
+          speed:             symbol.speed,
+          type:              symbol.typeStr,
+          reinforcedReduced: symbol.reinforcedReduced,
+          combatEffectiveness: symbol.combatEffectiveness,
+          evaluationRating:  symbol.evaluationRating,
         };
         const key = makeSymbolKey(symbol.SIDC, opts);
         symbolCacheRef.current.set(key, { sidc: symbol.SIDC, options: opts });

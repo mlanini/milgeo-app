@@ -11,7 +11,18 @@ export interface MilSymbolLayerItem {
   affiliation: MilAffiliation;
   uniqueDesignation?: string;
   higherFormation?: string;
+  staffComments?: string;
+  additionalInformation?: string;
+  dtg?: string;
+  altitudeDepth?: string;
   direction?: number;
+  quantity?: string;
+  iffSif?: string;
+  speed?: string;
+  typeStr?: string;
+  reinforcedReduced?: string;
+  combatEffectiveness?: string;
+  evaluationRating?: string;
 }
 
 export interface ParsedMilSymbolLayerSource {
@@ -25,6 +36,10 @@ function isAffiliation(value: unknown): value is MilAffiliation {
 
 function parseNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function parseSymbolItem(raw: unknown): MilSymbolLayerItem | null {
@@ -43,9 +58,20 @@ function parseSymbolItem(raw: unknown): MilSymbolLayerItem | null {
     lon,
     lat,
     affiliation,
-    uniqueDesignation: typeof record.uniqueDesignation === "string" ? record.uniqueDesignation : undefined,
-    higherFormation: typeof record.higherFormation === "string" ? record.higherFormation : undefined,
+    uniqueDesignation: parseString(record.uniqueDesignation),
+    higherFormation: parseString(record.higherFormation),
+    staffComments: parseString(record.staffComments),
+    additionalInformation: parseString(record.additionalInformation) ?? parseString(record.additionalInfo),
+    dtg: parseString(record.dtg),
+    altitudeDepth: parseString(record.altitudeDepth),
     direction: parseNumber(record.direction) ?? undefined,
+    quantity: parseString(record.quantity),
+    iffSif: parseString(record.iffSif),
+    speed: parseString(record.speed),
+    typeStr: parseString(record.typeStr) ?? parseString(record.type),
+    reinforcedReduced: parseString(record.reinforcedReduced),
+    combatEffectiveness: parseString(record.combatEffectiveness),
+    evaluationRating: parseString(record.evaluationRating),
   };
 }
 
@@ -63,9 +89,20 @@ function parseLegacySingleSymbol(raw: Record<string, unknown>): MilSymbolLayerIt
     lon,
     lat,
     affiliation,
-    uniqueDesignation: typeof raw.uniqueDesignation === "string" ? raw.uniqueDesignation : undefined,
-    higherFormation: typeof raw.higherFormation === "string" ? raw.higherFormation : undefined,
+    uniqueDesignation: parseString(raw.uniqueDesignation),
+    higherFormation: parseString(raw.higherFormation),
+    staffComments: parseString(raw.staffComments),
+    additionalInformation: parseString(raw.additionalInformation) ?? parseString(raw.additionalInfo),
+    dtg: parseString(raw.dtg),
+    altitudeDepth: parseString(raw.altitudeDepth),
     direction: parseNumber(raw.direction) ?? undefined,
+    quantity: parseString(raw.quantity),
+    iffSif: parseString(raw.iffSif),
+    speed: parseString(raw.speed),
+    typeStr: parseString(raw.typeStr) ?? parseString(raw.type),
+    reinforcedReduced: parseString(raw.reinforcedReduced),
+    combatEffectiveness: parseString(raw.combatEffectiveness),
+    evaluationRating: parseString(raw.evaluationRating),
   };
 }
 
@@ -105,7 +142,20 @@ export function serializeMilSymbolLayerSource(
     affiliation: first?.affiliation ?? "FRIENDLY",
     uniqueDesignation: first?.uniqueDesignation,
     higherFormation: first?.higherFormation,
+    staffComments: first?.staffComments,
+    additionalInformation: first?.additionalInformation,
+    additionalInfo: first?.additionalInformation,
+    dtg: first?.dtg,
+    altitudeDepth: first?.altitudeDepth,
     direction: first?.direction,
+    quantity: first?.quantity,
+    iffSif: first?.iffSif,
+    speed: first?.speed,
+    typeStr: first?.typeStr,
+    type: first?.typeStr,
+    reinforcedReduced: first?.reinforcedReduced,
+    combatEffectiveness: first?.combatEffectiveness,
+    evaluationRating: first?.evaluationRating,
     symbols,
     symbolSize,
   };
