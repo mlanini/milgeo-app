@@ -55,8 +55,9 @@ import {
   formatTimeUtc,
 } from "../../lib/analysis-ephemeris";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
-import type { DemSource } from "../../hooks/useDesktopSettings";
 import { isTauri } from "../../lib/is-tauri";
+
+type DemSource = "" | "online" | "local";
 
 /** Mirror the sidecar base-URL logic from @geolibre/processing/sidecar-client. */
 const SIDECAR_BASE_URL: string =
@@ -485,12 +486,24 @@ interface AnalysisPanelProps {
 type RunState = "idle" | "drawing" | "loading" | "done" | "error";
 
 export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
-  const open = useAppStore((s) => s.ui.analysisOpen);
-  const setAnalysisOpen = useAppStore((s) => s.setAnalysisOpen);
+  const open = useAppStore(
+    (s) =>
+      (s as unknown as { ui?: { analysisOpen?: boolean } }).ui?.analysisOpen ??
+      false,
+  );
+  const setAnalysisOpen = useAppStore(
+    (s) =>
+      (s as unknown as { setAnalysisOpen?: (open: boolean) => void })
+        .setAnalysisOpen,
+  );
   const desktopSettings = useDesktopSettingsStore((s) => s.desktopSettings);
   const setDesktopSettings = useDesktopSettingsStore((s) => s.setDesktopSettings);
-  const demSource = desktopSettings.demSource;
-  const localDtmPath = desktopSettings.localDtmPath;
+  const demSource =
+    (desktopSettings as unknown as { demSource?: DemSource }).demSource ??
+    "online";
+  const localDtmPath =
+    (desktopSettings as unknown as { localDtmPath?: string }).localDtmPath ??
+    "";
 
   const [selectedToolId, setSelectedToolId] = useState<string>("distance");
   const [runState, setRunState] = useState<RunState>("idle");
@@ -518,8 +531,11 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
   // cannot work. Reset any previously-saved "local" preference to "online" on
   // first render outside the Tauri desktop webview.
   useEffect(() => {
-    if (!isTauri() && desktopSettings.demSource === "local") {
-      setDesktopSettings({ ...desktopSettings, demSource: "online" });
+    if (!isTauri() && demSource === "local") {
+      setDesktopSettings({
+        ...(desktopSettings as unknown as Record<string, unknown>),
+        demSource: "online",
+      } as unknown as typeof desktopSettings);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally runs once on mount
@@ -729,7 +745,9 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
 
       // ─ Sidecar tools (Slope, Hillshade, Viewshed) ────────────────────────────
       if (id === "slope" || id === "hillshade" || id === "viewshed") {
-        const apiKey = desktopSettings.openTopographyApiKey;
+        const apiKey =
+          (desktopSettings as unknown as { openTopographyApiKey?: string })
+            .openTopographyApiKey;
         if (!apiKey) {
           setResult({
             toolId: id,
@@ -867,7 +885,7 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
           size="icon"
           variant="ghost"
           className="size-6"
-          onClick={() => setAnalysisOpen(false)}
+          onClick={() => setAnalysisOpen?.(false)}
           aria-label="Close Analysis panel"
         >
           <X className="size-3.5" />
@@ -1032,11 +1050,13 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
           onLocalDtmDraftChange={setLocalDtmDraft}
           isDesktop={isTauri()}
           onConfirm={(source, path) => {
-            setDesktopSettings({
-              ...desktopSettings,
-              demSource: source,
-              localDtmPath: path,
-            });
+            setDesktopSettings(
+              {
+                ...(desktopSettings as unknown as Record<string, unknown>),
+                demSource: source,
+                localDtmPath: path,
+              } as unknown as typeof desktopSettings,
+            );
             setDemPickerOpen(false);
           }}
         />

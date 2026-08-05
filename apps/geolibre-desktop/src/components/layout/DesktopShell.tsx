@@ -5,7 +5,7 @@ import { restoreThreeDTilesLayers } from "@geolibre/plugins";
 import {
   type CSSProperties,
   type DragEvent,
-  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   lazy,
   Suspense,
   useCallback,
@@ -114,7 +114,7 @@ export function DesktopShell({
   const [dropError, setDropError] = useState<string | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const diagnostics = useDiagnosticsSnapshot();
-  const externalPluginsReady = useExternalPluginsReady();
+  const externalPluginsReady = useExternalPluginsReady(mapControllerRef);
   const { isActive } = usePluginRegistry();
   const [layerPanelWidth, setLayerPanelWidth] = useState(
     DEFAULT_SIDE_PANEL_WIDTH,
@@ -329,7 +329,7 @@ export function DesktopShell({
   );
 
   const startLayerPanelResize = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
+    (event: ReactPointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       event.stopPropagation();
 
@@ -395,7 +395,7 @@ export function DesktopShell({
   );
 
   const startStylePanelResize = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
+    (event: ReactPointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       event.stopPropagation();
 
@@ -484,10 +484,15 @@ export function DesktopShell({
         onToggleThemeMode={onToggleThemeMode}
       />
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {layoutOptions.panelsVisible ? (
+        {layoutOptions.layerPanelVisible ? (
           <LayerPanel
             mapControllerRef={mapControllerRef}
             onResizeStart={startLayerPanelResize}
+            geometryEditLayerId={null}
+            onToggleGeometryEdit={() => {}}
+            onCancelGeometryEdit={() => {}}
+            onMaterializeDuckDBLayer={() => {}}
+            onOpenRasterStylePanel={() => {}}
           />
         ) : null}
         <main
@@ -502,11 +507,16 @@ export function DesktopShell({
           />
           <MilSymbolRenderer mapControllerRef={mapControllerRef} />
         </main>
-        {layoutOptions.panelsVisible ? (
-          <StylePanel onResizeStart={startStylePanelResize} />
+        {layoutOptions.stylePanelVisible ? (
+          <StylePanel
+            mapControllerRef={mapControllerRef}
+            onResizeStart={startStylePanelResize}
+          />
         ) : null}
       </div>
-      {layoutOptions.panelsVisible ? <AttributeTable /> : null}
+      {layoutOptions.attributePanelVisible ? (
+        <AttributeTable mapControllerRef={mapControllerRef} />
+      ) : null}
       <StatusBar
         compact={layoutOptions.compact}
         diagnosticsErrorCount={diagnostics.errorCount}

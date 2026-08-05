@@ -1,4 +1,5 @@
 import type { GeoLibreAppAPI, GeoLibrePlugin } from "@geolibre/plugins";
+import type { FeatureCollection, LineString } from "geojson";
 import { createRoot } from "react-dom/client";
 import { MilLayerPanel } from "../components/panels/MilLayerPanel";
 import { useMapControllerRef } from "../contexts/map-controller-context";
@@ -10,7 +11,7 @@ interface MilGeoPluginState {
   open?: boolean;
 }
 
-function buildSampleSillage(center: { lng: number; lat: number }) {
+function buildSampleSillage(center: { lng: number; lat: number }): FeatureCollection<LineString> {
   return {
     type: "FeatureCollection",
     features: [

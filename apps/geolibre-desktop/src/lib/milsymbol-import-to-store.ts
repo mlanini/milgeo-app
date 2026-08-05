@@ -149,7 +149,6 @@ export function parseOrbatJsonForStore(
     name: groupName,
     visible: true,
     opacity: 1,
-    showLabels: false,
     symbols,
     graphics: [],
   };
@@ -239,7 +238,6 @@ export function parseMilsymbJsonForStore(
       name: layerName,
       visible: srcLayer.visible !== false,
       opacity: 1,
-      showLabels: false,
       symbols,
       graphics: [],
     });

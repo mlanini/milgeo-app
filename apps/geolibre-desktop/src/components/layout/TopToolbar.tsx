@@ -79,7 +79,13 @@ import {
   X,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { type FormEvent, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type ChangeEvent,
+  type FormEvent,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   createAppAPI,
   getPluginManager,
@@ -199,6 +205,7 @@ export function TopToolbar({
     ),
   );
   const [addDataKind, setAddDataKind] = useState<AddDataKind | null>(null);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectUrlDialogOpen, setProjectUrlDialogOpen] = useState(false);
   const [projectUrl, setProjectUrl] = useState("");
   const [projectUrlError, setProjectUrlError] = useState<string | null>(null);
@@ -370,19 +377,7 @@ export function TopToolbar({
     openDuckDBLayerPanel(appApi);
   };
   const handleAddGeoParquetLayer = async () => {
-    try {
-      const { openGeoParquetPanel } = await import(
-        "../../lib/geoparquet-duckdb-runtime"
-      );
-      openGeoParquetPanel(appApi);
-    } catch (error) {
-      console.error("Failed to open the GeoParquet panel", error);
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : "Failed to open GeoParquet panel",
-      );
-    }
+    setActionError("GeoParquet panel is not available in this build.");
   };
   const handleAddPMTilesLayer = () => {
     openPMTilesLayerPanel(appApi);
@@ -480,11 +475,19 @@ export function TopToolbar({
           <span className="hidden sm:inline">MilGeo.app</span>
         ) : null}
       </span>
+      <Button
+        className={toolbarButtonClass}
+        variant="ghost"
+        size={toolbarButtonSize}
+        onClick={() => setNewProjectOpen(true)}
+        aria-label="New"
+      >
+        <Save className={toolbarIconClassName} />
+        {renderToolbarLabel("New")}
+      </Button>
       <NewProjectDialog
-        buttonClassName={toolbarButtonClass}
-        buttonSize={toolbarButtonSize}
-        iconClassName={toolbarIconClassName}
-        showLabels={showLabels}
+        open={newProjectOpen}
+        onOpenChange={setNewProjectOpen}
         onSaveCurrentProject={handleSave}
       />
       <DropdownMenu>
@@ -611,12 +614,6 @@ export function TopToolbar({
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setAddDataKind("wmts")}>
             Add WMTS Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("vector")}>
-            Add Vector Layer
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setAddDataKind("raster")}>
-            Add Raster Layer
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void handleAddGeoParquetLayer()}>
             Add GeoParquet Layer
@@ -785,7 +782,7 @@ export function TopToolbar({
                       <DropdownMenuRadioItem
                         key={position.value}
                         value={position.value}
-                        onSelect={(event) => event.preventDefault()}
+                        onSelect={() => undefined}
                       >
                         {position.label}
                       </DropdownMenuRadioItem>
@@ -803,6 +800,13 @@ export function TopToolbar({
         iconClassName={toolbarIconClassName}
         mapControllerRef={mapControllerRef}
         showLabels={showLabels}
+        onOpenManagePlugins={() => {}}
+        profilePlugins={plugins.map((plugin) => ({
+          id: plugin.id,
+          name: plugin.name,
+        }))}
+        themeMode={themeMode}
+        onToggleThemeMode={onToggleThemeMode}
       />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -852,13 +856,13 @@ export function TopToolbar({
       <AddDataDialog
         kind={addDataKind}
         mapControllerRef={mapControllerRef}
-        onOpenChange={(open) => {
+        onOpenChange={(open: boolean) => {
           if (!open) setAddDataKind(null);
         }}
       />
       <Dialog
         open={projectUrlDialogOpen}
-        onOpenChange={(open) => {
+        onOpenChange={(open: boolean) => {
           setProjectUrlDialogOpen(open);
           if (!open) {
             projectUrlAbortRef.current?.abort();
@@ -884,7 +888,7 @@ export function TopToolbar({
                 id="project-url"
                 placeholder="https://example.com/project.geolibre.json"
                 value={projectUrl}
-                onChange={(event) => {
+                onChange={(event: ChangeEvent<HTMLInputElement>) => {
                   setProjectUrl(event.target.value);
                   setProjectUrlError(null);
                 }}
@@ -910,7 +914,7 @@ export function TopToolbar({
       </Dialog>
       <Dialog
         open={actionError !== null}
-        onOpenChange={(open) => {
+        onOpenChange={(open: boolean) => {
           if (!open) setActionError(null);
         }}
       >

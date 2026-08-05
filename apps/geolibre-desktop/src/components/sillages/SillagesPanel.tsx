@@ -89,8 +89,16 @@ interface SillagesPanelProps {
 }
 
 export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
-  const open = useAppStore((s) => s.ui.sillagesOpen);
-  const setSillagesOpen = useAppStore((s) => s.setSillagesOpen);
+  const open = useAppStore(
+    (s) =>
+      (s as unknown as { ui?: { sillagesOpen?: boolean } }).ui?.sillagesOpen ??
+      false,
+  );
+  const setSillagesOpen = useAppStore(
+    (s) =>
+      (s as unknown as { setSillagesOpen?: (open: boolean) => void })
+        .setSillagesOpen,
+  );
 
   const { settings } = useSillagesSettingsStore();
   const setSettings = useSillagesSettingsStore((s) => s.setSettings);
@@ -553,7 +561,7 @@ export function SillagesPanel({ mapControllerRef }: SillagesPanelProps) {
           size="icon"
           variant="ghost"
           className="size-6"
-          onClick={() => setSillagesOpen(false)}
+          onClick={() => setSillagesOpen?.(false)}
           aria-label="Close Sillages panel"
         >
           <X className="size-3.5" />
