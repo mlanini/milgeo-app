@@ -12,7 +12,7 @@ import {
   useMemo,
   useEffect,
 } from "react";
-import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
+import { DEFAULT_LAYER_STYLE, useAppStore, type GeoLibreLayer } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
 import ms from "milsymbol";
 import {
@@ -86,7 +86,7 @@ interface CatalogTabProps {
   mapControllerRef: React.RefObject<MapController | null>;
 }
 
-function createMilSymbolLayer(name: string, symbol: MilSymbolLayerItem, symbolSize: number) {
+function createMilSymbolLayer(name: string, symbol: MilSymbolLayerItem, symbolSize: number): GeoLibreLayer {
   return {
     id: crypto.randomUUID(),
     name,
