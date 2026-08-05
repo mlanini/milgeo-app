@@ -619,47 +619,6 @@ export const SYMBOL_CATALOG: CatalogEntry[] = [
     subcategory: "Threat",
   },
 
-  // ── Dismounted Individual (SymSet 27) ────────────────────────────────
-  {
-    baseSidc: "10032700001100000000",
-    name: "Dismounted Individual (generic)",
-    category: "Dismounted",
-  },
-  {
-    baseSidc: "10032700001101010000",
-    name: "Dismounted Infantry",
-    category: "Dismounted",
-  },
-  {
-    baseSidc: "10032700001101020000",
-    name: "Dismounted Medic",
-    category: "Dismounted",
-  },
-  {
-    baseSidc: "10032700001101030000",
-    name: "Dismounted Reconnaissance",
-    category: "Dismounted",
-  },
-  {
-    baseSidc: "10032700001102090000",
-    name: "Dismounted Sniper",
-    category: "Dismounted",
-  },
-  {
-    baseSidc: "10032700001102100000",
-    name: "Dismounted Special Operations",
-    category: "Dismounted",
-  },
-  {
-    baseSidc: "10032700001102060000",
-    name: "Dismounted Military Police",
-    category: "Dismounted",
-  },
-  {
-    baseSidc: "10032700001102020000",
-    name: "Dismounted Fire Observer",
-    category: "Dismounted",
-  },
 ];
 
 // --- Category helpers ---

@@ -2,7 +2,7 @@
  * MilSymbolEditor.tsx
  * Compact editor for a single MilSymbolItem:
  *  – SIDC builder: Context / Identity / Symbol Set / Status / HQ-TF-Dummy /
- *    Echelon / Entity 6-digit code / Modifier 1 / Modifier 2
+ *    Echelon / Entity 6-digit code
  *  – Text amplifiers: Unique Designation, Higher Formation, Staff Comments,
  *    Additional Info, DTG, Altitude/Depth, Direction, Quantity, Speed, Type,
  *    Reinforced/Reduced, Combat Effectiveness, Evaluation Rating
@@ -10,7 +10,7 @@
  *
  * The editor calls `onSave(patch)` when the user confirms.
  */
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import ms from "milsymbol";
 import { cn } from "@geolibre/ui";
 import type { MilSymbolItem } from "@geolibre/core";
@@ -23,7 +23,6 @@ import {
   STATUS_OPTIONS,
   HQTF_OPTIONS,
   ECHELON_OPTIONS,
-  getModifierSet,
   type SidcOption,
 } from "../../lib/mil-sidc";
 
@@ -170,8 +169,8 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
   const [hqTf,      setHqTf]      = useState(parts.hqTfDummy);
   const [echelon,   setEchelon]   = useState(parts.echelon);
   const [entity,    setEntity]    = useState(parts.entity);
-  const [mod1,      setMod1]      = useState(parts.modifier1);
-  const [mod2,      setMod2]      = useState(parts.modifier2);
+  const [fixedModifier1]          = useState(parts.modifier1);
+  const [fixedModifier2]          = useState(parts.modifier2);
 
   // Amplifiers state
   const [name,                setName]                = useState(initial.name ?? "");
@@ -192,28 +191,19 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
   // Active tab for amplifiers (SIDC | Amplifiers)
   const [tab, setTab] = useState<"sidc" | "amplifiers">("sidc");
 
-  // Modifier options per symbol set
-  const mods = useMemo(() => getModifierSet(symbolSet), [symbolSet]);
-  const mod1Options: SidcOption[] = useMemo(
-    () => Object.entries(mods.m1).map(([code, label]) => ({ code, label })),
-    [mods]
-  );
-  const mod2Options: SidcOption[] = useMemo(
-    () => Object.entries(mods.m2).map(([code, label]) => ({ code, label })),
-    [mods]
-  );
-
-  // Reset mods when symbol set changes
-  useEffect(() => {
-    const newMods = getModifierSet(symbolSet);
-    if (!(mod1 in newMods.m1)) setMod1("00");
-    if (!(mod2 in newMods.m2)) setMod2("00");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbolSet]);
-
   const currentSidc = useMemo(() =>
-    buildSidc({ context, identity, symbolSet, status, hqTfDummy: hqTf, echelon, entity, modifier1: mod1, modifier2: mod2 }),
-    [context, identity, symbolSet, status, hqTf, echelon, entity, mod1, mod2]
+    buildSidc({
+      context,
+      identity,
+      symbolSet,
+      status,
+      hqTfDummy: hqTf,
+      echelon,
+      entity,
+      modifier1: fixedModifier1,
+      modifier2: fixedModifier2,
+    }),
+    [context, identity, symbolSet, status, hqTf, echelon, entity, fixedModifier1, fixedModifier2]
   );
 
   function handleSave() {
@@ -274,12 +264,6 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
               placeholder="000000"
               onChange={(v) => setEntity((v.replace(/\D/g, "") + "000000").slice(0, 6))}
             />
-            {mod1Options.length > 1 && (
-              <SelectField label="Modifier 1" value={mod1} options={mod1Options} onChange={setMod1} />
-            )}
-            {mod2Options.length > 1 && (
-              <SelectField label="Modifier 2" value={mod2} options={mod2Options} onChange={setMod2} />
-            )}
           </>
         )}
 
