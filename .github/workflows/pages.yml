@@ -37,7 +37,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: lts/*
+          node-version: "22"
           cache: npm
           cache-dependency-path: package-lock.json
 
@@ -45,7 +45,7 @@ jobs:
         run: npm ci
 
       - name: Build web demo
-        run: npm run build -w geolibre-desktop
+        run: npm run build -w milgeo-app
         env:
           GEOLIBRE_APP_BASE: ./
           VITE_GEE_OAUTH_CLIENT_ID: ${{ secrets.VITE_GEE_OAUTH_CLIENT_ID }}
