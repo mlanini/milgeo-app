@@ -1,4 +1,4 @@
-import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
+import { DEFAULT_LAYER_STYLE, type GeoLibreLayer, useAppStore } from "@geolibre/core";
 import {
   maplibreAnnotationsPlugin,
   maplibreBasemapControlPlugin,
@@ -497,7 +497,8 @@ export function createAppAPI(
       return normalized.id;
     },
     removeLayer: (id: string) => useAppStore.getState().removeLayer(id),
-    updateLayer: (id: string, patch) => useAppStore.getState().updateLayer(id, patch),
+    updateLayer: (id: string, patch: Partial<GeoLibreLayer>) =>
+      useAppStore.getState().updateLayer(id, patch),
     getLayers: () => useAppStore.getState().layers,
     onLayersChange: (callback: (layers: ReturnType<typeof useAppStore.getState>["layers"]) => void) =>
       useAppStore.subscribe((state, prev) => {
