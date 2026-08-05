@@ -3,7 +3,6 @@ import type { FeatureCollection, LineString } from "geojson";
 import { createRoot } from "react-dom/client";
 import { MilLayerPanel } from "../components/panels/MilLayerPanel";
 import { useMapControllerRef } from "../contexts/map-controller-context";
-import MilSymbolRenderer from "../components/map/MilSymbolRenderer";
 
 export const MILGEO_PLUGIN_ID = "milgeo-workspace";
 
@@ -51,9 +50,6 @@ function MilGeoWorkspacePanelContent({ app }: { app: GeoLibreAppAPI }) {
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
-      <div className="hidden">
-        <MilSymbolRenderer mapControllerRef={mapControllerRef} />
-      </div>
       <div className="rounded-md border bg-background/80 p-3 text-xs">
         <div className="font-semibold">MilGeo workspace</div>
         <p className="mt-1 text-muted-foreground">

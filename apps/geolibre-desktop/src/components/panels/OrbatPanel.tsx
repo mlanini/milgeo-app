@@ -15,7 +15,8 @@ import { useState, useMemo, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import ms from "milsymbol";
 import { cn } from "@geolibre/ui";
-import type { OrbatUnit } from "@geolibre/core";
+import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
+import type { MilAffiliation, MilSymbolLayerSource, OrbatUnit } from "@geolibre/core";
 import { useMilLayerStore } from "../../hooks/useMilLayerStore";
 import { MilSymbolEditor, type MilSymbolPatch } from "./MilSymbolEditor";
 import {
@@ -28,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import type { MapController } from "@geolibre/map";
+import { parseSidc } from "../../lib/mil-sidc";
 
 const MilSymbol = ms.Symbol;
 const TREE_ICON = 24;
@@ -36,6 +38,42 @@ const TREE_ICON = 24;
 
 interface OrbatPanelProps {
   mapControllerRef: React.RefObject<MapController | null>;
+}
+
+function affiliationFromSidc(sidc: string): MilAffiliation {
+  switch (parseSidc(sidc).identity) {
+    case "2":
+    case "3":
+      return "FRIENDLY";
+    case "4":
+      return "NEUTRAL";
+    case "5":
+    case "6":
+      return "HOSTILE";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+function buildUnitLayer(unit: OrbatUnit, lon: number, lat: number) {
+  const source: MilSymbolLayerSource = {
+    SIDC: unit.sidc,
+    lon,
+    lat,
+    affiliation: affiliationFromSidc(unit.sidc),
+    uniqueDesignation: unit.name,
+  };
+
+  return {
+    id: crypto.randomUUID(),
+    name: unit.name,
+    type: "mil-symbol" as const,
+    visible: true,
+    opacity: 1,
+    style: { ...DEFAULT_LAYER_STYLE },
+    metadata: { milgeoManaged: true, orbatUnitId: unit.id },
+    source: source as unknown as Record<string, unknown>,
+  };
 }
 
 // ─── Mini symbol preview for tree row ────────────────────────────────────────
@@ -184,7 +222,9 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
   const addOrbatUnit = useMilLayerStore((s) => s.addOrbatUnit);
   const removeOrbatUnit = useMilLayerStore((s) => s.removeOrbatUnit);
   const updateOrbatUnit = useMilLayerStore((s) => s.updateOrbatUnit);
-  const placeOrbatUnit  = useMilLayerStore((s) => s.placeOrbatUnit);
+  const appLayers = useAppStore((s) => s.layers);
+  const addLayer = useAppStore((s) => s.addLayer);
+  const updateLayer = useAppStore((s) => s.updateLayer);
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [editingId,   setEditingId]   = useState<string | null>(null);
@@ -230,12 +270,35 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
 
   const handleSaveEdit = useCallback((patch: MilSymbolPatch) => {
     if (!editingId) return;
+    const currentUnit = orbatUnits.find((unit) => unit.id === editingId);
+    const nextName = patch.name ?? currentUnit?.name ?? "Symbol";
+    const nextSidc = patch.sidc ?? currentUnit?.sidc ?? "10031000000000000000";
     updateOrbatUnit(editingId, {
-      name: patch.name ?? "Symbol",
-      sidc: patch.sidc ?? "10031000000000000000",
+      name: nextName,
+      sidc: nextSidc,
     });
+
+    const linkedLayerId = currentUnit?.symbolId;
+    const linkedLayer = linkedLayerId
+      ? appLayers.find((layer) => layer.id === linkedLayerId && layer.type === "mil-symbol")
+      : null;
+    if (linkedLayer) {
+      const source = linkedLayer.source as unknown as MilSymbolLayerSource;
+      updateLayer(linkedLayer.id, {
+        name: nextName,
+        source: {
+          ...linkedLayer.source,
+          SIDC: nextSidc,
+          affiliation: affiliationFromSidc(nextSidc),
+          uniqueDesignation: nextName,
+          lon: source.lon,
+          lat: source.lat,
+        } as unknown as Record<string, unknown>,
+      });
+    }
+
     setEditingId(null);
-  }, [editingId, updateOrbatUnit]);
+  }, [appLayers, editingId, orbatUnits, updateLayer, updateOrbatUnit]);
 
   // Place on map: register a one-shot map click
   const handlePlace = useCallback((unitId: string) => {
@@ -244,14 +307,39 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
     setPlacingId(unitId);
     const onClick = (e: maplibregl.MapMouseEvent) => {
       const { lng, lat } = e.lngLat;
-      placeOrbatUnit(unitId, lng, lat);
+      const unit = useMilLayerStore.getState().orbatUnits.find((item) => item.id === unitId);
+      if (unit) {
+        const linkedLayer = unit.symbolId
+          ? useAppStore.getState().layers.find(
+              (layer) => layer.id === unit.symbolId && layer.type === "mil-symbol"
+            )
+          : null;
+
+        if (linkedLayer) {
+          useAppStore.getState().updateLayer(linkedLayer.id, {
+            name: unit.name,
+            source: {
+              ...linkedLayer.source,
+              SIDC: unit.sidc,
+              lon: lng,
+              lat,
+              affiliation: affiliationFromSidc(unit.sidc),
+              uniqueDesignation: unit.name,
+            } as unknown as Record<string, unknown>,
+          });
+        } else {
+          const layer = buildUnitLayer(unit, lng, lat);
+          useAppStore.getState().addLayer(layer);
+          useMilLayerStore.getState().updateOrbatUnit(unitId, { symbolId: layer.id });
+        }
+      }
       setPlacingId(null);
       map.off("click", onClick);
       map.getCanvas().style.cursor = "";
     };
     map.getCanvas().style.cursor = "crosshair";
     map.once("click", onClick);
-  }, [mapControllerRef, placeOrbatUnit]);
+  }, [mapControllerRef]);
 
   const editingUnit = editingId ? orbatUnits.find((u) => u.id === editingId) : null;
 
