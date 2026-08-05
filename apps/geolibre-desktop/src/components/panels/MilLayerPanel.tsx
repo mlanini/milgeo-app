@@ -33,7 +33,7 @@ import {
   sidcWithAffiliation,
   type CatalogEntry,
 } from "../../lib/milsymbol-catalog";
-import { parseSidc, buildSidc, ECHELON_OPTIONS } from "../../lib/mil-sidc";
+import { parseSidc, buildSidc } from "../../lib/mil-sidc";
 import {
   DEFAULT_MIL_SYMBOL_SIZE_PX,
   parseMilSymbolLayerSource,
@@ -125,7 +125,6 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   const [search,      setSearch]      = useState("");
   const [category,    setCategory]    = useState("All");
   const [affiliation, setAffiliation] = useState<MilAffiliation>("FRIENDLY");
-  const [echelon,     setEchelon]     = useState("00");
   const [symbolSizePx, setSymbolSizePx] = useState(DEFAULT_MIL_SYMBOL_SIZE_PX);
   const [placingSidc, setPlacingSidc] = useState<string | null>(null);
   const [pendingPatch, setPendingPatch] = useState<MilSymbolPatch | null>(null);
@@ -170,11 +169,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
 
   // Applies echelon to the SIDC before placing, preserving catalog modifiers.
   function applyEchelon(baseSidc: string): string {
-    const p = parseSidc(baseSidc);
-    return buildSidc({
-      ...p,
-      echelon:   echelon !== "00" ? echelon : p.echelon,
-    });
+    return buildSidc({ ...parseSidc(baseSidc) });
   }
 
   function buildDefaultPatch(entry: CatalogEntry): MilSymbolPatch {
@@ -394,21 +389,8 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
         ))}
       </div>
 
-      {/* Echelon selector */}
+      {/* Symbol size */}
       <div className="px-3 pb-1 grid grid-cols-1 gap-1.5">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-medium text-muted-foreground">Echelon</span>
-          <select
-            className="h-6 rounded border border-input bg-background px-1 text-xs focus:outline-none"
-            value={echelon}
-            onChange={(e) => setEchelon(e.target.value)}
-          >
-            {ECHELON_OPTIONS.map((o) => (
-              <option key={o.code} value={o.code}>{o.code === "00" ? "—" : o.label}</option>
-            ))}
-          </select>
-        </label>
-
         <label className="flex flex-col gap-0.5">
           <span className="text-[10px] font-medium text-muted-foreground">
             Scale Symbols Size: {symbolSizePx}px

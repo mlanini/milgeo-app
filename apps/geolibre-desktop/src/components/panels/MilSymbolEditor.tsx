@@ -120,17 +120,58 @@ function NumberField({
 
 // ─── Live preview ─────────────────────────────────────────────────────────────
 
-function SymbolPreview({ sidc, uniqueDesignation, higherFormation }: {
+function SymbolPreview({
+  sidc,
+  uniqueDesignation,
+  higherFormation,
+  staffComments,
+  additionalInformation,
+  dtg,
+  altitudeDepth,
+  direction,
+  quantity,
+  iffSif,
+  speed,
+  typeStr,
+  reinforcedReduced,
+  combatEffectiveness,
+  evaluationRating,
+}: {
   sidc: string;
   uniqueDesignation?: string;
   higherFormation?: string;
+  staffComments?: string;
+  additionalInformation?: string;
+  dtg?: string;
+  altitudeDepth?: string;
+  direction?: number;
+  quantity?: string;
+  iffSif?: string;
+  speed?: string;
+  typeStr?: string;
+  reinforcedReduced?: string;
+  combatEffectiveness?: string;
+  evaluationRating?: string;
 }) {
   const svg = useMemo(() => {
     try {
       const sym = new MilSymbol(sidc, {
         size: PREVIEW_SIZE,
+        infoFields: true,
         uniqueDesignation,
         higherFormation,
+        staffComments,
+        additionalInformation,
+        dtg,
+        altitudeDepth,
+        direction,
+        quantity,
+        iffSif,
+        speed,
+        type: typeStr,
+        reinforcedReduced,
+        combatEffectiveness,
+        evaluationRating,
         outlineColor: "white",
         outlineWidth: 6,
       });
@@ -139,7 +180,23 @@ function SymbolPreview({ sidc, uniqueDesignation, higherFormation }: {
     } catch {
       return null;
     }
-  }, [sidc, uniqueDesignation, higherFormation]);
+  }, [
+    sidc,
+    uniqueDesignation,
+    higherFormation,
+    staffComments,
+    additionalInformation,
+    dtg,
+    altitudeDepth,
+    direction,
+    quantity,
+    iffSif,
+    speed,
+    typeStr,
+    reinforcedReduced,
+    combatEffectiveness,
+    evaluationRating,
+  ]);
 
   return (
     <div className="flex items-center justify-center w-full py-1.5">
@@ -255,7 +312,23 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
     <div className={cn("flex flex-col gap-0 bg-background text-foreground", className)}>
       {/* Preview */}
       <div className="border-b bg-muted/30 px-3">
-        <SymbolPreview sidc={currentSidc} uniqueDesignation={uniqueDesignation} higherFormation={higherFormation} />
+        <SymbolPreview
+          sidc={currentSidc}
+          uniqueDesignation={uniqueDesignation}
+          higherFormation={higherFormation}
+          staffComments={staffComments}
+          additionalInformation={additionalInfo}
+          dtg={dtg}
+          altitudeDepth={altitudeDepth}
+          direction={direction}
+          quantity={quantity}
+          iffSif={iffSif}
+          speed={speed}
+          typeStr={typeStr}
+          reinforcedReduced={reinforcedReduced}
+          combatEffectiveness={combatEffectiveness}
+          evaluationRating={evaluationRating}
+        />
         <div className="pb-1 text-center font-mono text-[10px] text-muted-foreground">{currentSidc}</div>
       </div>
 

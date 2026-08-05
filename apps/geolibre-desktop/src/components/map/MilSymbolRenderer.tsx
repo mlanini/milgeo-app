@@ -217,6 +217,8 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
         const opts: SymbolOptions = {
           size:              layerSize,
           infoFields:        true,
+          infoSize:          50,
+          padding:           8,
           uniqueDesignation: symbol.uniqueDesignation,
           higherFormation:   symbol.higherFormation,
           staffComments:     symbol.staffComments,
