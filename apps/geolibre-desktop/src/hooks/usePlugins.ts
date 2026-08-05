@@ -1,4 +1,4 @@
-import { useAppStore } from "@geolibre/core";
+import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
 import {
   maplibreAnnotationsPlugin,
   maplibreBasemapControlPlugin,
@@ -46,6 +46,7 @@ import type {
   GeoLibreDeckGL,
   GeoLibreExternalNativeLayerRegistration,
   GeoLibreFileDialogOptions,
+  GeoLibreLayerDraft,
   GeoLibreMapControlPosition,
 } from "@geolibre/plugins";
 import { invoke } from "@tauri-apps/api/core";
@@ -151,6 +152,26 @@ let externalPluginsLoadPromise: Promise<void> | null = null;
 let externalPluginsLoadKey: string | null = null;
 const externalPluginsListeners = new Set<() => void>();
 const EMPTY_PLUGIN_MANIFEST_URLS: string[] = [];
+
+function createPluginLayerId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function normalizePluginLayerDraft(layer: GeoLibreLayerDraft) {
+  return {
+    id: layer.id ?? createPluginLayerId(),
+    name: layer.name,
+    type: layer.type,
+    source: layer.source,
+    visible: layer.visible ?? true,
+    opacity: layer.opacity ?? 1,
+    style: { ...DEFAULT_LAYER_STYLE, ...(layer.style ?? {}) },
+    metadata: layer.metadata ?? {},
+    sourcePath: layer.sourcePath,
+  };
+}
 
 export function getPluginManager(): PluginManager {
   return manager;
@@ -470,6 +491,26 @@ export function createAppAPI(
   const store = useAppStore.getState();
   return {
     setBasemap: (url: string) => store.setBasemapStyleUrl(url),
+    addLayer: (layer: GeoLibreLayerDraft, beforeLayerId?: string | null) => {
+      const normalized = normalizePluginLayerDraft(layer);
+      useAppStore.getState().addLayer(normalized, beforeLayerId ?? null);
+      return normalized.id;
+    },
+    removeLayer: (id: string) => useAppStore.getState().removeLayer(id),
+    updateLayer: (id: string, patch) => useAppStore.getState().updateLayer(id, patch),
+    getLayers: () => useAppStore.getState().layers,
+    onLayersChange: (callback: (layers: ReturnType<typeof useAppStore.getState>["layers"]) => void) =>
+      useAppStore.subscribe((state, prev) => {
+        if (state.layers !== prev.layers) callback(state.layers);
+      }),
+    getIdentifyLayerId: () => useAppStore.getState().identifyLayerId,
+    onIdentifyLayerChange: (callback: (id: string | null) => void) =>
+      useAppStore.subscribe((state, prev) => {
+        if (state.identifyLayerId !== prev.identifyLayerId) {
+          callback(state.identifyLayerId);
+        }
+      }),
+    setIdentifyLayer: (id: string | null) => useAppStore.getState().setIdentifyLayer(id),
     addGeoJsonLayer: (
       name: string,
       data: GeoJSON.FeatureCollection,

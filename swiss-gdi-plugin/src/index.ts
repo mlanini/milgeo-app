@@ -1,8 +1,10 @@
 import type {
   GeoLibreAppAPI,
   GeoLibreLayerDraft,
+  GeoLibreLayerRecord,
   GeoLibrePlugin,
-} from "@geolibre/plugins";
+  GeoLibrePluginState,
+} from "./host-api";
 import {
   buildSwissGdiCapabilitiesUrl,
   buildSwissGdiLegendGraphicUrl,
@@ -13,13 +15,8 @@ import {
   SWISS_GDI_PLUGIN_ID,
   type SwissGdiCatalogLayer,
   type SwissGdiLanguage,
-} from "../lib/swiss-gdi";
+} from "./swiss-gdi";
 
-interface SwissGdiPluginState {
-  open?: boolean;
-}
-
-const PANEL_ID = SWISS_GDI_PLUGIN_ID;
 const PANEL_TITLE = "Swiss GDI";
 const PANEL_DESCRIPTION =
   "Browse official geo.admin.ch WMS layers and add them as tiled raster layers.";
@@ -32,14 +29,6 @@ interface SwissGdiViewState {
   catalog: SwissGdiCatalogLayer[];
   legendLayerName: string | null;
   legendLanguage: SwissGdiLanguage;
-}
-
-interface SwissGdiStoreLayer {
-  id: string;
-  name: string;
-  source: Record<string, unknown>;
-  metadata: Record<string, unknown>;
-  type?: string;
 }
 
 function createLayerId(): string {
@@ -87,23 +76,26 @@ function createWmsTileUrl(options: {
   ]);
 }
 
-function isSwissGdiLayer(layer: unknown): layer is SwissGdiStoreLayer {
-  if (!layer || typeof layer !== "object") return false;
-  const candidate = layer as Partial<SwissGdiStoreLayer>;
+function defaultSwissGdiLanguage(): SwissGdiLanguage {
+  if (typeof document !== "undefined") {
+    const htmlLang = document.documentElement.lang;
+    if (htmlLang) return normalizeSwissGdiLanguage(htmlLang);
+  }
+  if (typeof navigator !== "undefined") {
+    return normalizeSwissGdiLanguage(navigator.language);
+  }
+  return "en";
+}
+
+function isSwissGdiLayer(layer: GeoLibreLayerRecord): boolean {
   return (
-    candidate.type === "wms" &&
-    typeof candidate.id === "string" &&
-    typeof candidate.name === "string" &&
-    typeof candidate.source === "object" &&
-    candidate.source !== null &&
-    typeof candidate.metadata === "object" &&
-    candidate.metadata !== null &&
-    (candidate.metadata as Record<string, unknown>).swissGdi === true &&
-    typeof (candidate.source as Record<string, unknown>).layers === "string"
+    layer.type === "wms" &&
+    layer.metadata?.swissGdi === true &&
+    typeof layer.source?.layers === "string"
   );
 }
 
-function swissGdiLayers(app: GeoLibreAppAPI): SwissGdiStoreLayer[] {
+function swissGdiLayers(app: GeoLibreAppAPI): GeoLibreLayerRecord[] {
   return (app.getLayers?.() ?? []).filter(isSwissGdiLayer);
 }
 
@@ -448,10 +440,10 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
       const errorCard = document.createElement("div");
       errorCard.textContent = `Could not load Swiss GDI capabilities: ${state.error}`;
       Object.assign(errorCard.style, {
-        border: "1px solid hsl(var(--destructive))",
+        border: "1px solid hsl(0 84% 60%)",
         borderRadius: "0.75rem",
-        background: "hsl(var(--destructive) / 0.08)",
-        color: "hsl(var(--destructive))",
+        background: "hsl(0 84% 60% / 0.08)",
+        color: "hsl(0 84% 45%)",
         padding: "0.75rem",
         fontSize: "0.75rem",
       });
@@ -569,17 +561,6 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
   };
 }
 
-function defaultSwissGdiLanguage(): SwissGdiLanguage {
-  if (typeof document !== "undefined") {
-    const htmlLang = document.documentElement.lang;
-    if (htmlLang) return normalizeSwissGdiLanguage(htmlLang);
-  }
-  if (typeof navigator !== "undefined") {
-    return normalizeSwissGdiLanguage(navigator.language);
-  }
-  return "en";
-}
-
 export function createSwissGdiPlugin(): GeoLibrePlugin {
   let unregisterPanel: (() => void) | undefined;
   let panelContentCleanup: (() => void) | undefined;
@@ -587,14 +568,13 @@ export function createSwissGdiPlugin(): GeoLibrePlugin {
   let isPanelOpen = false;
 
   return {
-    id: PANEL_ID,
+    id: SWISS_GDI_PLUGIN_ID,
     name: PANEL_TITLE,
     version: "1.0.0",
-    activeByDefault: false,
-    activate(app: GeoLibreAppAPI) {
+    activate(app) {
       if (unregisterPanel) return;
       unregisterPanel = app.registerRightPanel?.({
-        id: PANEL_ID,
+        id: SWISS_GDI_PLUGIN_ID,
         title: PANEL_TITLE,
         dock: "right-of-style",
         defaultWidth: 380,
@@ -616,27 +596,27 @@ export function createSwissGdiPlugin(): GeoLibrePlugin {
         },
       });
       if (shouldOpenAfterActivate) {
-        app.openRightPanel?.(PANEL_ID);
+        app.openRightPanel?.(SWISS_GDI_PLUGIN_ID);
       }
     },
-    deactivate(app: GeoLibreAppAPI) {
+    deactivate(app) {
       panelContentCleanup?.();
       panelContentCleanup = undefined;
       unregisterPanel?.();
       unregisterPanel = undefined;
       shouldOpenAfterActivate = false;
       isPanelOpen = false;
-      app.closeRightPanel?.(PANEL_ID);
+      app.closeRightPanel?.(SWISS_GDI_PLUGIN_ID);
     },
     getProjectState() {
       if (!shouldOpenAfterActivate && !isPanelOpen) return undefined;
-      return { open: true } satisfies SwissGdiPluginState;
+      return { open: true } satisfies GeoLibrePluginState;
     },
-    applyProjectState(_app: GeoLibreAppAPI, state: unknown) {
+    applyProjectState(_app, state) {
       const nextOpen =
         state === undefined
           ? true
-          : (state as SwissGdiPluginState | undefined)?.open === true;
+          : (state as GeoLibrePluginState | undefined)?.open === true;
       const changed = shouldOpenAfterActivate !== nextOpen;
       shouldOpenAfterActivate = nextOpen;
       return changed;
@@ -644,4 +624,5 @@ export function createSwissGdiPlugin(): GeoLibrePlugin {
   };
 }
 
-export const swissGdiPlugin = createSwissGdiPlugin();
+export const plugin = createSwissGdiPlugin();
+export default plugin;

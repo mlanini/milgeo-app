@@ -57,6 +57,29 @@ export interface GeoLibreDeckGL {
 
 export interface GeoLibreAppAPI {
   setBasemap: (styleUrl: string) => void;
+  addLayer?: (
+    layer: {
+      id?: string;
+      name: string;
+      type: string;
+      source: Record<string, unknown>;
+      visible?: boolean;
+      opacity?: number;
+      style?: Record<string, unknown>;
+      metadata?: Record<string, unknown>;
+      sourcePath?: string;
+    },
+    beforeLayerId?: string | null,
+  ) => string;
+  removeLayer?: (id: string) => void;
+  updateLayer?: (id: string, patch: Record<string, unknown>) => void;
+  getLayers?: () => Array<Record<string, unknown>>;
+  onLayersChange?: (
+    callback: (layers: Array<Record<string, unknown>>) => void,
+  ) => () => void;
+  getIdentifyLayerId?: () => string | null;
+  onIdentifyLayerChange?: (callback: (id: string | null) => void) => () => void;
+  setIdentifyLayer?: (id: string | null) => void;
   addGeoJsonLayer: (
     name: string,
     data: FeatureCollection,
@@ -86,6 +109,16 @@ export interface GeoLibreAppAPI {
   getDeckGL?: () => Promise<GeoLibreDeckGL>;
 }
 ```
+
+`addLayer` lets an external plugin insert a host-managed layer record without
+reimplementing GeoLibre's internal default layer scaffolding; the host fills a
+missing id, visibility, opacity, and style defaults before storing it.
+
+`getLayers` / `onLayersChange` expose the shared layer list reactively, and
+`getIdentifyLayerId` / `onIdentifyLayerChange` / `setIdentifyLayer` let a
+plugin drive the existing WMS GetFeatureInfo identify flow instead of building
+its own map-click handler. These members are optional host capabilities, so an
+external plugin should still degrade gracefully when they are absent.
 
 ## Register a plugin
 

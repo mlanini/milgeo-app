@@ -98,8 +98,48 @@ export interface GeoLibrePickedVectorFile {
   sourcePath?: string;
 }
 
+/**
+ * Host-normalized layer input for external plugins. The host fills any missing
+ * id, visibility, opacity, and style defaults before inserting it into the
+ * shared store, so plugins do not need to replicate GeoLibre's internal layer
+ * scaffolding helpers.
+ */
+export interface GeoLibreLayerDraft {
+  id?: string;
+  name: string;
+  type: GeoLibreLayer["type"];
+  source: Record<string, unknown>;
+  visible?: boolean;
+  opacity?: number;
+  style?: Partial<LayerStyle>;
+  metadata?: Record<string, unknown>;
+  sourcePath?: string;
+}
+
 export interface GeoLibreAppAPI {
   setBasemap: (styleUrl: string) => void;
+  /**
+   * Insert a layer into GeoLibre's shared layer store. The host fills default
+   * id, visibility, opacity, and style values and returns the inserted id.
+   */
+  addLayer?: (
+    layer: GeoLibreLayerDraft,
+    beforeLayerId?: string | null,
+  ) => string;
+  /** Remove a layer from GeoLibre's shared layer store. */
+  removeLayer?: (id: string) => void;
+  /** Update one layer in GeoLibre's shared layer store. */
+  updateLayer?: (id: string, patch: Partial<GeoLibreLayer>) => void;
+  /** Snapshot of the current shared layer list. */
+  getLayers?: () => GeoLibreLayer[];
+  /** Subscribe to layer-list changes. */
+  onLayersChange?: (callback: (layers: GeoLibreLayer[]) => void) => () => void;
+  /** Current WMS identify target layer id, or null when identify is off. */
+  getIdentifyLayerId?: () => string | null;
+  /** Subscribe to WMS identify target changes. */
+  onIdentifyLayerChange?: (callback: (id: string | null) => void) => () => void;
+  /** Set the WMS identify target layer id, or null to stop identify mode. */
+  setIdentifyLayer?: (id: string | null) => void;
   addGeoJsonLayer: (
     name: string,
     data: FeatureCollection,

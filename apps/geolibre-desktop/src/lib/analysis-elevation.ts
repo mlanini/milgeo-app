@@ -23,7 +23,7 @@ export interface ElevationSample {
 }
 
 interface BrowserGeoTiffImage {
-  getBoundingBox(): [number, number, number, number];
+  getBoundingBox(): number[];
   getWidth(): number;
   getHeight(): number;
   getGeoKeys(): Record<string, unknown>;
@@ -182,7 +182,7 @@ async function loadBrowserGeoTiffImage(
 ): Promise<BrowserGeoTiffImage> {
   const geotiff = await import("geotiff");
   const tiff = await geotiff.fromArrayBuffer(dtmData);
-  return (await tiff.getImage()) as BrowserGeoTiffImage;
+  return (await tiff.getImage()) as unknown as BrowserGeoTiffImage;
 }
 
 function browserGeoTiffSupportsLonLat(image: BrowserGeoTiffImage): boolean {
@@ -206,7 +206,14 @@ export async function queryElevationsLocalInBrowser(
     );
   }
 
-  const [west, south, east, north] = image.getBoundingBox();
+  const bbox = image.getBoundingBox();
+  if (
+    bbox.length < 4 ||
+    !bbox.slice(0, 4).every((value) => Number.isFinite(value))
+  ) {
+    throw new Error("The local GeoTIFF has an invalid bounding box.");
+  }
+  const [west, south, east, north] = bbox as [number, number, number, number];
   const width = image.getWidth();
   const height = image.getHeight();
   const noDataRaw = image.getGDALNoData?.();

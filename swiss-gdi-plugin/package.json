@@ -1,0 +1,15 @@
+{
+  "name": "geolibre-swiss-gdi-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Swiss GDI external plugin for GeoLibre",
+  "scripts": {
+    "build:geolibre": "tsup src/index.ts --format esm --bundle --target es2022 --platform browser --out-dir geolibre-plugin/dist --clean",
+    "package:geolibre": "npm run build:geolibre && node scripts/package-geolibre-plugin.mjs"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^6.0.3"
+  }
+}
