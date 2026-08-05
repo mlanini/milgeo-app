@@ -16,10 +16,8 @@ import {
   createEmptyProject,
   DEFAULT_PROJECT_NAME,
 } from "./project";
-import {
-  DEFAULT_LAYER_GROUP_OPACITY,
-  normalizeGroupContiguity,
-} from "./layer-groups";
+import { initialLayerStyle } from "./layer-defaults";
+import { DEFAULT_LAYER_GROUP_OPACITY, normalizeGroupContiguity } from "./layer-groups";
 import {
   DEFAULT_BASEMAP,
   DEFAULT_DASHBOARD_COLUMNS,
@@ -30,7 +28,9 @@ import {
   MAX_MAP_GRID_DIM,
   DEFAULT_STORY_MAP,
   MAX_DASHBOARD_COLUMNS,
+  MAX_PROCESSING_HISTORY,
   MIN_DASHBOARD_COLUMNS,
+  type AddTileLayerOptions,
   type CollaborationChatMessage,
   type CollaborationParticipant,
   type CollaborationPresence,
@@ -39,27 +39,60 @@ import {
   type GeoLibreLayer,
   type GeoLibreProject,
   type LayerGroup,
+  type LayerLibraryEntry,
+  type AttributeFormConfig,
+  type LayerJoin,
+  type LayerVirtualField,
   type LayerStyle,
   type LegendConfig,
   type MapGridLayout,
   type MapViewState,
   type ProcessingModel,
+  type ProcessingRerunRequest,
+  type ProcessingRun,
   type SecondaryMapView,
   type ProjectPluginState,
   type ProjectPreferences,
   type RecentProjectEntry,
   type StoryChapter,
   type StoryMap,
+  type StyleLibraryEntry,
+  type ProjectTemplateEntry,
+  type CommentAnchor,
+  type CommentAuthor,
+  type CommentReply,
+  type ProjectComment,
 } from "./types";
+import {
+  removedLayerIdSet,
+  scrubWidgetsForRemovedLayers,
+  scrubCommentsForRemovedLayers,
+  scrubLegendForRemovedLayers,
+} from "./layer-ref-scrub";
 import { hasSimpleStyleProperties } from "./vector-color";
+import {
+  applyCopiedLayerStyle,
+  type CopiedLayerStyle,
+  extractCopiedLayerStyle,
+} from "./layer-style-clipboard";
+import { applyJoinsToLayer, cascadeLayerJoinRefresh, reapplyLayerJoins } from "./joins";
+import { MAX_LAYER_LIBRARY_ENTRIES } from "./layer-library";
+import {
+  DEFAULT_ELLIPSOID_ID,
+  getPlanetaryBasemapByStyleUrl,
+  setActiveEllipsoidId,
+} from "./ellipsoids";
+import type { PlanetaryBasemap } from "./ellipsoids";
 
 export type ConversionToolKind =
+  | "vector-to-vector"
   | "vector-to-geoparquet"
   | "vector-to-flatgeobuf"
   | "vector-to-shapefile"
   | "vector-to-geopackage"
   | "csv-to-geoparquet"
   | "vector-to-pmtiles"
+  | "raster-to-pmtiles"
   | "raster-to-cog";
 
 /**
@@ -82,6 +115,7 @@ export type VectorToolKind =
   | "attribute-join"
   | "select-by-value"
   | "select-by-location"
+  | "random-extract"
   | "reproject"
   | "explode"
   | "aggregate"
@@ -89,11 +123,16 @@ export type VectorToolKind =
   | "grid"
   | "voronoi"
   | "cell-sectors"
-  | "h3-grid"
-  | "h3-bin-points"
+  | "dggs-grid"
+  | "dggs-bin"
+  | "dggs-compact"
   | "trajectory-speed"
   | "detect-stops"
-  | "space-time-proximity";
+  | "space-time-proximity"
+  | "check-validity"
+  | "fix-geometries"
+  | "check-topology-rules"
+  | "fix-topology";
 
 /** Identifiers of the network-analysis tools (`NETWORK_TOOLS` ids). */
 export type NetworkToolKind = "isochrone" | "od-matrix" | "sequential-route";
@@ -104,7 +143,8 @@ export type StatisticsToolKind =
   | "local-morans-i"
   | "getis-ord-gi"
   | "average-nearest-neighbor"
-  | "kernel-density";
+  | "kernel-density"
+  | "emerging-hot-spot";
 
 /**
  * Identifiers of the raster processing tools. Kept in sync by hand with the
@@ -129,6 +169,25 @@ export type RasterToolKind =
   | "mosaic"
   | "focal";
 
+/**
+ * Latest live device-GPS fix published by the GPS Tracking tool (issue #1316),
+ * read by the status bar readout. Device state, not project state: excluded
+ * from undo history (partialize never lists it) and from project files, and
+ * deliberately left untouched on project switches.
+ */
+export interface GpsStatusFix {
+  lng: number;
+  lat: number;
+  /** Horizontal accuracy radius in meters. */
+  accuracy: number;
+  /** Satellites used for the fix, or null when the provider does not report it. */
+  satellites: number | null;
+  /** Ground speed in m/s, or null when the device doesn't report one. */
+  speed: number | null;
+  /** Fix time in epoch milliseconds. */
+  timestamp: number;
+}
+
 export interface AppState {
   projectName: string;
   projectPath: string | null;
@@ -146,6 +205,30 @@ export interface AppState {
   storymap: StoryMap | null;
   /** Saved processing pipelines (batch/model chaining; issue #344). */
   models: ProcessingModel[];
+  /**
+   * App-level Style Manager library (issue #1294). Lives outside the project
+   * lifecycle: never serialized into the project file, untouched by
+   * newProject/loadProject, and persisted by the desktop app (IndexedDB).
+   */
+  styleLibrary: StyleLibraryEntry[];
+  /**
+   * App-level Layer Library (issue #1520) — the Browser panel's My Data
+   * section. Like {@link styleLibrary} it lives outside the project lifecycle:
+   * never serialized into the project file, untouched by newProject/loadProject,
+   * and persisted by the desktop app (IndexedDB). Most recently saved first.
+   */
+  layerLibrary: LayerLibraryEntry[];
+  /**
+   * App-level Template Library. Persisted by the desktop app (IndexedDB).
+   */
+  templateLibrary: ProjectTemplateEntry[];
+  /**
+   * Project-scoped Style Manager entries (issue #1294), serialized into the
+   * `.geolibre.json` `styleLibrary` array and replaced on project load.
+   */
+  projectStyleLibrary: StyleLibraryEntry[];
+  /** Recorded processing tool runs, oldest first (Processing History; #1292). */
+  processingHistory: ProcessingRun[];
   /** Saved Dashboard panel chart widgets (issue #401). */
   widgets: DashboardWidget[];
   /** Number of columns in the Dashboard widget grid. */
@@ -165,8 +248,20 @@ export interface AppState {
   primaryMapLabel: string;
   selectedLayerId: string | null;
   selectedFeatureId: string | null;
+  /**
+   * Full set of selected feature ids. The attribute table extends the single
+   * selection to many rows via Ctrl/Cmd (toggle) and Shift (range). The anchor
+   * — `selectedFeatureId` — is the primary/last-clicked feature used for map
+   * fit, DuckDB highlight, and scripting, and is always one of these ids (or
+   * `null` when the set is empty). A single click leaves exactly one id here.
+   */
+  selectedFeatureIds: string[];
   identifyLayerId: string | null;
   pointerCoords: [number, number] | null;
+  /** Live GPS fix for the status bar, or null while GPS tracking is off. */
+  gpsStatus: GpsStatusFix | null;
+  /** Anchored review comments on map points or features (issue #1518). */
+  comments: ProjectComment[];
   metadata: Record<string, unknown>;
   recentProjects: RecentProjectEntry[];
   attributeFilter: string;
@@ -188,20 +283,53 @@ export interface AppState {
     statisticsToolOpen: StatisticsToolKind | null;
     rasterToolOpen: RasterToolKind | null;
     segmentationOpen: boolean;
+    objectDetectionOpen: boolean;
+    segmentEverythingOpen: boolean;
     geocodeOpen: boolean;
     sqlWorkspaceOpen: boolean;
+    loadEditorFeaturesOpen: boolean;
+    // Store layer preselected in the "Load Features into Editor" dialog when it
+    // is opened from a layer's context menu, or null when opened without a target.
+    loadEditorFeaturesLayerId: string | null;
     pythonConsoleOpen: boolean;
     notebookOpen: boolean;
     assistantOpen: boolean;
     attributeTableOpen: boolean;
+    /** Whether the Raster Attribute Table bottom panel is open (issue #1307). */
+    rasterAttributeTableOpen: boolean;
     dashboardOpen: boolean;
     storymapPanelOpen: boolean;
     storymapPresenting: boolean;
+    // True when the active presentation was launched from the editor, so exiting
+    // it reopens the Story Map editor instead of dropping to the bare map
+    // (#918). Auto-presented projects (opened for viewing) leave this false.
+    storymapReturnToEditor: boolean;
     // Id of the chapter currently being composed on the live map. When set, the
     // Story Map dialog is hidden so the user can pan/zoom/tilt the real map and
     // save the resulting camera back into this chapter (issue #775).
     storymapComposingId: string | null;
     modelBuilderOpen: boolean;
+    /** Style Manager dialog visibility (issue #1294). */
+    styleManagerOpen: boolean;
+    /** Processing History panel visibility (#1292). */
+    processingHistoryOpen: boolean;
+    /** Select by Expression dialog visibility (#1314). */
+    selectByExpressionOpen: boolean;
+    // Layer preselected in the Select by Expression dialog when it is opened
+    // from a layer's context menu, or null when opened without a target.
+    // Deliberately not selectLayer(): that would clear the live selection the
+    // dialog's add/remove/intersect modes need to combine with.
+    selectByExpressionLayerId: string | null;
+    /** Select by Location dialog visibility (#1314). */
+    selectByLocationOpen: boolean;
+    /** Same contract as `selectByExpressionLayerId`, for Select by Location. */
+    selectByLocationLayerId: string | null;
+    /**
+     * Pending "re-run from History" request. Written by the History panel just
+     * before it opens the target processing dialog; consumed and cleared by
+     * that dialog once it has pre-filled its parameter form. Null when idle.
+     */
+    processingRerun: ProcessingRerunRequest | null;
     zoomToSelectedFeature: boolean;
     // Live-collaboration dialog visibility. Lifted into the store (rather than
     // local toolbar state) so the on-canvas session-status badge can reopen the
@@ -210,11 +338,9 @@ export interface AppState {
   };
 
   setPointerCoords: (coords: [number, number] | null) => void;
+  setGpsStatus: (fix: GpsStatusFix | null) => void;
   setCollaboration: (patch: Partial<CollaborationState>) => void;
-  updateCollaborationPresence: (
-    clientId: string,
-    presence: CollaborationPresence | null
-  ) => void;
+  updateCollaborationPresence: (clientId: string, presence: CollaborationPresence | null) => void;
   /** Append a chat message to the session log (bounded; #754). */
   addCollaborationChat: (message: CollaborationChatMessage) => void;
   resetCollaboration: () => void;
@@ -228,38 +354,50 @@ export interface AppState {
   /** Toggle synchronized camera across all panes. */
   setSyncView: (syncView: boolean) => void;
   /** Patch one secondary pane's camera by id (no-op if the id is unknown). */
-  setSecondaryMapView: (
-    id: string,
-    view: Partial<MapViewState>,
-    markDirty?: boolean
-  ) => void;
+  setSecondaryMapView: (id: string, view: Partial<MapViewState>, markDirty?: boolean) => void;
   /**
    * Override a layer's visibility in one secondary pane (no-op if the pane id is
    * unknown). The override forces the layer visible/hidden in that pane only,
    * independent of the primary map's visibility.
    */
-  setSecondaryLayerVisibility: (
-    id: string,
-    layerId: string,
-    visible: boolean
-  ) => void;
+  setSecondaryLayerVisibility: (id: string, layerId: string, visible: boolean) => void;
   /** Set the primary pane's custom label. */
   setPrimaryMapLabel: (label: string) => void;
   /** Set one secondary pane's custom label (no-op if the id is unknown). */
   setSecondaryMapLabel: (id: string, label: string) => void;
+  /**
+   * Switch one secondary pane between the 2D map and the 3D globe (no-op if the
+   * id is unknown or the kind is unchanged).
+   */
+  setSecondaryViewKind: (id: string, viewKind: NonNullable<SecondaryMapView["viewKind"]>) => void;
   /** Remove one secondary pane and collapse the grid back toward 1x1. */
   removeSecondaryMapView: (id: string) => void;
   setBasemapStyleUrl: (url: string) => void;
+  /**
+   * Apply a planetary basemap and sync the project's ellipsoid to the body it
+   * depicts, so measurements and the globe control use that body's radius. Used
+   * by both the basemap picker and the Layers-panel planet switcher.
+   */
+  applyPlanetaryBasemap: (basemap: PlanetaryBasemap) => void;
+  /**
+   * Return to Earth: apply `styleUrl` (typically the Earth basemap that was
+   * active before a planet was selected, e.g. Liberty) and reset the ellipsoid
+   * to Earth. Used when a planet is deselected in the switcher.
+   */
+  restoreEarthBasemap: (styleUrl: string) => void;
   setBasemapVisible: (visible: boolean) => void;
   setBasemapOpacity: (opacity: number) => void;
   setPreferences: (preferences: ProjectPreferences) => void;
   setLegend: (legend: LegendConfig) => void;
-  setProjectPlugins: (
-    projectPlugins: ProjectPluginState | null,
-    shouldMarkDirty?: boolean
-  ) => void;
+  setProjectPlugins: (projectPlugins: ProjectPluginState | null, shouldMarkDirty?: boolean) => void;
   selectLayer: (id: string | null) => void;
   selectFeature: (id: string | null) => void;
+  /**
+   * Replace the multi-selection with `ids`. The anchor (`selectedFeatureId`)
+   * becomes `anchorId` when provided, otherwise the last id in the list (or
+   * `null` when the list is empty).
+   */
+  selectFeatures: (ids: string[], anchorId?: string | null) => void;
   setIdentifyLayer: (id: string | null) => void;
   setAttributeFilter: (filter: string) => void;
   setProcessingOpen: (open: boolean) => void;
@@ -270,29 +408,97 @@ export interface AppState {
   setStatisticsToolOpen: (kind: StatisticsToolKind | null) => void;
   setRasterToolOpen: (kind: RasterToolKind | null) => void;
   setSegmentationOpen: (open: boolean) => void;
+  setObjectDetectionOpen: (open: boolean) => void;
+  setSegmentEverythingOpen: (open: boolean) => void;
   setGeocodeOpen: (open: boolean) => void;
   setSqlWorkspaceOpen: (open: boolean) => void;
+  setLoadEditorFeaturesOpen: (open: boolean, layerId?: string | null) => void;
   setPythonConsoleOpen: (open: boolean) => void;
   setNotebookOpen: (open: boolean) => void;
   setAssistantOpen: (open: boolean) => void;
   setAttributeTableOpen: (open: boolean) => void;
+  setRasterAttributeTableOpen: (open: boolean) => void;
   setDashboardOpen: (open: boolean) => void;
   setStorymapPanelOpen: (open: boolean) => void;
-  setStorymapPresenting: (presenting: boolean) => void;
+  setStorymapPresenting: (presenting: boolean, returnToEditor?: boolean) => void;
   setStorymapComposing: (chapterId: string | null) => void;
   setModelBuilderOpen: (open: boolean) => void;
+  setProcessingHistoryOpen: (open: boolean) => void;
+  /** Open/close Select by Expression, optionally preselecting a target layer. */
+  setSelectByExpressionOpen: (open: boolean, layerId?: string | null) => void;
+  /** Open/close Select by Location, optionally preselecting a target layer. */
+  setSelectByLocationOpen: (open: boolean, layerId?: string | null) => void;
+  setProcessingRerun: (request: ProcessingRerunRequest | null) => void;
   setCollaborateDialogOpen: (open: boolean) => void;
   setZoomToSelectedFeature: (enabled: boolean) => void;
+
+  setStyleManagerOpen: (open: boolean) => void;
+  /**
+   * Replace the app-level style library wholesale. Used by the persistence
+   * layer on startup and by bundle imports.
+   */
+  setStyleLibrary: (entries: StyleLibraryEntry[]) => void;
+  /**
+   * Insert or replace (matching by `id`) a Style Manager entry in the given
+   * scope. Scope-local, like {@link deleteStyleLibraryEntry}: the other
+   * scope's list is never touched, since a same id there can belong to an
+   * unrelated entry after loading a project authored elsewhere. Project-scope
+   * saves mark the project dirty.
+   */
+  saveStyleLibraryEntry: (entry: StyleLibraryEntry, scope?: "app" | "project") => void;
+  /**
+   * Remove a Style Manager entry by id. When `scope` is given only that list
+   * is touched — the two scopes can legitimately hold the same id after
+   * loading a project authored elsewhere, and deleting a project entry must
+   * not erase a local app-library style (or vice versa). Omitting `scope`
+   * removes the id from both lists.
+   */
+  deleteStyleLibraryEntry: (id: string, scope?: "app" | "project") => void;
+
+  /**
+   * Replace the app-level Layer Library wholesale. Used by the persistence
+   * layer on startup and by bundle imports.
+   */
+  setLayerLibrary: (entries: LayerLibraryEntry[]) => void;
+  /**
+   * Insert or replace (matching by `id`) a Layer Library entry. New entries go
+   * to the front so the most recently saved layer leads the My Data section.
+   */
+  saveLayerLibraryEntry: (entry: LayerLibraryEntry) => void;
+  /** Rename a Layer Library entry; a blank name is ignored. */
+  renameLayerLibraryEntry: (id: string, name: string) => void;
+  /** Remove a Layer Library entry by id. */
+  deleteLayerLibraryEntry: (id: string) => void;
+
+  /** Replace the app-level template library wholesale. */
+  setTemplateLibrary: (templates: ProjectTemplateEntry[]) => void;
+  /** Insert or replace a template in the Template Library. */
+  saveTemplateEntry: (entry: ProjectTemplateEntry) => void;
+  /** Remove a template entry by id from the Template Library. */
+  deleteTemplateEntry: (id: string) => void;
 
   /** Insert a new model or replace an existing one matching by `id`. */
   saveModel: (model: ProcessingModel) => void;
   /** Remove a saved model by id. */
   deleteModel: (id: string) => void;
 
+  /** Append a processing run to the history (bounded, de-duped by id; #1292). */
+  addProcessingRun: (run: ProcessingRun) => void;
+  /** Patch a recorded run by id (no-op if absent), e.g. to add output layers. */
+  updateProcessingRun: (id: string, patch: Partial<Omit<ProcessingRun, "id">>) => void;
+  /** Drop all recorded processing runs. */
+  clearProcessingHistory: () => void;
+
   /** Append a new dashboard widget. */
   addWidget: (widget: DashboardWidget) => void;
-  /** Patch an existing dashboard widget by id (no-op if absent). */
+  /** Patch an existing dashboard widget by id (no-op if absent). Merges, so an
+   * omitted key keeps its current value; use replaceWidget to clear one. */
   updateWidget: (id: string, patch: Partial<Omit<DashboardWidget, "id">>) => void;
+  /** Swap an existing dashboard widget for a complete new record, keeping its
+   * id and position (no-op if absent). Unlike updateWidget this does not merge,
+   * so fields the caller omits are cleared — what the widget editor needs to
+   * persist an emptied title, color, prefix, or suffix. */
+  replaceWidget: (id: string, widget: Omit<DashboardWidget, "id">) => void;
   /** Remove a dashboard widget by id. */
   removeWidget: (id: string) => void;
   /** Move a widget to a new index, clamped into range, preserving the rest. */
@@ -301,9 +507,7 @@ export interface AppState {
   setDashboardColumns: (columns: number) => void;
 
   setStorymap: (storymap: StoryMap | null) => void;
-  updateStorymapSettings: (
-    patch: Partial<Omit<StoryMap, "chapters">>
-  ) => void;
+  updateStorymapSettings: (patch: Partial<Omit<StoryMap, "chapters">>) => void;
   addStoryChapter: (chapter: StoryChapter, atIndex?: number) => void;
   updateStoryChapter: (id: string, patch: Partial<StoryChapter>) => void;
   removeStoryChapter: (id: string) => void;
@@ -313,7 +517,7 @@ export interface AppState {
   loadProject: (
     project: GeoLibreProject,
     path?: string | null,
-    options?: { rememberRecent?: boolean; presenting?: boolean }
+    options?: { rememberRecent?: boolean; presenting?: boolean },
   ) => void;
   setProjectPath: (path: string | null) => void;
   setProjectName: (name: string) => void;
@@ -329,13 +533,98 @@ export interface AppState {
   setLayerVisibility: (id: string, visible: boolean) => void;
   setLayerOpacity: (id: string, opacity: number) => void;
   setLayerStyle: (id: string, style: Partial<LayerStyle>) => void;
+  /**
+   * Transient clipboard holding a layer's symbology, captured by
+   * {@link copyLayerStyle} and applied by {@link pasteLayerStyle} (copy/paste
+   * styles, issue #1339). Runtime-only: excluded from undo history
+   * (`partialize` never lists it) and from the saved project. `null` until a
+   * style is copied this session. Cleared by `newProject`/`loadProject` so a
+   * paste can't apply an entry from a different project; it deliberately
+   * survives undo/redo within a project (it holds a deep snapshot, not a live
+   * layer reference, so a paste stays valid even if the source layer is undone
+   * away — only the displayed source name may then be stale).
+   */
+  copiedLayerStyle: CopiedLayerStyle | null;
+  /**
+   * Snapshot the given layer's style into {@link copiedLayerStyle} so it can be
+   * pasted onto a compatible layer. No-op when the layer is missing or has no
+   * copyable symbology (leaving any prior clipboard entry untouched). Returns
+   * `true` when a style was captured, so callers can skip the confirmation on a
+   * no-op.
+   */
+  copyLayerStyle: (id: string) => boolean;
+  /**
+   * Apply the {@link copiedLayerStyle} clipboard entry onto the given layer.
+   * No-op when the clipboard is empty, the layer is missing, or the entry's
+   * style family does not match the target layer's. Returns `true` when the
+   * style was applied, so callers can skip the confirmation on a no-op.
+   */
+  pasteLayerStyle: (id: string) => boolean;
+  /**
+   * Replace a layer's persistent attribute joins and immediately re-derive its
+   * joined columns (strip what the previous joins added, apply the new list).
+   * Pass an empty array to detach every join and restore the base attributes.
+   */
+  setLayerJoins: (id: string, joins: LayerJoin[]) => void;
+  /**
+   * Replace the layer's Attribute Form designer configuration (per-field edit
+   * widgets, constraints, conditional visibility). Pass `undefined` to remove
+   * the form config entirely.
+   */
+  setLayerAttributeForm: (id: string, attributeForm: AttributeFormConfig | undefined) => void;
+  /**
+   * Replace a layer's virtual fields and immediately re-derive its computed
+   * columns (strip what the previous fields added, evaluate the new list).
+   * Pass an empty array to detach every virtual field.
+   */
+  setLayerVirtualFields: (id: string, fields: LayerVirtualField[]) => void;
   reorderLayer: (id: string, direction: "up" | "down") => void;
   moveLayer: (id: string, targetIndex: number) => void;
+  moveLayersRelative: (
+    layerIds: string[],
+    targetLayerId: string,
+    position: "above" | "below",
+  ) => void;
   addGeoJsonLayer: (
     name: string,
     geojson: FeatureCollection,
     sourcePath?: string,
-    beforeLayerId?: string | null
+    beforeLayerId?: string | null,
+  ) => string;
+  /**
+   * Add a georeferenced image overlay (a MapLibre `image` source rendered as a
+   * raster layer) from an image URL and its four corner coordinates, and return
+   * its id. Used for KML/KMZ `<GroundOverlay>` imports; the layer persists and
+   * renders exactly like a Raster Georeferencer overlay. Corners are `[lng,
+   * lat]` in top-left, top-right, bottom-right, bottom-left order.
+   */
+  addImageOverlayLayer: (
+    name: string,
+    source: { url: string; coordinates: [number, number][] },
+    options?: {
+      opacity?: number;
+      bounds?: [number, number, number, number];
+      sourcePath?: string;
+      /** Initial visibility (default true); a time-slider frame past the first
+       * starts hidden. */
+      visible?: boolean;
+      /** Epoch-ms time bounds of a KML `<TimeSpan>`/`<TimeStamp>` frame; the
+       * Time Slider toggles this frame's visibility by the current date. */
+      timeSpan?: { begin: number | null; end: number | null };
+    },
+    beforeLayerId?: string | null,
+  ) => string;
+  /**
+   * Add a native raster tile layer (XYZ, WMS, or WMTS) from one or more tile
+   * URL templates and return its id. The layer appears in the Layers panel and
+   * persists with the project exactly like a layer added through the Add Data
+   * dialog, so callers (e.g. an external plugin) do not have to touch MapLibre
+   * directly. See {@link AddTileLayerOptions}.
+   */
+  addTileLayer: (
+    name: string,
+    options: AddTileLayerOptions,
+    beforeLayerId?: string | null,
   ) => string;
 
   addLayerGroup: (name?: string, layerIds?: string[]) => string;
@@ -347,9 +636,21 @@ export interface AppState {
   moveLayerToGroup: (
     layerId: string,
     groupId: string | null,
-    beforeLayerId?: string | null
+    beforeLayerId?: string | null,
   ) => void;
+  moveLayersToGroup: (
+    layerIds: string[],
+    groupId: string | null,
+    beforeLayerId?: string | null,
+  ) => void;
+  moveLayerGroupToGroup: (id: string, parentId: string | null) => void;
   reorderLayerGroup: (id: string, direction: "up" | "down") => void;
+
+  addComment: (comment: ProjectComment) => void;
+  replyToComment: (commentId: string, reply: CommentReply) => void;
+  toggleResolveComment: (commentId: string, resolved?: boolean) => void;
+  deleteComment: (commentId: string) => void;
+  setComments: (comments: ProjectComment[]) => void;
 }
 
 const MAX_RECENT_PROJECTS = 10;
@@ -390,9 +691,7 @@ export function projectPathLabel(path: string): string {
   return path.split(/[/\\]/).pop() || path;
 }
 
-function normalizeRecentProjects(
-  projects: RecentProjectEntry[]
-): RecentProjectEntry[] {
+function normalizeRecentProjects(projects: RecentProjectEntry[]): RecentProjectEntry[] {
   const seen = new Set<string>();
   const normalized: RecentProjectEntry[] = [];
 
@@ -431,21 +730,13 @@ function nextDefaultGroupName(groups: LayerGroup[]): string {
  * history entry. Every other field — order, name, visibility, opacity — is
  * still compared, so real edits are tracked.
  */
-function layerGroupsEqualForHistory(
-  a: LayerGroup[],
-  b: LayerGroup[]
-): boolean {
+function layerGroupsEqualForHistory(a: LayerGroup[], b: LayerGroup[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const x = a[i];
     const y = b[i];
     if (x === y) continue;
-    if (
-      x.id !== y.id ||
-      x.name !== y.name ||
-      x.visible !== y.visible ||
-      x.opacity !== y.opacity
-    ) {
+    if (x.id !== y.id || x.name !== y.name || x.visible !== y.visible || x.opacity !== y.opacity) {
       return false;
     }
   }
@@ -461,6 +752,74 @@ function sameCamera(a: MapViewState, b: MapViewState): boolean {
     a.bearing === b.bearing &&
     a.pitch === b.pitch
   );
+}
+
+/**
+ * Strip storymap chapter enter/exit opacity rows that reference any of the
+ * removed layer ids. Returns the same reference when nothing changes so
+ * callers can avoid unnecessary storymap churn.
+ */
+function scrubStorymapLayerRefs(
+  storymap: StoryMap | null,
+  layerIds: string | Iterable<string>,
+): StoryMap | null {
+  if (!storymap) return null;
+  const removed = removedLayerIdSet(layerIds);
+  if (removed.size === 0) return storymap;
+  let changed = false;
+  const chapters = storymap.chapters.map((chapter) => {
+    const onChapterEnter = chapter.onChapterEnter.filter((change) => !removed.has(change.layerId));
+    const onChapterExit = chapter.onChapterExit.filter((change) => !removed.has(change.layerId));
+    if (
+      onChapterEnter.length === chapter.onChapterEnter.length &&
+      onChapterExit.length === chapter.onChapterExit.length
+    ) {
+      return chapter;
+    }
+    changed = true;
+    return { ...chapter, onChapterEnter, onChapterExit };
+  });
+  return changed ? { ...storymap, chapters } : storymap;
+}
+
+/**
+ * Drop per-pane visibility overrides for removed layer ids so stale keys do
+ * not accumulate (or serialize) in secondary panes after deletion.
+ */
+function scrubSecondaryPaneLayerVisibility(
+  panes: SecondaryMapView[],
+  layerIds: string | Iterable<string>,
+): SecondaryMapView[] {
+  const removed = removedLayerIdSet(layerIds);
+  if (removed.size === 0) return panes;
+  let anyChanged = false;
+  const next = panes.map((pane) => {
+    let changed = false;
+    const layerVisibility: Record<string, boolean> = {};
+    for (const [id, visible] of Object.entries(pane.layerVisibility)) {
+      if (removed.has(id)) {
+        changed = true;
+        continue;
+      }
+      layerVisibility[id] = visible;
+    }
+    if (!changed) return pane;
+    anyChanged = true;
+    return { ...pane, layerVisibility };
+  });
+  return anyChanged ? next : panes;
+}
+
+/** Re-derive layers whose joins consumed any of the removed sources. */
+function cascadeJoinRefreshForRemoved(
+  layers: GeoLibreLayer[],
+  layerIds: string | Iterable<string>,
+): GeoLibreLayer[] {
+  let current = layers;
+  for (const id of removedLayerIdSet(layerIds)) {
+    current = cascadeLayerJoinRefresh(current, id);
+  }
+  return current;
 }
 
 /** Clamp a requested grid row/column count into the supported [1, MAX] range. */
@@ -482,13 +841,14 @@ function clampGridDim(value: number): number {
  * case we accept the smallest bounded grid with one empty trailing cell (2x3)
  * rather than returning an out-of-range dimension.
  */
-function fitGrid(
-  total: number,
-  preferredCols: number,
-): { rows: number; cols: number } {
+function fitGrid(total: number, preferredCols: number): { rows: number; cols: number } {
   if (total <= 1) return { rows: 1, cols: 1 };
-  let best: { rows: number; cols: number; empty: number; score: number } | null =
-    null;
+  let best: {
+    rows: number;
+    cols: number;
+    empty: number;
+    score: number;
+  } | null = null;
   for (let rows = 1; rows <= MAX_MAP_GRID_DIM; rows++) {
     for (let cols = 1; cols <= MAX_MAP_GRID_DIM; cols++) {
       const capacity = rows * cols;
@@ -502,8 +862,7 @@ function fitGrid(
         best === null ||
         empty < best.empty ||
         (empty === best.empty &&
-          (score < best.score ||
-            (score === best.score && cols > best.cols)));
+          (score < best.score || (score === best.score && cols > best.cols)));
       if (better) best = { rows, cols, empty, score };
     }
   }
@@ -512,6 +871,52 @@ function fitGrid(
 
 /** Cancels the active history coalesce window (assigned by zundo's handleSet). */
 let cancelHistoryCoalesce: () => void = () => {};
+
+interface ProjectRestoreHistoryEntry {
+  before: GeoLibreProject;
+  beforePath: string | null;
+  after: GeoLibreProject;
+  afterPath: string | null;
+}
+
+let projectRestoreUndo: ProjectRestoreHistoryEntry | null = null;
+let projectRestoreRedo: ProjectRestoreHistoryEntry | null = null;
+let applyingProjectRestoreHistory = false;
+const projectRestoreHistoryListeners = new Set<() => void>();
+
+function notifyProjectRestoreHistory(): void {
+  projectRestoreHistoryListeners.forEach((listener) => listener());
+}
+
+export function subscribeProjectRestoreHistory(listener: () => void): () => void {
+  projectRestoreHistoryListeners.add(listener);
+  return () => projectRestoreHistoryListeners.delete(listener);
+}
+
+export function canUndoProjectRestore(): boolean {
+  return projectRestoreUndo !== null;
+}
+
+export function canRedoProjectRestore(): boolean {
+  return projectRestoreRedo !== null;
+}
+
+/**
+ * Register a whole-project restore as one undoable operation. The regular
+ * temporal history intentionally tracks only editing fields, while restoring a
+ * history snapshot also changes project metadata, camera, plugins, and other
+ * serialized state, so it needs a full canonical project pair.
+ */
+export function registerProjectRestoreHistory(
+  before: GeoLibreProject,
+  beforePath: string | null,
+  after: GeoLibreProject,
+  afterPath: string | null = null,
+): void {
+  projectRestoreUndo = { before, beforePath, after, afterPath };
+  projectRestoreRedo = null;
+  notifyProjectRestoreHistory();
+}
 
 /**
  * Drop the oldest undo snapshots once their combined feature payload exceeds the
@@ -547,15 +952,24 @@ export const useAppStore = create<AppState>()(
       legend: { ...DEFAULT_LEGEND_CONFIG },
       storymap: null,
       models: [],
+      styleLibrary: [],
+      layerLibrary: [],
+      templateLibrary: [],
+      projectStyleLibrary: [],
+      processingHistory: [],
       widgets: [],
       dashboardColumns: DEFAULT_DASHBOARD_COLUMNS,
       mapLayout: { ...DEFAULT_MAP_GRID_LAYOUT },
       secondaryMapViews: [],
       primaryMapLabel: "",
+      copiedLayerStyle: null,
       selectedLayerId: null,
       selectedFeatureId: null,
+      selectedFeatureIds: [],
       identifyLayerId: null,
       pointerCoords: null,
+      gpsStatus: null,
+      comments: [],
       metadata: {},
       recentProjects: [],
       attributeFilter: "",
@@ -569,22 +983,73 @@ export const useAppStore = create<AppState>()(
         statisticsToolOpen: null,
         rasterToolOpen: null,
         segmentationOpen: false,
+        objectDetectionOpen: false,
+        segmentEverythingOpen: false,
         geocodeOpen: false,
         sqlWorkspaceOpen: false,
+        loadEditorFeaturesOpen: false,
+        loadEditorFeaturesLayerId: null,
         pythonConsoleOpen: false,
         notebookOpen: false,
         assistantOpen: false,
         attributeTableOpen: false,
+        rasterAttributeTableOpen: false,
         dashboardOpen: false,
         storymapPanelOpen: false,
         storymapPresenting: false,
+        storymapReturnToEditor: false,
         storymapComposingId: null,
         modelBuilderOpen: false,
+        styleManagerOpen: false,
+        processingHistoryOpen: false,
+        selectByExpressionOpen: false,
+        selectByExpressionLayerId: null,
+        selectByLocationOpen: false,
+        selectByLocationLayerId: null,
+        processingRerun: null,
         zoomToSelectedFeature: false,
         collaborateDialogOpen: false,
       },
 
       setPointerCoords: (coords) => set({ pointerCoords: coords }),
+      setGpsStatus: (fix) => set({ gpsStatus: fix }),
+
+      addComment: (comment) =>
+        set((s) => {
+          // Ignore a duplicate id: the WebSocket relay echoes our own
+          // comment-mutation back to the sender, and a reconnect can replay
+          // recent history, so de-dupe defensively (mirrors addCollaborationChat).
+          if (s.comments.some((c) => c.id === comment.id)) return s;
+          return { comments: [...s.comments, comment], isDirty: true };
+        }),
+      replyToComment: (commentId, reply) =>
+        set((s) => {
+          let appended = false;
+          const nextComments = s.comments.map((c) => {
+            if (c.id !== commentId) return c;
+            if (c.replies.some((r) => r.id === reply.id)) return c;
+            appended = true;
+            return { ...c, replies: [...c.replies, reply] };
+          });
+          if (!appended) return s;
+          return { comments: nextComments, isDirty: true };
+        }),
+      toggleResolveComment: (commentId, resolved) =>
+        set((s) => ({
+          comments: s.comments.map((c) =>
+            c.id === commentId
+              ? { ...c, resolved: resolved !== undefined ? resolved : !c.resolved }
+              : c,
+          ),
+          isDirty: true,
+        })),
+      deleteComment: (commentId) =>
+        set((s) => ({
+          comments: s.comments.filter((c) => c.id !== commentId),
+          isDirty: true,
+        })),
+      setComments: (comments) => set({ comments, isDirty: true }),
+
       setCollaboration: (patch) =>
         set((s) => ({ collaboration: { ...s.collaboration, ...patch } })),
       // Add or remove a single remote participant's presence without rebuilding
@@ -694,8 +1159,7 @@ export const useAppStore = create<AppState>()(
           if (!changed) return s;
           return { secondaryMapViews, isDirty: true };
         }),
-      setPrimaryMapLabel: (label) =>
-        set({ primaryMapLabel: label, isDirty: true }),
+      setPrimaryMapLabel: (label) => set({ primaryMapLabel: label, isDirty: true }),
       setSecondaryMapLabel: (id, label) =>
         set((s) => {
           let changed = false;
@@ -707,11 +1171,23 @@ export const useAppStore = create<AppState>()(
           if (!changed) return s;
           return { secondaryMapViews, isDirty: true };
         }),
+      setSecondaryViewKind: (id, viewKind) =>
+        set((s) => {
+          let changed = false;
+          const secondaryMapViews = s.secondaryMapViews.map((pane) => {
+            if (pane.id !== id) return pane;
+            // Treat an absent viewKind as "maplibre" so switching a legacy pane
+            // to maplibre is a no-op rather than a churned array.
+            if ((pane.viewKind ?? "maplibre") === viewKind) return pane;
+            changed = true;
+            return { ...pane, viewKind };
+          });
+          if (!changed) return s;
+          return { secondaryMapViews, isDirty: true };
+        }),
       removeSecondaryMapView: (id) =>
         set((s) => {
-          const secondaryMapViews = s.secondaryMapViews.filter(
-            (pane) => pane.id !== id
-          );
+          const secondaryMapViews = s.secondaryMapViews.filter((pane) => pane.id !== id);
           if (secondaryMapViews.length === s.secondaryMapViews.length) {
             return s;
           }
@@ -726,10 +1202,38 @@ export const useAppStore = create<AppState>()(
           };
         }),
       setBasemapStyleUrl: (url) => set({ basemapStyleUrl: url, isDirty: true }),
-      setBasemapVisible: (visible) =>
-        set({ basemapVisible: visible, isDirty: true }),
-      setBasemapOpacity: (opacity) =>
-        set({ basemapOpacity: opacity, isDirty: true }),
+      applyPlanetaryBasemap: (basemap) =>
+        set((state) => ({
+          basemapStyleUrl: basemap.styleUrl,
+          preferences:
+            state.preferences.map.ellipsoidId === basemap.ellipsoidId
+              ? state.preferences
+              : {
+                  ...state.preferences,
+                  map: {
+                    ...state.preferences.map,
+                    ellipsoidId: basemap.ellipsoidId,
+                  },
+                },
+          isDirty: true,
+        })),
+      restoreEarthBasemap: (styleUrl) =>
+        set((state) => ({
+          basemapStyleUrl: styleUrl,
+          preferences:
+            state.preferences.map.ellipsoidId === DEFAULT_ELLIPSOID_ID
+              ? state.preferences
+              : {
+                  ...state.preferences,
+                  map: {
+                    ...state.preferences.map,
+                    ellipsoidId: DEFAULT_ELLIPSOID_ID,
+                  },
+                },
+          isDirty: true,
+        })),
+      setBasemapVisible: (visible) => set({ basemapVisible: visible, isDirty: true }),
+      setBasemapOpacity: (opacity) => set({ basemapOpacity: opacity, isDirty: true }),
       setPreferences: (preferences) => set({ preferences, isDirty: true }),
       setLegend: (legend) => set({ legend, isDirty: true }),
       // When shouldMarkDirty is false the existing dirty flag is preserved rather
@@ -740,40 +1244,66 @@ export const useAppStore = create<AppState>()(
           isDirty: shouldMarkDirty || s.isDirty,
         })),
       selectLayer: (id) =>
-        set({ selectedLayerId: id, selectedFeatureId: null }),
-      selectFeature: (id) => set({ selectedFeatureId: id }),
+        set({
+          selectedLayerId: id,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+        }),
+      selectFeature: (id) => set({ selectedFeatureId: id, selectedFeatureIds: id ? [id] : [] }),
+      selectFeatures: (ids, anchorId) =>
+        set({
+          selectedFeatureIds: ids,
+          // Enforce the documented invariant for every caller: the anchor is
+          // always a member of the set (or null when empty). A supplied anchor
+          // that isn't in `ids` falls back to the last id rather than pointing
+          // the map fit / calculator sample at an unselected feature.
+          selectedFeatureId:
+            anchorId != null && ids.includes(anchorId) ? anchorId : (ids.at(-1) ?? null),
+        }),
       setIdentifyLayer: (id) => set({ identifyLayerId: id }),
       setAttributeFilter: (filter) => set({ attributeFilter: filter }),
-      setProcessingOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, processingOpen: open } })),
+      setProcessingOpen: (open) => set((s) => ({ ui: { ...s.ui, processingOpen: open } })),
       setProcessingInitialTool: (toolId) =>
         set((s) => ({ ui: { ...s.ui, processingInitialTool: toolId } })),
-      setConversionOpen: (kind) =>
-        set((s) => ({ ui: { ...s.ui, conversionOpen: kind } })),
+      setConversionOpen: (kind) => set((s) => ({ ui: { ...s.ui, conversionOpen: kind } })),
       setVectorToolOpen: (kind) =>
-        set((s) => ({ ui: { ...s.ui, vectorToolOpen: kind } })),
-      setNetworkToolOpen: (kind) =>
-        set((s) => ({ ui: { ...s.ui, networkToolOpen: kind } })),
-      setStatisticsToolOpen: (kind) =>
-        set((s) => ({ ui: { ...s.ui, statisticsToolOpen: kind } })),
-      setRasterToolOpen: (kind) =>
-        set((s) => ({ ui: { ...s.ui, rasterToolOpen: kind } })),
-      setSegmentationOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, segmentationOpen: open } })),
-      setGeocodeOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, geocodeOpen: open } })),
-      setSqlWorkspaceOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, sqlWorkspaceOpen: open } })),
-      setPythonConsoleOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, pythonConsoleOpen: open } })),
-      setNotebookOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, notebookOpen: open } })),
-      setAssistantOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, assistantOpen: open } })),
-      setAttributeTableOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, attributeTableOpen: open } })),
-      setDashboardOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, dashboardOpen: open } })),
+        set((s) => ({
+          ui: {
+            ...s.ui,
+            // Pre-DGGS projects / callers may still pass h3-grid / h3-bin-points.
+            vectorToolOpen:
+              (kind as string | null) === "h3-grid"
+                ? "dggs-grid"
+                : (kind as string | null) === "h3-bin-points"
+                  ? "dggs-bin"
+                  : kind,
+          },
+        })),
+      setNetworkToolOpen: (kind) => set((s) => ({ ui: { ...s.ui, networkToolOpen: kind } })),
+      setStatisticsToolOpen: (kind) => set((s) => ({ ui: { ...s.ui, statisticsToolOpen: kind } })),
+      setRasterToolOpen: (kind) => set((s) => ({ ui: { ...s.ui, rasterToolOpen: kind } })),
+      setSegmentationOpen: (open) => set((s) => ({ ui: { ...s.ui, segmentationOpen: open } })),
+      setObjectDetectionOpen: (open) =>
+        set((s) => ({ ui: { ...s.ui, objectDetectionOpen: open } })),
+      setSegmentEverythingOpen: (open) =>
+        set((s) => ({ ui: { ...s.ui, segmentEverythingOpen: open } })),
+      setGeocodeOpen: (open) => set((s) => ({ ui: { ...s.ui, geocodeOpen: open } })),
+      setSqlWorkspaceOpen: (open) => set((s) => ({ ui: { ...s.ui, sqlWorkspaceOpen: open } })),
+      setLoadEditorFeaturesOpen: (open, layerId) =>
+        set((s) => ({
+          ui: {
+            ...s.ui,
+            loadEditorFeaturesOpen: open,
+            loadEditorFeaturesLayerId: open ? (layerId ?? null) : null,
+          },
+        })),
+      setPythonConsoleOpen: (open) => set((s) => ({ ui: { ...s.ui, pythonConsoleOpen: open } })),
+      setNotebookOpen: (open) => set((s) => ({ ui: { ...s.ui, notebookOpen: open } })),
+      setAssistantOpen: (open) => set((s) => ({ ui: { ...s.ui, assistantOpen: open } })),
+      setAttributeTableOpen: (open) => set((s) => ({ ui: { ...s.ui, attributeTableOpen: open } })),
+      setRasterAttributeTableOpen: (open) =>
+        set((s) => ({ ui: { ...s.ui, rasterAttributeTableOpen: open } })),
+      setDashboardOpen: (open) => set((s) => ({ ui: { ...s.ui, dashboardOpen: open } })),
       setStorymapPanelOpen: (open) =>
         set((s) => ({
           ui: {
@@ -785,16 +1315,121 @@ export const useAppStore = create<AppState>()(
             ...(open ? { storymapComposingId: null } : {}),
           },
         })),
-      setStorymapPresenting: (presenting) =>
-        set((s) => ({ ui: { ...s.ui, storymapPresenting: presenting } })),
+      setStorymapPresenting: (presenting, returnToEditor = false) =>
+        set((s) => ({
+          ui: {
+            ...s.ui,
+            storymapPresenting: presenting,
+            // Track whether exiting should reopen the editor; only meaningful
+            // while presenting, so it clears once the presentation ends (#918).
+            storymapReturnToEditor: presenting ? returnToEditor : false,
+          },
+        })),
       setStorymapComposing: (chapterId) =>
         set((s) => ({ ui: { ...s.ui, storymapComposingId: chapterId } })),
-      setModelBuilderOpen: (open) =>
-        set((s) => ({ ui: { ...s.ui, modelBuilderOpen: open } })),
+      setModelBuilderOpen: (open) => set((s) => ({ ui: { ...s.ui, modelBuilderOpen: open } })),
+      setProcessingHistoryOpen: (open) =>
+        set((s) => ({ ui: { ...s.ui, processingHistoryOpen: open } })),
+      setProcessingRerun: (request) => set((s) => ({ ui: { ...s.ui, processingRerun: request } })),
+      setSelectByExpressionOpen: (open, layerId) =>
+        set((s) => ({
+          ui: {
+            ...s.ui,
+            selectByExpressionOpen: open,
+            selectByExpressionLayerId: open ? (layerId ?? null) : null,
+          },
+        })),
+      setSelectByLocationOpen: (open, layerId) =>
+        set((s) => ({
+          ui: {
+            ...s.ui,
+            selectByLocationOpen: open,
+            selectByLocationLayerId: open ? (layerId ?? null) : null,
+          },
+        })),
       setCollaborateDialogOpen: (open) =>
         set((s) => ({ ui: { ...s.ui, collaborateDialogOpen: open } })),
       setZoomToSelectedFeature: (enabled) =>
         set((s) => ({ ui: { ...s.ui, zoomToSelectedFeature: enabled } })),
+
+      setStyleManagerOpen: (open) => set((s) => ({ ui: { ...s.ui, styleManagerOpen: open } })),
+      setStyleLibrary: (entries) => set({ styleLibrary: entries }),
+      saveStyleLibraryEntry: (entry, scope = "app") =>
+        set((s) => {
+          const upsert = (list: StyleLibraryEntry[]) =>
+            list.some((e) => e.id === entry.id)
+              ? list.map((e) => (e.id === entry.id ? entry : e))
+              : [...list, entry];
+          if (scope === "project") {
+            return {
+              projectStyleLibrary: upsert(s.projectStyleLibrary),
+              isDirty: true,
+            };
+          }
+          // App-level saves don't touch the project file, so no dirty flag.
+          return { styleLibrary: upsert(s.styleLibrary) };
+        }),
+      deleteStyleLibraryEntry: (id, scope) =>
+        set((s) => {
+          const inProject = scope !== "app" && s.projectStyleLibrary.some((e) => e.id === id);
+          const inLibrary = scope !== "project" && s.styleLibrary.some((e) => e.id === id);
+          // Keep untouched scopes reference-stable so the IndexedDB
+          // persistence (which watches the styleLibrary reference) does not
+          // rewrite an unchanged library.
+          return {
+            styleLibrary: inLibrary ? s.styleLibrary.filter((e) => e.id !== id) : s.styleLibrary,
+            projectStyleLibrary: inProject
+              ? s.projectStyleLibrary.filter((e) => e.id !== id)
+              : s.projectStyleLibrary,
+            isDirty: s.isDirty || inProject,
+          };
+        }),
+
+      // The entry cap is applied on every write, not just when reading
+      // untrusted input, so ordinary use (repeated saves, importing several
+      // bundles over time) cannot grow the library past it. Mirrors
+      // `writeBrowserFavorites`, which slices to MAX_FAVORITES on each write.
+      setLayerLibrary: (entries) =>
+        set({ layerLibrary: entries.slice(0, MAX_LAYER_LIBRARY_ENTRIES) }),
+      saveLayerLibraryEntry: (entry) =>
+        set((s) => ({
+          // App-level saves don't touch the project file, so no dirty flag
+          // (mirrors saveStyleLibraryEntry's "app" scope). A new entry goes to
+          // the front, so at the cap the oldest falls off the end.
+          layerLibrary: s.layerLibrary.some((e) => e.id === entry.id)
+            ? s.layerLibrary.map((e) => (e.id === entry.id ? entry : e))
+            : [entry, ...s.layerLibrary].slice(0, MAX_LAYER_LIBRARY_ENTRIES),
+        })),
+      renameLayerLibraryEntry: (id, name) =>
+        set((s) => {
+          const trimmed = name.trim();
+          // Keep the array reference stable for a no-op rename so the
+          // IndexedDB persistence (which watches the reference) skips a write.
+          if (!trimmed || !s.layerLibrary.some((e) => e.id === id && e.name !== trimmed)) {
+            return {};
+          }
+          return {
+            layerLibrary: s.layerLibrary.map((e) => (e.id === id ? { ...e, name: trimmed } : e)),
+          };
+        }),
+      deleteLayerLibraryEntry: (id) =>
+        set((s) =>
+          s.layerLibrary.some((e) => e.id === id)
+            ? { layerLibrary: s.layerLibrary.filter((e) => e.id !== id) }
+            : {},
+        ),
+
+      setTemplateLibrary: (templates) => set({ templateLibrary: templates }),
+      saveTemplateEntry: (entry) =>
+        set((s) => ({
+          templateLibrary: s.templateLibrary.some((t) => t.id === entry.id)
+            ? s.templateLibrary.map((t) => (t.id === entry.id ? entry : t))
+            : [...s.templateLibrary, entry],
+        })),
+      deleteTemplateEntry: (id) =>
+        set((s) => ({
+          templateLibrary: s.templateLibrary.filter((t) => t.id !== id),
+        })),
 
       saveModel: (model) =>
         set((s) => {
@@ -810,6 +1445,28 @@ export const useAppStore = create<AppState>()(
           isDirty: true,
         })),
 
+      addProcessingRun: (run) =>
+        set((s) => {
+          // Ignore a duplicate id so updateProcessingRun stays unambiguous.
+          if (s.processingHistory.some((r) => r.id === run.id)) return s;
+          const processingHistory = [...s.processingHistory, run].slice(-MAX_PROCESSING_HISTORY);
+          return { processingHistory, isDirty: true };
+        }),
+      updateProcessingRun: (id, patch) =>
+        set((s) => {
+          if (!s.processingHistory.some((r) => r.id === id)) return s;
+          return {
+            processingHistory: s.processingHistory.map((r) =>
+              r.id === id ? { ...r, ...patch, id: r.id } : r,
+            ),
+            isDirty: true,
+          };
+        }),
+      clearProcessingHistory: () =>
+        set((s) =>
+          s.processingHistory.length === 0 ? s : { processingHistory: [], isDirty: true },
+        ),
+
       addWidget: (widget) =>
         set((s) => {
           // Ignore a duplicate id so updateWidget/removeWidget stay unambiguous
@@ -822,9 +1479,15 @@ export const useAppStore = create<AppState>()(
           const exists = s.widgets.some((w) => w.id === id);
           if (!exists) return s;
           return {
-            widgets: s.widgets.map((w) =>
-              w.id === id ? { ...w, ...patch, id: w.id } : w,
-            ),
+            widgets: s.widgets.map((w) => (w.id === id ? { ...w, ...patch, id: w.id } : w)),
+            isDirty: true,
+          };
+        }),
+      replaceWidget: (id, widget) =>
+        set((s) => {
+          if (!s.widgets.some((w) => w.id === id)) return s;
+          return {
+            widgets: s.widgets.map((w) => (w.id === id ? { ...widget, id } : w)),
             isDirty: true,
           };
         }),
@@ -881,7 +1544,7 @@ export const useAppStore = create<AppState>()(
             storymap: {
               ...s.storymap,
               chapters: s.storymap.chapters.map((chapter) =>
-                chapter.id === id ? { ...chapter, ...patch } : chapter
+                chapter.id === id ? { ...chapter, ...patch } : chapter,
               ),
             },
             isDirty: true,
@@ -893,9 +1556,7 @@ export const useAppStore = create<AppState>()(
           return {
             storymap: {
               ...s.storymap,
-              chapters: s.storymap.chapters.filter(
-                (chapter) => chapter.id !== id
-              ),
+              chapters: s.storymap.chapters.filter((chapter) => chapter.id !== id),
             },
             isDirty: true,
           };
@@ -903,9 +1564,7 @@ export const useAppStore = create<AppState>()(
       moveStoryChapter: (id, targetIndex) =>
         set((s) => {
           if (!s.storymap) return s;
-          const current = s.storymap.chapters.findIndex(
-            (chapter) => chapter.id === id
-          );
+          const current = s.storymap.chapters.findIndex((chapter) => chapter.id === id);
           if (current < 0) return s;
           const chapters = [...s.storymap.chapters];
           const [chapter] = chapters.splice(current, 1);
@@ -920,8 +1579,7 @@ export const useAppStore = create<AppState>()(
 
       setProjectPath: (path) => set({ projectPath: path }),
       setProjectName: (name) => set({ projectName: name, isDirty: true }),
-      setRecentProjects: (projects) =>
-        set({ recentProjects: normalizeRecentProjects(projects) }),
+      setRecentProjects: (projects) => set({ recentProjects: normalizeRecentProjects(projects) }),
       rememberRecentProject: (entry) =>
         set((s) => ({
           recentProjects: normalizeRecentProjects([entry, ...s.recentProjects]),
@@ -932,7 +1590,7 @@ export const useAppStore = create<AppState>()(
         const normalized = path.replace(/\\/g, "/");
         set((s) => ({
           recentProjects: s.recentProjects.filter(
-            (project) => project.path.replace(/\\/g, "/") !== normalized
+            (project) => project.path.replace(/\\/g, "/") !== normalized,
           ),
         }));
       },
@@ -942,9 +1600,7 @@ export const useAppStore = create<AppState>()(
       addLayer: (layer, beforeLayerId = null) =>
         set((s) => {
           const layers = [...s.layers];
-          const beforeIndex = beforeLayerId
-            ? layers.findIndex((l) => l.id === beforeLayerId)
-            : -1;
+          const beforeIndex = beforeLayerId ? layers.findIndex((l) => l.id === beforeLayerId) : -1;
           const layerWithBeforeId =
             beforeLayerId && beforeIndex < 0
               ? { ...layer, beforeId: beforeLayerId }
@@ -963,29 +1619,91 @@ export const useAppStore = create<AppState>()(
 
       removeLayer: (id) =>
         set((s) => ({
-          layers: s.layers.filter((l) => l.id !== id),
-          // Drop any per-pane visibility override for the removed layer so stale
-          // ids don't accumulate (and serialize) in secondary panes over time.
-          secondaryMapViews: s.secondaryMapViews.map((pane) => {
-            if (!(id in pane.layerVisibility)) return pane;
-            const { [id]: _removed, ...rest } = pane.layerVisibility;
-            return { ...pane, layerVisibility: rest };
-          }),
+          // Re-derive any layer whose joins consumed the removed layer: with
+          // the source gone the join resolves to nothing, so its previously
+          // materialized columns strip away instead of staying frozen (the
+          // join definition itself stays, shown as missing in the Joins UI).
+          layers: cascadeJoinRefreshForRemoved(
+            s.layers.filter((l) => l.id !== id),
+            id,
+          ),
+          secondaryMapViews: scrubSecondaryPaneLayerVisibility(s.secondaryMapViews, id),
+          // Drop storymap chapter enter/exit opacity rows that pointed at the
+          // removed layer so they do not keep a dangling id across save/reload.
+          storymap: scrubStorymapLayerRefs(s.storymap, id),
+          widgets: scrubWidgetsForRemovedLayers(s.widgets, id),
+          comments: scrubCommentsForRemovedLayers(s.comments, id),
+          legend: scrubLegendForRemovedLayers(s.legend, id),
           selectedLayerId:
             s.selectedLayerId === id
-              ? s.layers.find((l) => l.id !== id)?.id ?? null
+              ? (s.layers.find((l) => l.id !== id)?.id ?? null)
               : s.selectedLayerId,
-          selectedFeatureId:
-            s.selectedLayerId === id ? null : s.selectedFeatureId,
+          selectedFeatureId: s.selectedLayerId === id ? null : s.selectedFeatureId,
+          selectedFeatureIds: s.selectedLayerId === id ? [] : s.selectedFeatureIds,
           identifyLayerId: s.identifyLayerId === id ? null : s.identifyLayerId,
+          ui: {
+            ...s.ui,
+            selectByExpressionLayerId:
+              s.ui.selectByExpressionLayerId === id ? null : s.ui.selectByExpressionLayerId,
+            selectByLocationLayerId:
+              s.ui.selectByLocationLayerId === id ? null : s.ui.selectByLocationLayerId,
+            loadEditorFeaturesLayerId:
+              s.ui.loadEditorFeaturesLayerId === id ? null : s.ui.loadEditorFeaturesLayerId,
+          },
           isDirty: true,
         })),
 
       updateLayer: (id, patch) =>
-        set((s) => ({
-          layers: s.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)),
-          isDirty: true,
-        })),
+        set((s) => {
+          let layers = s.layers.map((l) => (l.id === id ? { ...l, ...patch } : l));
+          // A geojson replacement re-derives the layer's derived columns
+          // (persistent joins, then virtual fields): on the layer itself
+          // (file reload, attribute edits, processing writes — derived
+          // columns stay derived, QGIS-style), then transitively on every
+          // layer whose joins consume the updated one, so editing a join
+          // table refreshes its targets and their dependents in turn. The
+          // `patch.joins`/`patch.virtualFields` guard exists for external
+          // callers of this public store API (plugins, programmatic loads):
+          // a patch that carries `geojson` alongside the definitions is taken
+          // verbatim as already-derived state — no in-repo caller does this
+          // today.
+          if (patch.geojson !== undefined) {
+            if (patch.joins === undefined && patch.virtualFields === undefined) {
+              layers = layers.map((l) =>
+                l.id === id && (l.joins?.length || l.virtualFields?.length)
+                  ? applyJoinsToLayer(l, layers)
+                  : l,
+              );
+            }
+            layers = cascadeLayerJoinRefresh(layers, id);
+          }
+          return { layers, isDirty: true };
+        }),
+
+      setLayerJoins: (id, joins) =>
+        set((s) => {
+          let layers = s.layers.map((l) =>
+            l.id === id ? applyJoinsToLayer(l, s.layers, joins) : l,
+          );
+          // Changing this layer's joins changes its materialized columns, so
+          // layers joining against it (directly or transitively) re-derive too.
+          layers = cascadeLayerJoinRefresh(layers, id);
+          return { layers, isDirty: true };
+        }),
+
+      setLayerAttributeForm: (id, attributeForm) => get().updateLayer(id, { attributeForm }),
+
+      setLayerVirtualFields: (id, fields) =>
+        set((s) => {
+          let layers = s.layers.map((l) =>
+            l.id === id ? applyJoinsToLayer(l, s.layers, undefined, fields) : l,
+          );
+          // Virtual columns are ordinary materialized properties, so a layer
+          // joining against this one (directly or transitively) sees them and
+          // must re-derive too.
+          layers = cascadeLayerJoinRefresh(layers, id);
+          return { layers, isDirty: true };
+        }),
 
       setLayerVisibility: (id, visible) => get().updateLayer(id, { visible }),
 
@@ -994,10 +1712,36 @@ export const useAppStore = create<AppState>()(
       setLayerStyle: (id, style) =>
         set((s) => ({
           layers: s.layers.map((l) =>
-            l.id === id ? { ...l, style: { ...l.style, ...style } } : l
+            l.id === id ? { ...l, style: { ...l.style, ...style } } : l,
           ),
           isDirty: true,
         })),
+
+      copyLayerStyle: (id) => {
+        const layer = get().layers.find((l) => l.id === id);
+        if (!layer) return false;
+        const copied = extractCopiedLayerStyle(layer);
+        // Leave any prior clipboard entry in place when this layer is not
+        // copyable, so opening a non-stylable layer's menu never clears it.
+        if (!copied) return false;
+        set({ copiedLayerStyle: copied });
+        return true;
+      },
+
+      pasteLayerStyle: (id) => {
+        const s = get();
+        const copied = s.copiedLayerStyle;
+        if (!copied) return false;
+        const layer = s.layers.find((l) => l.id === id);
+        if (!layer) return false;
+        const patch = applyCopiedLayerStyle(layer, copied);
+        if (!patch) return false;
+        // Go through updateLayer so the paste picks up any cross-cutting layer
+        // update logic (it also sets isDirty); the patch never carries geojson,
+        // so the join-cascade branch is a no-op.
+        get().updateLayer(id, patch);
+        return true;
+      },
 
       reorderLayer: (id, direction) =>
         set((s) => {
@@ -1025,6 +1769,36 @@ export const useAppStore = create<AppState>()(
           return { layers: next, isDirty: true };
         }),
 
+      moveLayersRelative: (layerIds, targetLayerId, position) =>
+        set((s) => {
+          const requestedIds = new Set(layerIds);
+          if (requestedIds.has(targetLayerId)) return s;
+          const target = s.layers.find((layer) => layer.id === targetLayerId);
+          if (!target) return s;
+          const targetGroupId = target.groupId ?? null;
+          // This is a pure reorder — `groupId` is never touched — so a requested
+          // layer from another group can only be lifted out of its own block,
+          // and `normalizeGroupContiguity` would then drag that group's
+          // untouched members along to reunite it. Move only the layers that
+          // already sit in the target's group.
+          const moving = s.layers.filter(
+            (layer) => requestedIds.has(layer.id) && (layer.groupId ?? null) === targetGroupId,
+          );
+          if (moving.length === 0) return s;
+          const movingIds = new Set(moving.map((layer) => layer.id));
+          const without = s.layers.filter((layer) => !movingIds.has(layer.id));
+          const targetIndex = without.findIndex((layer) => layer.id === targetLayerId);
+          if (targetIndex < 0) return s;
+          // Store order is the reverse of panel display order, so "above" is
+          // immediately after the target in this array.
+          const insertIndex = position === "above" ? targetIndex + 1 : targetIndex;
+          const next = [...without];
+          next.splice(insertIndex, 0, ...moving);
+          const normalized = normalizeGroupContiguity(next);
+          if (normalized.every((layer, index) => layer.id === s.layers[index]?.id)) return s;
+          return { layers: normalized, isDirty: true };
+        }),
+
       addGeoJsonLayer: (name, geojson, sourcePath, beforeLayerId = null) => {
         const id = uuidv4();
         const layer: GeoLibreLayer = {
@@ -1034,13 +1808,95 @@ export const useAppStore = create<AppState>()(
           source: { type: "geojson" },
           visible: true,
           opacity: 1,
-          style: {
-            ...DEFAULT_LAYER_STYLE,
-            simpleStyleEnabled: hasSimpleStyleProperties(geojson),
-          },
+          // Its own palette color and geometry-appropriate sizing (#1519), so a
+          // stack of freshly added layers is legible without restyling each one.
+          style: initialLayerStyle({
+            geojson,
+            layers: get().layers,
+            overrides: {
+              simpleStyleEnabled: hasSimpleStyleProperties(geojson),
+            },
+          }),
           metadata: {},
           geojson,
           sourcePath,
+        };
+        get().addLayer(layer, beforeLayerId);
+        return id;
+      },
+
+      addImageOverlayLayer: (name, source, options, beforeLayerId = null) => {
+        const id = uuidv4();
+        const layer: GeoLibreLayer = {
+          id,
+          name,
+          type: "image",
+          source: {
+            type: "image",
+            url: source.url,
+            coordinates: source.coordinates,
+          },
+          visible: options?.visible ?? true,
+          opacity: options?.opacity ?? 1,
+          style: { ...DEFAULT_LAYER_STYLE },
+          metadata: {
+            sourceKind: "kml-ground-overlay",
+            ...(options?.bounds ? { bounds: options.bounds } : {}),
+            ...(options?.timeSpan ? { timeSpan: options.timeSpan } : {}),
+          },
+          ...(options?.sourcePath ? { sourcePath: options.sourcePath } : {}),
+        };
+        get().addLayer(layer, beforeLayerId);
+        return id;
+      },
+
+      addTileLayer: (name, options, beforeLayerId = null) => {
+        const id = uuidv4();
+        // Trim each template and drop blanks, then reject a registration that
+        // sanitizes down to nothing: syncRasterTileLayer returns early on an
+        // empty tile list, so without this the store would persist and select a
+        // layer that can never render.
+        const tiles = options.tiles
+          .filter((tile): tile is string => typeof tile === "string")
+          .map((tile) => tile.trim())
+          .filter((tile) => tile !== "");
+        if (tiles.length === 0) {
+          throw new Error("addTileLayer requires at least one non-empty tile URL template.");
+        }
+        // MapLibre's addSource throws synchronously when maxzoom < minzoom, and
+        // syncRasterTileLayer does not catch it, which would strand a layer in
+        // the store with no rendered source. Reject the bad range up front.
+        if (
+          options.minzoom !== undefined &&
+          options.maxzoom !== undefined &&
+          options.minzoom > options.maxzoom
+        ) {
+          throw new Error(
+            `addTileLayer: minzoom (${options.minzoom}) must be <= maxzoom (${options.maxzoom}).`,
+          );
+        }
+        const layer: GeoLibreLayer = {
+          id,
+          name,
+          type: options.type ?? "xyz",
+          source: {
+            // Extra source fields (e.g. WMS layers/styles) merge first so the
+            // required raster descriptor below always wins.
+            ...(options.source ?? {}),
+            type: "raster",
+            tiles,
+            tileSize: options.tileSize ?? 256,
+            ...(options.url !== undefined ? { url: options.url } : {}),
+            ...(options.attribution !== undefined ? { attribution: options.attribution } : {}),
+            ...(options.bounds !== undefined ? { bounds: options.bounds } : {}),
+            ...(options.minzoom !== undefined ? { minzoom: options.minzoom } : {}),
+            ...(options.maxzoom !== undefined ? { maxzoom: options.maxzoom } : {}),
+            ...(options.scheme !== undefined ? { scheme: options.scheme } : {}),
+          },
+          visible: options.visible ?? true,
+          opacity: options.opacity ?? 1,
+          style: { ...DEFAULT_LAYER_STYLE },
+          metadata: { ...(options.metadata ?? {}) },
         };
         get().addLayer(layer, beforeLayerId);
         return id;
@@ -1060,9 +1916,7 @@ export const useAppStore = create<AppState>()(
           const layers =
             ids.size > 0
               ? normalizeGroupContiguity(
-                  s.layers.map((l) =>
-                    ids.has(l.id) ? { ...l, groupId: id } : l
-                  )
+                  s.layers.map((l) => (ids.has(l.id) ? { ...l, groupId: id } : l)),
                 )
               : s.layers;
           return {
@@ -1077,55 +1931,100 @@ export const useAppStore = create<AppState>()(
       removeLayerGroup: (id, options) =>
         set((s) => {
           const removeChildren = options?.removeChildren ?? false;
+          const removedGroup = s.layerGroups.find((g) => g.id === id);
+          if (!removedGroup) return s;
+          const groupIds = new Set([id]);
+          if (removeChildren) {
+            let changed = true;
+            while (changed) {
+              changed = false;
+              for (const group of s.layerGroups) {
+                if (group.parentId && groupIds.has(group.parentId) && !groupIds.has(group.id)) {
+                  groupIds.add(group.id);
+                  changed = true;
+                }
+              }
+            }
+          }
           const removedIds = new Set(
-            s.layers.filter((l) => l.groupId === id).map((l) => l.id)
+            s.layers.filter((l) => l.groupId && groupIds.has(l.groupId)).map((l) => l.id),
           );
-          const layers = removeChildren
-            ? s.layers.filter((l) => l.groupId !== id)
-            : s.layers.map((l) =>
-                l.groupId === id ? { ...l, groupId: undefined } : l
-              );
+          let layers = removeChildren
+            ? s.layers.filter((l) => !l.groupId || !groupIds.has(l.groupId))
+            : s.layers.map((l) => (l.groupId === id ? { ...l, groupId: undefined } : l));
+          // Match removeLayer: refreshing joins and scrubbing secondary-pane /
+          // storymap refs for every deleted child so group delete cannot leave
+          // stale joined columns or dangling visibility overrides behind.
+          if (removeChildren && removedIds.size > 0) {
+            layers = cascadeJoinRefreshForRemoved(layers, removedIds);
+          }
           const selectionRemoved =
-            removeChildren &&
-            s.selectedLayerId !== null &&
-            removedIds.has(s.selectedLayerId);
+            removeChildren && s.selectedLayerId !== null && removedIds.has(s.selectedLayerId);
           return {
             layers,
-            layerGroups: s.layerGroups.filter((g) => g.id !== id),
+            layerGroups: s.layerGroups
+              .filter((g) => !groupIds.has(g.id))
+              .map((g) => (g.parentId === id ? { ...g, parentId: removedGroup.parentId } : g)),
+            secondaryMapViews: removeChildren
+              ? scrubSecondaryPaneLayerVisibility(s.secondaryMapViews, removedIds)
+              : s.secondaryMapViews,
+            storymap: removeChildren ? scrubStorymapLayerRefs(s.storymap, removedIds) : s.storymap,
+            widgets: removeChildren
+              ? scrubWidgetsForRemovedLayers(s.widgets, removedIds)
+              : s.widgets,
+            comments: removeChildren
+              ? scrubCommentsForRemovedLayers(s.comments, removedIds)
+              : s.comments,
+            legend: removeChildren ? scrubLegendForRemovedLayers(s.legend, removedIds) : s.legend,
             selectedLayerId: selectionRemoved
-              ? layers[layers.length - 1]?.id ?? null
+              ? (layers[layers.length - 1]?.id ?? null)
               : s.selectedLayerId,
             selectedFeatureId: selectionRemoved ? null : s.selectedFeatureId,
+            selectedFeatureIds: selectionRemoved ? [] : s.selectedFeatureIds,
             identifyLayerId:
               s.identifyLayerId !== null && removedIds.has(s.identifyLayerId)
                 ? null
                 : s.identifyLayerId,
+            ui: removeChildren
+              ? {
+                  ...s.ui,
+                  selectByExpressionLayerId:
+                    s.ui.selectByExpressionLayerId !== null &&
+                    removedIds.has(s.ui.selectByExpressionLayerId)
+                      ? null
+                      : s.ui.selectByExpressionLayerId,
+                  selectByLocationLayerId:
+                    s.ui.selectByLocationLayerId !== null &&
+                    removedIds.has(s.ui.selectByLocationLayerId)
+                      ? null
+                      : s.ui.selectByLocationLayerId,
+                  loadEditorFeaturesLayerId:
+                    s.ui.loadEditorFeaturesLayerId !== null &&
+                    removedIds.has(s.ui.loadEditorFeaturesLayerId)
+                      ? null
+                      : s.ui.loadEditorFeaturesLayerId,
+                }
+              : s.ui,
             isDirty: true,
           };
         }),
 
       renameLayerGroup: (id, name) =>
         set((s) => ({
-          layerGroups: s.layerGroups.map((g) =>
-            g.id === id ? { ...g, name } : g
-          ),
+          layerGroups: s.layerGroups.map((g) => (g.id === id ? { ...g, name } : g)),
           isDirty: true,
         })),
 
       setLayerGroupVisibility: (id, visible) =>
         set((s) => ({
-          layerGroups: s.layerGroups.map((g) =>
-            g.id === id ? { ...g, visible } : g
-          ),
+          layerGroups: s.layerGroups.map((g) => (g.id === id ? { ...g, visible } : g)),
           isDirty: true,
         })),
 
       setLayerGroupOpacity: (id, opacity) =>
         set((s) => ({
           layerGroups: s.layerGroups.map((g) =>
-            g.id === id
-              ? { ...g, opacity: Math.min(Math.max(opacity, 0), 1) }
-              : g
+            g.id === id ? { ...g, opacity: Math.min(Math.max(opacity, 0), 1) } : g,
           ),
           isDirty: true,
         })),
@@ -1137,48 +2036,97 @@ export const useAppStore = create<AppState>()(
       toggleLayerGroupCollapsed: (id) =>
         set((s) => ({
           layerGroups: s.layerGroups.map((g) =>
-            g.id === id ? { ...g, collapsed: !g.collapsed } : g
+            g.id === id ? { ...g, collapsed: !g.collapsed } : g,
           ),
         })),
 
       moveLayerToGroup: (layerId, groupId, beforeLayerId = null) =>
+        get().moveLayersToGroup([layerId], groupId, beforeLayerId),
+
+      moveLayersToGroup: (layerIds, groupId, beforeLayerId = null) =>
         set((s) => {
-          const current = s.layers.find((l) => l.id === layerId);
-          if (!current) return s;
           if (groupId && !s.layerGroups.some((g) => g.id === groupId)) return s;
-          const updated = { ...current, groupId: groupId ?? undefined };
-          const without = s.layers.filter((l) => l.id !== layerId);
+          const requestedIds = new Set(layerIds);
+          const moving = s.layers.filter(
+            (layer) =>
+              requestedIds.has(layer.id) &&
+              (beforeLayerId !== null || (layer.groupId ?? null) !== groupId),
+          );
+          if (moving.length === 0) return s;
+          const movingIds = new Set(moving.map((layer) => layer.id));
+          const without = s.layers.filter((layer) => !movingIds.has(layer.id));
+          const updated = moving.map((layer) => ({
+            ...layer,
+            groupId: groupId ?? undefined,
+          }));
           let index: number;
-          if (beforeLayerId) {
-            const at = without.findIndex((l) => l.id === beforeLayerId);
+          if (beforeLayerId && !movingIds.has(beforeLayerId)) {
+            const at = without.findIndex((layer) => layer.id === beforeLayerId);
             index = at < 0 ? without.length : at;
           } else if (groupId) {
-            // Append to the end of the target group's block (top of the group
-            // in the panel); fall back to the array end for an empty group.
             let last = -1;
-            without.forEach((l, i) => {
-              if (l.groupId === groupId) last = i;
+            without.forEach((layer, layerIndex) => {
+              if (layer.groupId === groupId) last = layerIndex;
             });
             index = last < 0 ? without.length : last + 1;
           } else {
             index = without.length;
           }
           const next = [...without];
-          next.splice(index, 0, updated);
+          next.splice(index, 0, ...updated);
           const normalized = normalizeGroupContiguity(next);
           const unchanged = normalized.every(
-            (l, i) =>
-              l.id === s.layers[i]?.id && l.groupId === s.layers[i]?.groupId
+            (layer, layerIndex) =>
+              layer.id === s.layers[layerIndex]?.id &&
+              layer.groupId === s.layers[layerIndex]?.groupId,
           );
           if (unchanged) return s;
           return { layers: normalized, isDirty: true };
         }),
 
+      moveLayerGroupToGroup: (id, parentId) =>
+        set((s) => {
+          if (parentId === id) return s;
+          const group = s.layerGroups.find((g) => g.id === id);
+          if (!group) return s;
+          if (parentId && !s.layerGroups.some((g) => g.id === parentId)) return s;
+          // Walking upward from the proposed parent must never reach the group
+          // being moved, otherwise the assignment would create a cycle.
+          const byId = new Map(s.layerGroups.map((g) => [g.id, g]));
+          let ancestorId = parentId ?? undefined;
+          const visited = new Set<string>();
+          while (ancestorId && !visited.has(ancestorId)) {
+            if (ancestorId === id) return s;
+            visited.add(ancestorId);
+            ancestorId = byId.get(ancestorId)?.parentId;
+          }
+          const nextParentId = parentId ?? undefined;
+          if (group.parentId === nextParentId) return s;
+          return {
+            layerGroups: s.layerGroups.map((g) =>
+              g.id === id ? { ...g, parentId: nextParentId } : g,
+            ),
+            isDirty: true,
+          };
+        }),
+
       reorderLayerGroup: (id, direction) =>
         set((s) => {
+          const groupIds = new Set([id]);
+          let foundDescendant = true;
+          while (foundDescendant) {
+            foundDescendant = false;
+            for (const group of s.layerGroups) {
+              if (group.parentId && groupIds.has(group.parentId) && !groupIds.has(group.id)) {
+                groupIds.add(group.id);
+                foundDescendant = true;
+              }
+            }
+          }
           // Build the top-level units in store (render) order: each ungrouped
           // layer is its own unit, and a group's contiguous members form one
-          // unit. Reordering swaps the whole group block past its neighbor.
+          // unit. A nested organizer group may have no direct layers, so its
+          // block includes every unit belonging to a descendant group.
           const units: { key: string; layers: GeoLibreLayer[] }[] = [];
           for (const layer of s.layers) {
             const key = layer.groupId ?? `layer:${layer.id}`;
@@ -1186,13 +2134,21 @@ export const useAppStore = create<AppState>()(
             if (last && last.key === key) last.layers.push(layer);
             else units.push({ key, layers: [layer] });
           }
-          const unitIndex = units.findIndex((u) => u.key === id);
-          if (unitIndex < 0) return s; // empty group: nothing to move
-          const target = direction === "up" ? unitIndex + 1 : unitIndex - 1;
-          if (target < 0 || target >= units.length) return s;
-          const [unit] = units.splice(unitIndex, 1);
-          units.splice(target, 0, unit);
-          return { layers: units.flatMap((u) => u.layers), isDirty: true };
+          const matching = units
+            .map((unit, index) => (groupIds.has(unit.key) ? index : -1))
+            .filter((index) => index >= 0);
+          if (matching.length === 0) return s;
+          const first = matching[0];
+          const last = matching[matching.length - 1];
+          const neighbor = direction === "up" ? last + 1 : first - 1;
+          if (neighbor < 0 || neighbor >= units.length) return s;
+          const block = units.filter((unit) => groupIds.has(unit.key));
+          const remaining = units.filter((unit) => !groupIds.has(unit.key));
+          const neighborKey = units[neighbor].key;
+          const neighborIndex = remaining.findIndex((unit) => unit.key === neighborKey);
+          const insertAt = direction === "up" ? neighborIndex + 1 : neighborIndex;
+          remaining.splice(insertAt, 0, ...block);
+          return { layers: remaining.flatMap((u) => u.layers), isDirty: true };
         }),
 
       newProject: (options = {}) => {
@@ -1205,15 +2161,28 @@ export const useAppStore = create<AppState>()(
           isDirty: false,
           selectedLayerId: null,
           selectedFeatureId: null,
+          selectedFeatureIds: [],
           identifyLayerId: null,
+          // The copied style names a layer from the previous project, so a
+          // paste in the new one would apply an orphaned entry.
+          copiedLayerStyle: null,
           pointerCoords: null,
           attributeFilter: "",
           // Don't carry an active story presentation into a different project.
           ui: {
             ...s.ui,
             storymapPresenting: false,
+            storymapReturnToEditor: false,
             storymapPanelOpen: false,
             storymapComposingId: null,
+            // An open selection dialog (and its preselected layer id) belongs
+            // to the previous project's layers.
+            selectByExpressionOpen: false,
+            selectByExpressionLayerId: null,
+            selectByLocationOpen: false,
+            selectByLocationLayerId: null,
+            loadEditorFeaturesOpen: false,
+            loadEditorFeaturesLayerId: null,
           },
         }));
         clearHistory();
@@ -1221,27 +2190,52 @@ export const useAppStore = create<AppState>()(
 
       loadProject: (project, path = null, options = {}) => {
         const applied = applyProjectToStore(project);
+        // Re-resolve persistent attribute joins against the loaded layer set,
+        // so joined columns reflect the join tables as saved (and a stale
+        // saved copy of the joined output self-heals).
+        applied.layers = reapplyLayerJoins(applied.layers);
         // A project that ships a story map opens straight into the presentation
         // so the reader sees the story, not the editor. Projects without a story
         // (or with an empty one) open normally. Callers that open a project for
         // authoring rather than viewing can pass `presenting: false` to override.
-        const presentStory =
-          options.presenting ?? (applied.storymap?.chapters.length ?? 0) > 0;
+        const presentStory = options.presenting ?? (applied.storymap?.chapters.length ?? 0) > 0;
+        const selectedLayerId =
+          project.selectedLayerId === null
+            ? null
+            : typeof project.selectedLayerId === "string" &&
+                applied.layers.some((layer) => layer.id === project.selectedLayerId)
+              ? project.selectedLayerId
+              : (applied.layers[0]?.id ?? null);
         set((s) => ({
           ...applied,
           projectPath: path,
           projectGeneration: s.projectGeneration + 1,
           isDirty: false,
-          selectedLayerId: applied.layers[0]?.id ?? null,
+          selectedLayerId,
           selectedFeatureId: null,
+          selectedFeatureIds: [],
           identifyLayerId: null,
+          // The copied style names a layer from the previous project, so a
+          // paste in the loaded one would apply an orphaned entry.
+          copiedLayerStyle: null,
           // Present a bundled story on load; otherwise drop any presentation
           // carried over from the previous project.
           ui: {
             ...s.ui,
             storymapPresenting: presentStory,
+            // A bundled story auto-presents for viewing, so exiting it should
+            // not pop open the editor (#918).
+            storymapReturnToEditor: false,
             storymapPanelOpen: false,
             storymapComposingId: null,
+            // An open selection dialog (and its preselected layer id) belongs
+            // to the previous project's layers.
+            selectByExpressionOpen: false,
+            selectByExpressionLayerId: null,
+            selectByLocationOpen: false,
+            selectByLocationLayerId: null,
+            loadEditorFeaturesOpen: false,
+            loadEditorFeaturesLayerId: null,
           },
         }));
         clearHistory();
@@ -1265,6 +2259,7 @@ export const useAppStore = create<AppState>()(
         basemapVisible: s.basemapVisible,
         basemapOpacity: s.basemapOpacity,
         storymap: s.storymap,
+        comments: s.comments,
       }),
       // Records a history entry only when the tracked slice really changed.
       // Basemap fields compare with ===; `layers` is compared element-by-element
@@ -1275,12 +2270,14 @@ export const useAppStore = create<AppState>()(
       // new object, so real edits differ while an unchanged null stays equal.
       // `layerGroups` is compared ignoring `collapsed`, which is a UI preference
       // excluded from undo (see toggleLayerGroupCollapsed).
+      // `comments` is compared shallowly by reference.
       equality: (a, b) =>
         a.basemapStyleUrl === b.basemapStyleUrl &&
         a.basemapVisible === b.basemapVisible &&
         a.basemapOpacity === b.basemapOpacity &&
         a.storymap === b.storymap &&
         shallow(a.layers, b.layers) &&
+        shallow(a.comments, b.comments) &&
         layerGroupsEqualForHistory(a.layerGroups, b.layerGroups),
       limit: 100,
       // Group rapid bursts (slider drags) into one entry; window is 0 in tests.
@@ -1297,28 +2294,71 @@ export const useAppStore = create<AppState>()(
           const before = useAppStore.temporal.getState().pastStates;
           debounced(...args);
           if (useAppStore.temporal.getState().pastStates !== before) {
+            if (!applyingProjectRestoreHistory && projectRestoreRedo) {
+              projectRestoreRedo = null;
+              notifyProjectRestoreHistory();
+            }
             pruneHistoryBySize();
           }
         };
       },
-    }
-  )
+    },
+  ),
 );
+
+// Mirror the project's ellipsoid into the module-level singleton the
+// measurement helpers read. One subscription covers every path that changes
+// preferences (setPreferences, load/new project, undo/redo) without threading
+// the value through each call site. The subscription runs on every store
+// mutation (e.g. setPointerCoords on each mousemove), so guard on the id to skip
+// the redundant work for a value that changes at most once per session.
+let lastEllipsoidId = useAppStore.getState().preferences.map.ellipsoidId;
+setActiveEllipsoidId(lastEllipsoidId);
+useAppStore.subscribe((state) => {
+  const id = state.preferences.map.ellipsoidId;
+  if (id === lastEllipsoidId) return;
+  lastEllipsoidId = id;
+  setActiveEllipsoidId(id);
+});
 
 /**
  * After an undo/redo restores the tracked slice, mark the project dirty and
  * drop a `selectedLayerId` that no longer points at an existing layer (selection
  * is intentionally not tracked in history, so it can dangle after a restore).
  */
-function finishHistoryStep(): void {
+function finishHistoryStep(previousBasemapStyleUrl: string): void {
   const s = useAppStore.getState();
   const selectionDangling =
-    s.selectedLayerId !== null &&
-    !s.layers.some((layer) => layer.id === s.selectedLayerId);
+    s.selectedLayerId !== null && !s.layers.some((layer) => layer.id === s.selectedLayerId);
+  // The basemap is in the undo history but the ellipsoid preference is not, so a
+  // step that restores a *different* basemap can leave the two out of sync (e.g.
+  // undoing a switch to Mars would keep the Mars radius under an Earth basemap).
+  // Re-derive the ellipsoid from the restored basemap's body — Earth for a
+  // non-planetary basemap — but only when this step actually changed the
+  // basemap. Steps that leave the basemap untouched must not touch the ellipsoid,
+  // which the user can set independently of the basemap in Settings.
+  const restoredEllipsoidId =
+    getPlanetaryBasemapByStyleUrl(s.basemapStyleUrl)?.ellipsoidId ?? DEFAULT_ELLIPSOID_ID;
+  const ellipsoidPatch =
+    s.basemapStyleUrl !== previousBasemapStyleUrl &&
+    s.preferences.map.ellipsoidId !== restoredEllipsoidId
+      ? {
+          preferences: {
+            ...s.preferences,
+            map: { ...s.preferences.map, ellipsoidId: restoredEllipsoidId },
+          },
+        }
+      : {};
   useAppStore.setState(
     selectionDangling
-      ? { isDirty: true, selectedLayerId: null, selectedFeatureId: null }
-      : { isDirty: true },
+      ? {
+          isDirty: true,
+          selectedLayerId: null,
+          selectedFeatureId: null,
+          selectedFeatureIds: [],
+          ...ellipsoidPatch,
+        }
+      : { isDirty: true, ...ellipsoidPatch },
   );
   // The setState above must not leave a coalesce window open for the next edit.
   cancelHistoryCoalesce();
@@ -1332,23 +2372,68 @@ function finishHistoryStep(): void {
  */
 export function undo(): void {
   const temporal = useAppStore.temporal.getState();
+  if (temporal.pastStates.length === 0 && projectRestoreUndo) {
+    const entry = projectRestoreUndo;
+    applyingProjectRestoreHistory = true;
+    try {
+      useAppStore.getState().loadProject(entry.before, entry.beforePath, {
+        rememberRecent: false,
+        presenting: false,
+      });
+      projectRestoreUndo = null;
+      useAppStore.setState({ isDirty: true });
+      projectRestoreRedo = entry;
+      notifyProjectRestoreHistory();
+    } catch (error) {
+      console.error("Could not undo the project snapshot restore.", error);
+    } finally {
+      applyingProjectRestoreHistory = false;
+    }
+    return;
+  }
   if (temporal.pastStates.length === 0) return; // nothing to undo; stay clean
   cancelHistoryCoalesce(); // break any in-flight burst so the next edit records
+  const previousBasemapStyleUrl = useAppStore.getState().basemapStyleUrl;
   temporal.undo();
-  finishHistoryStep();
+  finishHistoryStep(previousBasemapStyleUrl);
 }
 
 /** Step the history forward one entry and mark the project dirty. */
 export function redo(): void {
   const temporal = useAppStore.temporal.getState();
+  if (temporal.futureStates.length === 0 && projectRestoreRedo) {
+    const entry = projectRestoreRedo;
+    applyingProjectRestoreHistory = true;
+    try {
+      useAppStore.getState().loadProject(entry.after, entry.afterPath, {
+        rememberRecent: false,
+        presenting: false,
+      });
+      projectRestoreRedo = null;
+      useAppStore.setState({ isDirty: true });
+      projectRestoreUndo = entry;
+      notifyProjectRestoreHistory();
+    } catch (error) {
+      console.error("Could not redo the project snapshot restore.", error);
+    } finally {
+      applyingProjectRestoreHistory = false;
+    }
+    return;
+  }
   if (temporal.futureStates.length === 0) return; // nothing to redo; stay clean
   cancelHistoryCoalesce(); // break any in-flight burst so the next edit records
+  const previousBasemapStyleUrl = useAppStore.getState().basemapStyleUrl;
   temporal.redo();
-  finishHistoryStep();
+  finishHistoryStep(previousBasemapStyleUrl);
 }
 
 /** Empty both the undo and redo stacks (e.g. on new/loaded project). */
 export function clearHistory(): void {
   cancelHistoryCoalesce(); // reset any in-flight burst so the next edit records
   useAppStore.temporal.getState().clear();
+  if (!applyingProjectRestoreHistory) {
+    projectRestoreUndo = null;
+    projectRestoreRedo = null;
+    notifyProjectRestoreHistory();
+  }
 }
