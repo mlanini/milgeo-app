@@ -10,7 +10,7 @@
  *
  * The editor calls `onSave(patch)` when the user confirms.
  */
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import ms from "milsymbol";
 import { cn } from "@geolibre/ui";
 import type { MilSymbolItem } from "@geolibre/core";
@@ -251,19 +251,31 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
   const [tab, setTab] = useState<"sidc" | "amplifiers">("sidc");
 
   const modifierSet = useMemo(() => getModifierSet(symbolSet), [symbolSet]);
+  const formatModifierOption = (code: string, label: string): SidcOption => ({
+    code,
+    label: `${code} - ${label}`,
+  });
+
   const modifier1Options = useMemo<SidcOption[]>(
-    () => Object.entries(modifierSet.m1).map(([code, label]) => ({ code, label })),
-    [modifierSet]
+    () => {
+      const base = Object.entries(modifierSet.m1).map(([code, label]) => formatModifierOption(code, String(label)));
+      if (!modifierSet.m1[modifier1]) {
+        base.push(formatModifierOption(modifier1, `(code ${modifier1})`));
+      }
+      return base;
+    },
+    [modifierSet, modifier1]
   );
   const modifier2Options = useMemo<SidcOption[]>(
-    () => Object.entries(modifierSet.m2).map(([code, label]) => ({ code, label })),
-    [modifierSet]
+    () => {
+      const base = Object.entries(modifierSet.m2).map(([code, label]) => formatModifierOption(code, String(label)));
+      if (!modifierSet.m2[modifier2]) {
+        base.push(formatModifierOption(modifier2, `(code ${modifier2})`));
+      }
+      return base;
+    },
+    [modifierSet, modifier2]
   );
-
-  useEffect(() => {
-    if (!modifierSet.m1[modifier1]) setModifier1("00");
-    if (!modifierSet.m2[modifier2]) setModifier2("00");
-  }, [modifierSet, modifier1, modifier2]);
 
   const currentSidc = useMemo(() =>
     buildSidc({
@@ -362,7 +374,7 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
 
         {tab === "amplifiers" && (
           <>
-            <TextField     label="Designazione unica (C2)" value={uniqueDesignation}   placeholder="es. 1-68 AR" onChange={setUniqueDesignation}  />
+            <TextField     label="Designation (T)"        value={uniqueDesignation}   placeholder="es. 1-68 AR" onChange={setUniqueDesignation}  />
             <TextField     label="Formazione superiore (M)" value={higherFormation}    placeholder="es. 3 ID"     onChange={setHigherFormation}     />
             <TextField     label="Commenti di staff (G)"   value={staffComments}       placeholder=""             onChange={setStaffComments}        />
             <TextField     label="Info aggiuntive (H)"     value={additionalInfo}      placeholder=""             onChange={setAdditionalInfo}       />

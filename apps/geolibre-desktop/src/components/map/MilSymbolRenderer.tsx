@@ -55,6 +55,16 @@ interface SymbolCacheEntry {
   options: SymbolOptions;
 }
 
+function cleanSymbolOptions(opts: SymbolOptions): SymbolOptions {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(opts)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    cleaned[key] = value;
+  }
+  return cleaned as SymbolOptions;
+}
+
 interface MilSymbolRendererProps {
   mapControllerRef: React.RefObject<MapController | null>;
 }
@@ -181,7 +191,15 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       if (map.hasImage(e.id)) return;
       const entry = symbolCacheRef.current.get(e.id);
       if (!entry) return;
-      const data = buildMilSymbolImageData(entry.sidc, entry.options, PIXEL_RATIO);
+      let data = buildMilSymbolImageData(entry.sidc, entry.options, PIXEL_RATIO);
+      if (!data) {
+        const fallbackOpts: SymbolOptions = {
+          size: entry.options.size,
+          outlineColor: "white",
+          outlineWidth: 6,
+        };
+        data = buildMilSymbolImageData(entry.sidc, fallbackOpts, PIXEL_RATIO);
+      }
       if (data) map.addImage(e.id, data, { pixelRatio: PIXEL_RATIO });
     };
 
@@ -217,8 +235,6 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
         const opts: SymbolOptions = {
           size:              layerSize,
           infoFields:        true,
-          infoSize:          50,
-          padding:           8,
           uniqueDesignation: symbol.uniqueDesignation,
           higherFormation:   symbol.higherFormation,
           staffComments:     symbol.staffComments,
@@ -235,8 +251,9 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
           combatEffectiveness: symbol.combatEffectiveness,
           evaluationRating:  symbol.evaluationRating,
         };
-        const key = makeSymbolKey(symbol.SIDC, opts);
-        symbolCacheRef.current.set(key, { sidc: symbol.SIDC, options: opts });
+        const cleanedOpts = cleanSymbolOptions(opts);
+        const key = makeSymbolKey(symbol.SIDC, cleanedOpts);
+        symbolCacheRef.current.set(key, { sidc: symbol.SIDC, options: cleanedOpts });
 
         features.push({
           type: "Feature",
