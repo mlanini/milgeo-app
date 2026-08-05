@@ -33,9 +33,9 @@ import {
 import { AttributeTable } from "../panels/AttributeTable";
 import { LayerPanel } from "../panels/LayerPanel";
 import { StylePanel } from "../panels/StylePanel";
+import { MilGeoWorkspacePanel } from "../panels/MilGeoWorkspacePanel";
 import { DiagnosticsDialog } from "./DiagnosticsDialog";
 import { MapControllerProvider } from "../../contexts/map-controller-context";
-import { MILGEO_PLUGIN_ID } from "../../plugins/milgeo-plugin";
 import MilSymbolRenderer from "../map/MilSymbolRenderer";
 import { StatusBar } from "./StatusBar";
 import { TopToolbar } from "./TopToolbar";
@@ -93,7 +93,10 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 type ShellStyle = CSSProperties &
-  Record<"--layer-panel-width" | "--style-panel-width", string>;
+  Record<
+    "--layer-panel-width" | "--style-panel-width" | "--milgeo-panel-width",
+    string
+  >;
 
 export function DesktopShell({
   layoutOptions,
@@ -115,17 +118,24 @@ export function DesktopShell({
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const diagnostics = useDiagnosticsSnapshot();
   const externalPluginsReady = useExternalPluginsReady(mapControllerRef);
-  const { isActive } = usePluginRegistry();
   const [layerPanelWidth, setLayerPanelWidth] = useState(
     DEFAULT_SIDE_PANEL_WIDTH,
   );
   const [stylePanelWidth, setStylePanelWidth] = useState(
     DEFAULT_SIDE_PANEL_WIDTH,
   );
+  const [milGeoPanelWidth, setMilGeoPanelWidth] = useState(
+    DEFAULT_SIDE_PANEL_WIDTH,
+  );
+  const [milGeoOpen, setMilGeoOpen] = useState(false);
+  const [milSymbolModuleEnabled, setMilSymbolModuleEnabled] = useState(true);
+  const [dtmAnalysisModuleEnabled, setDtmAnalysisModuleEnabled] =
+    useState(true);
   const deferPanelResize = isTauri();
   const shellStyle: ShellStyle = {
     "--layer-panel-width": `${layerPanelWidth}px`,
     "--style-panel-width": `${stylePanelWidth}px`,
+    "--milgeo-panel-width": `${milGeoPanelWidth}px`,
   };
 
   const clearDropMessageLater = useCallback(() => {
@@ -177,8 +187,16 @@ export function DesktopShell({
     setMapReadyGeneration((generation) => generation + 1);
   }, []);
 
-  const handleToggleMilSymbol = useCallback(() => {
-    getPluginManager().toggle(MILGEO_PLUGIN_ID, createAppAPI(mapControllerRef));
+  const handleToggleMilGeo = useCallback(() => {
+    setMilGeoOpen((current) => !current);
+  }, []);
+
+  const handleToggleMilSymbolModule = useCallback(() => {
+    setMilSymbolModuleEnabled((current) => !current);
+  }, []);
+
+  const handleToggleDtmAnalysisModule = useCallback(() => {
+    setDtmAnalysisModuleEnabled((current) => !current);
   }, []);
 
   const handleMapDiagnosticEvent = useCallback((event: MapDiagnosticEvent) => {
@@ -460,6 +478,72 @@ export function DesktopShell({
     [deferPanelResize, stylePanelWidth],
   );
 
+  const startMilGeoPanelResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startX = event.clientX;
+      const startWidth = milGeoPanelWidth;
+      const panelRect =
+        event.currentTarget.parentElement?.getBoundingClientRect();
+      let nextWidth = startWidth;
+      let resizeFrame: number | null = null;
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.dispatchEvent(new Event(PANEL_RESIZE_START_EVENT));
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        nextWidth = clamp(
+          startWidth + startX - moveEvent.clientX,
+          MIN_SIDE_PANEL_WIDTH,
+          MAX_SIDE_PANEL_WIDTH,
+        );
+        if (resizeFrame !== null) return;
+        resizeFrame = window.requestAnimationFrame(() => {
+          resizeFrame = null;
+          if (deferPanelResize) {
+            if (verticalResizeGuideRef.current && panelRect) {
+              verticalResizeGuideRef.current.style.left = `${
+                panelRect.right - nextWidth
+              }px`;
+              verticalResizeGuideRef.current.classList.remove("hidden");
+            }
+            return;
+          }
+          shellRef.current?.style.setProperty(
+            "--milgeo-panel-width",
+            `${nextWidth}px`,
+          );
+        });
+      };
+
+      const onMouseUp = () => {
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+        if (resizeFrame !== null) {
+          window.cancelAnimationFrame(resizeFrame);
+          resizeFrame = null;
+        }
+        shellRef.current?.style.setProperty(
+          "--milgeo-panel-width",
+          `${nextWidth}px`,
+        );
+        verticalResizeGuideRef.current?.classList.add("hidden");
+        setMilGeoPanelWidth(nextWidth);
+        window.dispatchEvent(new Event(PANEL_RESIZE_END_EVENT));
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+      };
+
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", onMouseUp);
+    },
+    [deferPanelResize, milGeoPanelWidth],
+  );
+
   return (
     <MapControllerProvider value={mapControllerRef}>
     <div
@@ -478,8 +562,12 @@ export function DesktopShell({
         showLabels={layoutOptions.toolbarLabels}
         showProjectInfo={layoutOptions.showProjectInfo}
         themeMode={themeMode}
-        milSymbolOpen={isActive(MILGEO_PLUGIN_ID)}
-        onToggleMilSymbol={handleToggleMilSymbol}
+        milGeoOpen={milGeoOpen}
+        milSymbolModuleEnabled={milSymbolModuleEnabled}
+        dtmAnalysisModuleEnabled={dtmAnalysisModuleEnabled}
+        onToggleMilGeo={handleToggleMilGeo}
+        onToggleMilSymbolModule={handleToggleMilSymbolModule}
+        onToggleDtmAnalysisModule={handleToggleDtmAnalysisModule}
         onOpenDiagnostics={() => setDiagnosticsOpen(true)}
         onToggleThemeMode={onToggleThemeMode}
       />
@@ -511,6 +599,15 @@ export function DesktopShell({
           <StylePanel
             mapControllerRef={mapControllerRef}
             onResizeStart={startStylePanelResize}
+          />
+        ) : null}
+        {milGeoOpen ? (
+          <MilGeoWorkspacePanel
+            mapControllerRef={mapControllerRef}
+            onResizeStart={startMilGeoPanelResize}
+            milSymbolsEnabled={milSymbolModuleEnabled}
+            dtmAnalysisEnabled={dtmAnalysisModuleEnabled}
+            onClose={() => setMilGeoOpen(false)}
           />
         ) : null}
       </div>

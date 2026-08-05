@@ -1,7 +1,7 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
 
-const OUTPUT_DIR = path.resolve(process.cwd(), "apps/geolibre-desktop/dist");
+const OUTPUT_DIR = path.resolve(process.cwd(), "build");
 
 async function main() {
   try {

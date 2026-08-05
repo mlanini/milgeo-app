@@ -3,7 +3,7 @@ services:
     name: milgeo-app
     runtime: static
     buildCommand: npm ci && npm run build:render && node scripts/verify-render-output.mjs
-    staticPublishPath: apps/geolibre-desktop/dist
+    staticPublishPath: build
     envVars:
       - key: NODE_VERSION
         value: "22"

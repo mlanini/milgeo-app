@@ -481,16 +481,21 @@ function ProfileChart({
 
 interface AnalysisPanelProps {
   mapControllerRef: RefObject<MapController | null>;
+  embedded?: boolean;
 }
 
 type RunState = "idle" | "drawing" | "loading" | "done" | "error";
 
-export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
-  const open = useAppStore(
+export function AnalysisPanel({
+  mapControllerRef,
+  embedded = false,
+}: AnalysisPanelProps) {
+  const storeOpen = useAppStore(
     (s) =>
       (s as unknown as { ui?: { analysisOpen?: boolean } }).ui?.analysisOpen ??
       false,
   );
+  const open = embedded ? true : storeOpen;
   const setAnalysisOpen = useAppStore(
     (s) =>
       (s as unknown as { setAnalysisOpen?: (open: boolean) => void })
@@ -881,15 +886,17 @@ export function AnalysisPanel({ mapControllerRef }: AnalysisPanelProps) {
           <Database className="size-3" />
           {demSource === "local" ? "Local DTM" : "Online API"}
         </button>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-6"
-          onClick={() => setAnalysisOpen?.(false)}
-          aria-label="Close Analysis panel"
-        >
-          <X className="size-3.5" />
-        </Button>
+        {!embedded ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-6"
+            onClick={() => setAnalysisOpen?.(false)}
+            aria-label="Close Analysis panel"
+          >
+            <X className="size-3.5" />
+          </Button>
+        ) : null}
       </div>
 
       <div className="flex min-h-0 flex-1">

@@ -39,7 +39,7 @@ Open `http://localhost:5173`.
 npm run build
 ```
 
-Static output is generated in `apps/geolibre-desktop/dist`.
+Static output is generated in `build`.
 
 ## Main commands
 
