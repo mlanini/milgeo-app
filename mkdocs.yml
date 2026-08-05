@@ -1,0 +1,83 @@
+site_name: MilGeo.app
+site_description: Professional military GIS platform with APP-6D tactical symbology and operational planning tools, built with React, TypeScript, MapLibre GL JS, and milsymbol.
+site_url: https://milgeo.app
+repo_name: mlanini/milgeo-app
+repo_url: https://github.com/mlanini/milgeo-app
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/milgeo-icon.png
+  favicon: assets/milgeo-icon.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Downloads: downloads.md
+  - Live Demo: /demo/
+  - User Guide:
+      - Interface Overview: user-guide/interface.md
+      - Tactical Symbols: user-guide/tactical-symbols.md
+      - Tactical Graphics: user-guide/tactical-graphics.md
+      - Processing Tools: user-guide/processing.md
+      - SQL Workspace: user-guide/sql-workspace.md
+  - Documentation:
+      - Architecture: architecture.md
+      - Android: android.md
+      - Project Format: project-format.md
+      - Plugin API: plugin-api.md
+      - Internationalization: i18n.md
+      - Python Package: python.md
+      - Roadmap: roadmap.md
+      - Contributing: contributing.md
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mlanini/milgeo-app
+      name: MilGeo.app on GitHub

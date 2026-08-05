@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<MilXDocument_Layer xmlns="http://gs-soft.com/MilX/V3.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<MssLibraryVersionTag>2025.02.20</MssLibraryVersionTag>
+	<MilXLayer>
+		<Name>MilX</Name>
+		<LayerType>Normal</LayerType>
+		<GraphicList>
+			<MilXGraphic>
+				<MssStringXML>&lt;Symbol ID="SFGPUCI----I---"&gt;&lt;Attribute ID="M"&gt;AA&lt;/Attribute&gt;&lt;Attribute ID="T"&gt;101th&lt;/Attribute&gt;&lt;/Symbol&gt;</MssStringXML>
+				<Name>inf div 101th/AA</Name>
+				<PointList>
+					<Point>
+						<X>9.028109</X>
+						<Y>46.392574</Y>
+					</Point>
+				</PointList>
+				<Offset>
+					<FactorX>0</FactorX>
+					<FactorY>0</FactorY>
+				</Offset>
+			</MilXGraphic>
+			<MilXGraphic>
+				<MssStringXML>&lt;Symbol ID="SHGPUCFH---G---"&gt;&lt;Attribute ID="T"&gt;49&lt;/Attribute&gt;&lt;/Symbol&gt;</MssStringXML>
+				<Name>art regt 49</Name>
+				<PointList>
+					<Point>
+						<X>8.945053</X>
+						<Y>46.468835</Y>
+					</Point>
+				</PointList>
+				<Offset>
+					<FactorX>0</FactorX>
+					<FactorY>0</FactorY>
+				</Offset>
+			</MilXGraphic>
+		</GraphicList>
+		<CoordSystemType>WGS84</CoordSystemType>
+		<SymbolSize>12.065</SymbolSize>
+	</MilXLayer>
+</MilXDocument_Layer>
