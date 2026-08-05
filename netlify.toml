@@ -1,0 +1,8 @@
+[build]
+  command = "npm ci && npm run build"
+  publish = "apps/geolibre-desktop/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  GEOLIBRE_APP_BASE = "/"
+  NODE_OPTIONS = "--max-old-space-size=4096"

@@ -1,0 +1,38 @@
+{
+  "name": "milgeo",
+  "private": true,
+  "version": "1.7.0",
+  "description": "MilGeo.app — geospatial web app with APP-6D military tactical tools",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "workers/*"
+  ],
+  "trustedDependencies": [
+    "@google/genai",
+    "core-js",
+    "protobufjs"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w milgeo-app",
+    "build": "npm run build -w milgeo-app",
+    "build:render": "npm run build:render -w milgeo-app",
+    "typecheck": "npm run build",
+    "lint": "eslint apps packages workers tests",
+    "test": "npm run test:frontend",
+    "test:frontend": "node --import tsx --test tests/*.test.ts",
+    "test:frontend:coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"**/*.config.*\" tests/*.test.ts",
+    "test:worker": "npm run typecheck -w geolibre-viewer-worker && npm run typecheck -w geolibre-collab-worker",
+    "ci": "npm run lint && npm run build && npm run test:frontend:coverage && npm run test:worker"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "eslint": "^10.4.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "tsx": "^4.22.4",
+    "typescript-eslint": "^8.61.0"
+  }
+}

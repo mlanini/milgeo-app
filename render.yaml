@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: milgeo-app
+    runtime: static
+    buildCommand: npm ci && npm run build:render && node scripts/verify-render-output.mjs
+    staticPublishPath: apps/geolibre-desktop/dist
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=4096"
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
