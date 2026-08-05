@@ -60,7 +60,8 @@ jobs:
       - name: Add web demo to site
         run: |
           mkdir -p site/demo
-          cp -R apps/geolibre-desktop/dist/. site/demo/
+          test -f build/index.html
+          cp -R build/. site/demo/
           test -f site/demo/index.html
 
       - name: Upload Pages artifact
