@@ -4,9 +4,27 @@
   "private": true,
   "type": "module",
   "description": "Swiss GDI external plugin for GeoLibre",
+  "license": "MIT",
+  "homepage": "https://github.com/mlanini/milgeo-app/tree/main/swiss-gdi-plugin",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mlanini/milgeo-app.git",
+    "directory": "swiss-gdi-plugin"
+  },
+  "keywords": [
+    "geolibre",
+    "plugin",
+    "swiss",
+    "gdi",
+    "wms",
+    "geoadmin"
+  ],
   "scripts": {
+    "build": "npm run build:geolibre",
     "build:geolibre": "tsup src/index.ts --format esm --bundle --target es2022 --platform browser --out-dir geolibre-plugin/dist --clean",
-    "package:geolibre": "npm run build:geolibre && node scripts/package-geolibre-plugin.mjs"
+    "validate:geolibre": "node scripts/validate-geolibre-plugin.mjs",
+    "package:geolibre": "npm run build:geolibre && npm run validate:geolibre && node scripts/package-geolibre-plugin.mjs",
+    "prepare:plugins-site": "npm run package:geolibre"
   },
   "devDependencies": {
     "tsup": "^8.5.0",

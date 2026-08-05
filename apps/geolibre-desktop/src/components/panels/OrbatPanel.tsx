@@ -16,9 +16,16 @@ import maplibregl from "maplibre-gl";
 import ms from "milsymbol";
 import { cn } from "@geolibre/ui";
 import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
-import type { MilAffiliation, MilSymbolLayerSource, OrbatUnit } from "@geolibre/core";
+import type { MilAffiliation, OrbatUnit } from "@geolibre/core";
 import { useMilLayerStore } from "../../hooks/useMilLayerStore";
 import { MilSymbolEditor, type MilSymbolPatch } from "./MilSymbolEditor";
+import {
+  DEFAULT_MIL_SYMBOL_SIZE_PX,
+  parseMilSymbolLayerSource,
+  serializeMilSymbolLayerSource,
+  type MilSymbolLayerItem,
+} from "../../lib/milsymbol-layer-source";
+
 import {
   ChevronRight,
   ChevronDown,
@@ -56,7 +63,9 @@ function affiliationFromSidc(sidc: string): MilAffiliation {
 }
 
 function buildUnitLayer(unit: OrbatUnit, lon: number, lat: number) {
-  const source: MilSymbolLayerSource = {
+  const symbol: MilSymbolLayerItem = {
+    id: crypto.randomUUID(),
+    name: unit.name,
     SIDC: unit.sidc,
     lon,
     lat,
@@ -72,7 +81,8 @@ function buildUnitLayer(unit: OrbatUnit, lon: number, lat: number) {
     opacity: 1,
     style: { ...DEFAULT_LAYER_STYLE },
     metadata: { milgeoManaged: true, orbatUnitId: unit.id },
-    source: source as unknown as Record<string, unknown>,
+    source: serializeMilSymbolLayerSource([symbol], DEFAULT_MIL_SYMBOL_SIZE_PX),
+    createdSymbolId: symbol.id,
   };
 }
 
@@ -278,23 +288,31 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
       sidc: nextSidc,
     });
 
-    const linkedLayerId = currentUnit?.symbolId;
-    const linkedLayer = linkedLayerId
-      ? appLayers.find((layer) => layer.id === linkedLayerId && layer.type === "mil-symbol")
-      : null;
-    if (linkedLayer) {
-      const source = linkedLayer.source as unknown as MilSymbolLayerSource;
-      updateLayer(linkedLayer.id, {
-        name: nextName,
-        source: {
-          ...linkedLayer.source,
-          SIDC: nextSidc,
-          affiliation: affiliationFromSidc(nextSidc),
-          uniqueDesignation: nextName,
-          lon: source.lon,
-          lat: source.lat,
-        } as unknown as Record<string, unknown>,
+    const linkedSymbolId = currentUnit?.symbolId;
+    if (linkedSymbolId) {
+      const linkedLayer = appLayers.find((layer) => {
+        if (layer.type !== "mil-symbol") return false;
+        return parseMilSymbolLayerSource(layer.source).symbols.some((symbol) => symbol.id === linkedSymbolId);
       });
+
+      if (linkedLayer) {
+        const parsed = parseMilSymbolLayerSource(linkedLayer.source);
+        const symbols = parsed.symbols.map((symbol) =>
+          symbol.id === linkedSymbolId
+            ? {
+                ...symbol,
+                name: nextName,
+                SIDC: nextSidc,
+                affiliation: affiliationFromSidc(nextSidc),
+                uniqueDesignation: nextName,
+              }
+            : symbol
+        );
+
+        updateLayer(linkedLayer.id, {
+          source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize),
+        });
+      }
     }
 
     setEditingId(null);
@@ -309,28 +327,73 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
       const { lng, lat } = e.lngLat;
       const unit = useMilLayerStore.getState().orbatUnits.find((item) => item.id === unitId);
       if (unit) {
+        const appState = useAppStore.getState();
+        const milSymbolLayers = appState.layers.filter((layer) => layer.type === "mil-symbol");
         const linkedLayer = unit.symbolId
-          ? useAppStore.getState().layers.find(
-              (layer) => layer.id === unit.symbolId && layer.type === "mil-symbol"
+          ? milSymbolLayers.find((layer) =>
+              parseMilSymbolLayerSource(layer.source).symbols.some((symbol) => symbol.id === unit.symbolId)
             )
           : null;
 
-        if (linkedLayer) {
-          useAppStore.getState().updateLayer(linkedLayer.id, {
-            name: unit.name,
-            source: {
-              ...linkedLayer.source,
-              SIDC: unit.sidc,
-              lon: lng,
-              lat,
-              affiliation: affiliationFromSidc(unit.sidc),
-              uniqueDesignation: unit.name,
-            } as unknown as Record<string, unknown>,
+        if (linkedLayer && unit.symbolId) {
+          const parsed = parseMilSymbolLayerSource(linkedLayer.source);
+          const symbols = parsed.symbols.map((symbol) =>
+            symbol.id === unit.symbolId
+              ? {
+                  ...symbol,
+                  name: unit.name,
+                  SIDC: unit.sidc,
+                  lon: lng,
+                  lat,
+                  affiliation: affiliationFromSidc(unit.sidc),
+                  uniqueDesignation: unit.name,
+                }
+              : symbol
+          );
+          appState.updateLayer(linkedLayer.id, {
+            source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize),
           });
         } else {
-          const layer = buildUnitLayer(unit, lng, lat);
-          useAppStore.getState().addLayer(layer);
-          useMilLayerStore.getState().updateOrbatUnit(unitId, { symbolId: layer.id });
+          const preferredLayer = appState.selectedLayerId
+            ? milSymbolLayers.find((layer) => layer.id === appState.selectedLayerId)
+            : null;
+          const targetLayer = preferredLayer
+            ?? milSymbolLayers.find((layer) => layer.metadata.milgeoManaged === true)
+            ?? milSymbolLayers[0]
+            ?? null;
+
+          const symbol: MilSymbolLayerItem = {
+            id: crypto.randomUUID(),
+            name: unit.name,
+            SIDC: unit.sidc,
+            lon: lng,
+            lat,
+            affiliation: affiliationFromSidc(unit.sidc),
+            uniqueDesignation: unit.name,
+          };
+
+          if (!targetLayer) {
+            const created = buildUnitLayer(unit, lng, lat);
+            appState.addLayer({
+              id: created.id,
+              name: created.name,
+              type: created.type,
+              visible: created.visible,
+              opacity: created.opacity,
+              style: created.style,
+              metadata: created.metadata,
+              source: created.source,
+            });
+            useMilLayerStore.getState().updateOrbatUnit(unitId, {
+              symbolId: created.createdSymbolId,
+            });
+          } else {
+            const parsed = parseMilSymbolLayerSource(targetLayer.source);
+            appState.updateLayer(targetLayer.id, {
+              source: serializeMilSymbolLayerSource([...parsed.symbols, symbol], parsed.symbolSize),
+            });
+            useMilLayerStore.getState().updateOrbatUnit(unitId, { symbolId: symbol.id });
+          }
         }
       }
       setPlacingId(null);

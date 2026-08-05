@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Browse official geo.admin.ch WMS layers, preview legends, and inspect GetFeatureInfo responses on the map.",
   "author": "GeoLibre",
-  "homepage": "https://github.com/opengeos/geolibre-plugins",
+  "homepage": "https://github.com/mlanini/milgeo-app/tree/main/swiss-gdi-plugin",
   "manifestUrl": "plugins/geolibre-swiss-gdi/plugin.json",
   "categories": ["Data", "Web Services"],
   "minGeoLibreVersion": "1.7.0"

@@ -84,7 +84,7 @@ export interface OrbatUnit {
   sidc: string;
   /** null = root node */
   parentId: string | null;
-  /** Optional link to the main app mil-symbol layer created for this unit */
+  /** Optional link to the placed symbol item id inside a main app mil-symbol layer */
   symbolId?: string;
   /** Arbitrary notes */
   remarks?: string;

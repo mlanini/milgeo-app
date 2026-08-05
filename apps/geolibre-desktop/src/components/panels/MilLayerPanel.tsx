@@ -10,6 +10,7 @@ import {
   useState,
   useCallback,
   useMemo,
+  useEffect,
 } from "react";
 import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
@@ -17,12 +18,14 @@ import ms from "milsymbol";
 import {
   Check,
   MapPin,
+  Pencil,
   X,
 } from "lucide-react";
 import type { MapController } from "@geolibre/map";
-import type { MilAffiliation, MilSymbolLayerSource } from "@geolibre/core";
+import type { MilAffiliation } from "@geolibre/core";
 import { useMapClick } from "../../hooks/useMapClick";
 import { OrbatPanel } from "./OrbatPanel";
+import { MilSymbolEditor, type MilSymbolPatch } from "./MilSymbolEditor";
 import {
   CATEGORIES,
   filterCatalog,
@@ -30,6 +33,12 @@ import {
   type CatalogEntry,
 } from "../../lib/milsymbol-catalog";
 import { parseSidc, buildSidc, ECHELON_OPTIONS } from "../../lib/mil-sidc";
+import {
+  DEFAULT_MIL_SYMBOL_SIZE_PX,
+  parseMilSymbolLayerSource,
+  serializeMilSymbolLayerSource,
+  type MilSymbolLayerItem,
+} from "../../lib/milsymbol-layer-source";
 
 const MilSymbol = ms.Symbol;
 const CATALOG_ICON = 32;
@@ -77,10 +86,7 @@ interface CatalogTabProps {
   mapControllerRef: React.RefObject<MapController | null>;
 }
 
-function createMilSymbolLayer(
-  name: string,
-  source: MilSymbolLayerSource,
-): Parameters<ReturnType<typeof useAppStore.getState>["addLayer"]>[0] {
+function createMilSymbolLayer(name: string, symbol: MilSymbolLayerItem, symbolSize: number) {
   return {
     id: crypto.randomUUID(),
     name,
@@ -89,24 +95,54 @@ function createMilSymbolLayer(
     opacity: 1,
     style: { ...DEFAULT_LAYER_STYLE },
     metadata: { milgeoManaged: true },
-    source: source as unknown as Record<string, unknown>,
+    source: serializeMilSymbolLayerSource([symbol], symbolSize),
   };
 }
 
 function CatalogTab({ mapControllerRef }: CatalogTabProps) {
+  const layers = useAppStore((s) => s.layers);
+  const selectedLayerId = useAppStore((s) => s.selectedLayerId);
   const addLayer = useAppStore((s) => s.addLayer);
+  const updateLayer = useAppStore((s) => s.updateLayer);
+  const selectLayer = useAppStore((s) => s.selectLayer);
 
   const [search,      setSearch]      = useState("");
   const [category,    setCategory]    = useState("All");
   const [affiliation, setAffiliation] = useState<MilAffiliation>("FRIENDLY");
   const [echelon,     setEchelon]     = useState("00");
+  const [symbolSizePx, setSymbolSizePx] = useState(DEFAULT_MIL_SYMBOL_SIZE_PX);
   const [placingSidc, setPlacingSidc] = useState<string | null>(null);
-  const [pendingEntry, setPendingEntry] = useState<CatalogEntry | null>(null);
+  const [pendingPatch, setPendingPatch] = useState<MilSymbolPatch | null>(null);
+  const [editingEntry, setEditingEntry] = useState<CatalogEntry | null>(null);
+  const [editingPatch, setEditingPatch] = useState<MilSymbolPatch | null>(null);
+
+  const milSymbolLayers = useMemo(
+    () => layers.filter((layer) => layer.type === "mil-symbol"),
+    [layers]
+  );
+
+  const resolveTargetLayer = useCallback(() => {
+    if (selectedLayerId) {
+      const selected = milSymbolLayers.find((layer) => layer.id === selectedLayerId);
+      if (selected) return selected;
+    }
+
+    return milSymbolLayers.find((layer) => layer.metadata.milgeoManaged === true)
+      ?? milSymbolLayers[0]
+      ?? null;
+  }, [milSymbolLayers, selectedLayerId]);
 
   const filtered = useMemo(
     () => filterCatalog(search, category === "All" ? undefined : category),
     [search, category]
   );
+
+  useEffect(() => {
+    const target = resolveTargetLayer();
+    if (!target) return;
+    const parsed = parseMilSymbolLayerSource(target.source);
+    setSymbolSizePx(parsed.symbolSize);
+  }, [resolveTargetLayer]);
 
   // Applies echelon to the SIDC before placing, preserving catalog modifiers.
   function applyEchelon(baseSidc: string): string {
@@ -117,32 +153,86 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     });
   }
 
+  function buildDefaultPatch(entry: CatalogEntry): MilSymbolPatch {
+    return {
+      name: entry.name,
+      sidc: applyEchelon(sidcWithAffiliation(entry.baseSidc, affiliation)),
+      uniqueDesignation: undefined,
+      higherFormation: undefined,
+    };
+  }
+
+  function queuePlacement(patch: MilSymbolPatch) {
+    if (!patch.sidc) return;
+    setPendingPatch(patch);
+    setPlacingSidc(patch.sidc);
+    enableClick();
+  }
+
   const { enable: enableClick, disable: disableClick } = useMapClick(
     mapControllerRef,
     useCallback((lon, lat) => {
-      if (!pendingEntry) return;
-      const sidc = applyEchelon(sidcWithAffiliation(pendingEntry.baseSidc, affiliation));
-      addLayer(createMilSymbolLayer(pendingEntry.name, {
-        SIDC: sidc,
+      if (!pendingPatch?.sidc) return;
+
+      const target = resolveTargetLayer();
+      const symbol: MilSymbolLayerItem = {
+        id: crypto.randomUUID(),
+        name: pendingPatch.name || pendingPatch.uniqueDesignation || "Symbol",
+        SIDC: pendingPatch.sidc,
         lon,
         lat,
         affiliation,
-      }));
+        uniqueDesignation: pendingPatch.uniqueDesignation,
+        higherFormation: pendingPatch.higherFormation,
+        direction: pendingPatch.direction,
+      };
+
+      if (!target) {
+        const created = createMilSymbolLayer("Mil Symbols", symbol, symbolSizePx);
+        addLayer(created);
+        selectLayer(created.id);
+      } else {
+        const parsed = parseMilSymbolLayerSource(target.source);
+        updateLayer(target.id, {
+          source: serializeMilSymbolLayerSource([...parsed.symbols, symbol], symbolSizePx),
+        });
+        selectLayer(target.id);
+      }
+
       setPlacingSidc(null);
-      setPendingEntry(null);
+      setPendingPatch(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pendingEntry, affiliation, echelon, addLayer]),
+    }, [pendingPatch, affiliation, symbolSizePx, addLayer, resolveTargetLayer, updateLayer, selectLayer]),
     true,
   );
 
   function handleSelectEntry(entry: CatalogEntry) {
-    setPendingEntry(entry);
-    setPlacingSidc(entry.baseSidc);
-    enableClick();
+    queuePlacement(buildDefaultPatch(entry));
+  }
+
+  function handleEditEntry(entry: CatalogEntry) {
+    setEditingEntry(entry);
+    setEditingPatch(buildDefaultPatch(entry));
+  }
+
+  function handleSaveEditedEntry(patch: MilSymbolPatch) {
+    queuePlacement(patch);
+    setEditingEntry(null);
+    setEditingPatch(null);
+  }
+
+  function handleChangeSymbolSize(value: number) {
+    setSymbolSizePx(value);
+    const target = resolveTargetLayer();
+    if (!target) return;
+    const parsed = parseMilSymbolLayerSource(target.source);
+    updateLayer(target.id, {
+      source: serializeMilSymbolLayerSource(parsed.symbols, value),
+    });
   }
 
   function cancelPlace() {
-    setPendingEntry(null);
+    setPendingPatch(null);
     setPlacingSidc(null);
     disableClick();
   }
@@ -150,7 +240,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   return (
     <div className="flex flex-col h-full">
       <div className="border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-        I simboli aggiunti compaiono nel pannello Layers principale, dove puoi gestire visibilità, ordine e rinomina.
+        I simboli vengono aggiunti nel layer milsymbol selezionato nel pannello Layers principale.
       </div>
 
       {/* Affiliation bar */}
@@ -185,6 +275,20 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
               <option key={o.code} value={o.code}>{o.code === "00" ? "—" : o.label}</option>
             ))}
           </select>
+        </label>
+
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-medium text-muted-foreground">
+            Scale Symbols Size: {symbolSizePx}px
+          </span>
+          <input
+            type="range"
+            min={18}
+            max={96}
+            step={1}
+            value={symbolSizePx}
+            onChange={(e) => handleChangeSymbolSize(Number(e.target.value))}
+          />
         </label>
       </div>
 
@@ -235,6 +339,16 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
                 <div className="text-xs font-medium truncate">{entry.name}</div>
                 <div className="text-[10px] text-muted-foreground truncate">{entry.category}</div>
               </div>
+              <button
+                className="p-1 rounded hover:bg-muted"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleEditEntry(entry);
+                }}
+                title="Modifica prima del posizionamento"
+              >
+                <Pencil size={12} />
+              </button>
               {isActive && <Check size={13} className="text-primary flex-shrink-0" />}
             </div>
           );
@@ -245,6 +359,19 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
           </div>
         )}
       </div>
+
+      {editingEntry && editingPatch && (
+        <div className="border-t bg-background">
+          <MilSymbolEditor
+            initial={editingPatch}
+            onSave={handleSaveEditedEntry}
+            onCancel={() => {
+              setEditingEntry(null);
+              setEditingPatch(null);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

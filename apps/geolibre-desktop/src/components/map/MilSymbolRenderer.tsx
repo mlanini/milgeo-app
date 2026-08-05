@@ -29,8 +29,8 @@ import type { FeatureCollection, Feature, Point } from "geojson";
 import type {
   GeoLibreLayer,
   MilGraphicLayerSource,
-  MilSymbolLayerSource,
 } from "@geolibre/core";
+import { parseMilSymbolLayerSource, DEFAULT_MIL_SYMBOL_SIZE_PX } from "../../lib/milsymbol-layer-source";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -38,13 +38,12 @@ const MilSymbol = ms.Symbol;
 
 const SYM_SOURCE_ID = "mil-symbol-source";
 const SYM_LAYER_ID  = "mil-symbol-layer";
-const SYM_LABEL_ID  = "mil-symbol-labels";
 
 /** Image-id prefix — prevents collisions with basemap sprites. */
 const IMG_PREFIX = "ms-";
 
-/** Symbol size (CSS px) at 1× DPR. milsymbol scales internally via asCanvas(). */
-const SYMBOL_SIZE = 38;
+/** Default symbol size (CSS px) at 1× DPR. */
+const SYMBOL_SIZE = DEFAULT_MIL_SYMBOL_SIZE_PX;
 
 /** Capture DPR once; constant for the component lifetime. */
 const PIXEL_RATIO = window.devicePixelRatio || 1;
@@ -115,7 +114,7 @@ function buildMilSymbolImageData(
 }
 
 /**
- * Create the MapLibre source + two symbol layers (icon + label).
+ * Create the MapLibre source + icon symbol layer.
  * Called once on first use, and again after any style.load that wipes sources.
  */
 function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
@@ -139,30 +138,6 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
     },
     paint: {
       "icon-opacity": ["coalesce", ["get", "opacity"], 1],
-    },
-  });
-
-  // Label layer — also viewport-aligned so text is always horizontal.
-  map.addLayer({
-    id:     SYM_LABEL_ID,
-    type:   "symbol",
-    source: SYM_SOURCE_ID,
-    layout: {
-      "text-field":              ["get", "label"],
-      "text-offset":             [0, 2.4],
-      "text-anchor":             "top",
-      "text-size":               11,
-      "text-rotation-alignment": "viewport",
-      "text-pitch-alignment":    "viewport",
-      "text-allow-overlap":      false,
-      "text-ignore-placement":   false,
-      "text-font":               ["Noto Sans Regular", "Arial Unicode MS Regular"],
-    },
-    paint: {
-      "text-color":      "#111111",
-      "text-halo-color": "rgba(255,255,255,0.9)",
-      "text-halo-width": 1.5,
-      "text-opacity":    ["coalesce", ["get", "opacity"], 1],
     },
   });
 }
@@ -235,30 +210,31 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
     const features: Feature<Point>[] = [];
 
     for (const layer of symbols) {
-      const source = layer.source as unknown as MilSymbolLayerSource;
-      if (!source.SIDC || source.lon === undefined || source.lat === undefined) continue;
+      const parsed = parseMilSymbolLayerSource(layer.source);
+      const layerSize = parsed.symbolSize || SYMBOL_SIZE;
 
-      const opts: SymbolOptions = {
-        size:              SYMBOL_SIZE,
-        uniqueDesignation: source.uniqueDesignation,
-        higherFormation:   source.higherFormation,
-        outlineColor:      "white",
-        outlineWidth:      6,
-      };
-      const key = makeSymbolKey(source.SIDC, opts);
-      symbolCacheRef.current.set(key, { sidc: source.SIDC, options: opts });
+      for (const symbol of parsed.symbols) {
+        const opts: SymbolOptions = {
+          size:              layerSize,
+          uniqueDesignation: symbol.uniqueDesignation,
+          higherFormation:   symbol.higherFormation,
+          outlineColor:      "white",
+          outlineWidth:      6,
+        };
+        const key = makeSymbolKey(symbol.SIDC, opts);
+        symbolCacheRef.current.set(key, { sidc: symbol.SIDC, options: opts });
 
-      features.push({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [source.lon, source.lat] },
-        properties: {
-          id:        layer.id,
-          symbolKey: key,
-          direction: source.direction ?? 0,
-          label:     source.uniqueDesignation ?? layer.name,
-          opacity:   layer.opacity,
-        },
-      });
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [symbol.lon, symbol.lat] },
+          properties: {
+            id:        symbol.id,
+            symbolKey: key,
+            direction: symbol.direction ?? 0,
+            opacity:   layer.opacity,
+          },
+        });
+      }
     }
 
     const fc: FeatureCollection<Point> = { type: "FeatureCollection", features };
@@ -357,7 +333,6 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
     return () => {
       const map = mapControllerRef.current?.getMap();
       if (!map) return;
-      if (map.getLayer(SYM_LABEL_ID))   map.removeLayer(SYM_LABEL_ID);
       if (map.getLayer(SYM_LAYER_ID))   map.removeLayer(SYM_LAYER_ID);
       if (map.getSource(SYM_SOURCE_ID)) map.removeSource(SYM_SOURCE_ID);
     };
