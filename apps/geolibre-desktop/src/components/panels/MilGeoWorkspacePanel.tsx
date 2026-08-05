@@ -81,7 +81,7 @@ export function MilGeoWorkspacePanel({
             )}
             onClick={() => setActiveTab("milsymbols")}
           >
-            MILSymbols
+            APP-6(D)
           </button>
           <button
             type="button"
@@ -95,7 +95,7 @@ export function MilGeoWorkspacePanel({
           >
             <span className="inline-flex items-center gap-1">
               <Activity className="h-3.5 w-3.5" />
-              DTM Analysis
+              Analysis
             </span>
           </button>
         </div>

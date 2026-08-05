@@ -218,6 +218,7 @@ interface DraftPreferences {
 
 interface DraftDesktopSettings {
   layout: DesktopLayoutSettings;
+  openTopographyApiKey: string;
   shareToken: string;
   uiProfile: UiProfileSettings;
   updates: UpdateSettings;
@@ -246,6 +247,7 @@ function clonePreferences(preferences: ProjectPreferences): DraftPreferences {
 function cloneDesktopSettings(settings: DesktopSettings): DraftDesktopSettings {
   return {
     layout: { ...settings.layout },
+    openTopographyApiKey: settings.openTopographyApiKey,
     shareToken: settings.shareToken,
     uiProfile: {
       ...settings.uiProfile,
@@ -756,6 +758,14 @@ export function SettingsDialog({
     setError(null);
   };
 
+  const updateOpenTopographyApiKey = (value: string) => {
+    setDraftDesktopSettings((current) => ({
+      ...current,
+      openTopographyApiKey: value,
+    }));
+    setError(null);
+  };
+
   const updateDraftLayoutSettings = (patch: Partial<DesktopLayoutSettings>) => {
     setDraftDesktopSettings((current) => ({
       ...current,
@@ -992,6 +1002,7 @@ export function SettingsDialog({
     setDesktopSettings({
       ...useDesktopSettingsStore.getState().desktopSettings,
       layout: draftDesktopSettings.layout,
+      openTopographyApiKey: draftDesktopSettings.openTopographyApiKey.trim(),
       shareToken: draftDesktopSettings.shareToken,
       uiProfile: committedUiProfile,
       updates: draftDesktopSettings.updates,
@@ -1471,6 +1482,45 @@ export function SettingsDialog({
                     />
                     {t("settings.map.renderWorldCopies")}
                   </label>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="settings-open-topography-api-key">
+                      OpenTopography API key
+                    </Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="settings-open-topography-api-key"
+                        type={
+                          revealedValueIds.has("open-topography-api-key")
+                            ? "text"
+                            : "password"
+                        }
+                        value={draftDesktopSettings.openTopographyApiKey}
+                        onChange={(event) =>
+                          updateOpenTopographyApiKey(event.target.value)
+                        }
+                        placeholder="Paste your OpenTopography API key"
+                        autoComplete="off"
+                      />
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="outline"
+                        onClick={() =>
+                          toggleValueVisibility("open-topography-api-key")
+                        }
+                        aria-label="Toggle OpenTopography API key visibility"
+                      >
+                        {revealedValueIds.has("open-topography-api-key") ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Used by OpenTopography-backed raster analysis tools such as slope, hillshade, and viewshed.
+                    </p>
+                  </div>
                 </div>
               ) : null}
               {effectiveSection === "layout" ? (

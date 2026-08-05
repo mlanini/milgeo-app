@@ -29,6 +29,7 @@ export interface DesktopSettings {
    */
   language: string;
   layout: DesktopLayoutSettings;
+  openTopographyApiKey: string;
   pluginManifestUrls: string[];
   /**
    * Personal API token for uploading projects to share.geolibre.app. Stored in
@@ -151,6 +152,7 @@ const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   additionalPluginDirectories: [],
   language: "",
   layout: DEFAULT_DESKTOP_LAYOUT_SETTINGS,
+  openTopographyApiKey: "",
   pluginManifestUrls: [],
   shareToken: "",
   theme: DEFAULT_THEME_SETTINGS,
@@ -178,6 +180,10 @@ function normalizeDesktopSettings(settings: unknown): DesktopSettings {
     language:
       typeof candidate.language === "string" ? candidate.language.trim() : "",
     layout: normalizeDesktopLayoutSettings(candidate.layout),
+    openTopographyApiKey:
+      typeof candidate.openTopographyApiKey === "string"
+        ? candidate.openTopographyApiKey.trim()
+        : "",
     // Apply the same scheme rule as project-file loading so stale or edited
     // localStorage values cannot smuggle in disallowed URL schemes.
     pluginManifestUrls: normalizeStringList(candidate.pluginManifestUrls).filter(

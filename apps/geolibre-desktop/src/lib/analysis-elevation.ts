@@ -22,6 +22,18 @@ export interface ElevationSample {
   source: "swisstopo" | "opentopodata" | "unknown";
 }
 
+interface BrowserGeoTiffImage {
+  getBoundingBox(): [number, number, number, number];
+  getWidth(): number;
+  getHeight(): number;
+  getGeoKeys(): Record<string, unknown>;
+  getGDALNoData?(): number | string | null;
+  readRasters(options: {
+    window: [number, number, number, number];
+    interleave: true;
+  }): Promise<ArrayLike<number>>;
+}
+
 // ─── Bounding box for Switzerland ────────────────────────────────────────────
 const CH_WEST = 5.95;
 const CH_EAST = 10.49;
@@ -165,6 +177,83 @@ export async function queryElevationsLocal(
   }));
 }
 
+async function loadBrowserGeoTiffImage(
+  dtmData: ArrayBuffer,
+): Promise<BrowserGeoTiffImage> {
+  const geotiff = await import("geotiff");
+  const tiff = await geotiff.fromArrayBuffer(dtmData);
+  return (await tiff.getImage()) as BrowserGeoTiffImage;
+}
+
+function browserGeoTiffSupportsLonLat(image: BrowserGeoTiffImage): boolean {
+  const geoKeys = image.getGeoKeys();
+  const geographic = geoKeys.GeographicTypeGeoKey;
+  const projected = geoKeys.ProjectedCSTypeGeoKey;
+  return geographic === 4326 || projected === 4326 || projected === 4979;
+}
+
+export async function queryElevationsLocalInBrowser(
+  points: LonLat[],
+  dtmData: ArrayBuffer,
+  onProgress?: (done: number, total: number) => void,
+): Promise<ElevationSample[]> {
+  if (points.length === 0) return [];
+
+  const image = await loadBrowserGeoTiffImage(dtmData);
+  if (!browserGeoTiffSupportsLonLat(image)) {
+    throw new Error(
+      "Browser local DTM sampling currently requires a WGS84 GeoTIFF (EPSG:4326). Use the desktop sidecar path for other raster CRS values.",
+    );
+  }
+
+  const [west, south, east, north] = image.getBoundingBox();
+  const width = image.getWidth();
+  const height = image.getHeight();
+  const noDataRaw = image.getGDALNoData?.();
+  const noData =
+    typeof noDataRaw === "number"
+      ? noDataRaw
+      : typeof noDataRaw === "string"
+        ? Number(noDataRaw)
+        : Number.NaN;
+
+  const samples: ElevationSample[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const [lon, lat] = points[index];
+    if (lon < west || lon > east || lat < south || lat > north) {
+      samples.push({ lon, lat, elevationM: null, source: "unknown" });
+      onProgress?.(index + 1, points.length);
+      continue;
+    }
+
+    const pixelX = Math.min(
+      width - 1,
+      Math.max(0, Math.floor(((lon - west) / (east - west)) * width)),
+    );
+    const pixelY = Math.min(
+      height - 1,
+      Math.max(0, Math.floor(((north - lat) / (north - south)) * height)),
+    );
+    const raster = await image.readRasters({
+      window: [pixelX, pixelY, pixelX + 1, pixelY + 1],
+      interleave: true,
+    });
+    const value = Number(raster[0]);
+    samples.push({
+      lon,
+      lat,
+      elevationM:
+        Number.isFinite(value) && (!Number.isFinite(noData) || value !== noData)
+          ? value
+          : null,
+      source: "unknown",
+    });
+    onProgress?.(index + 1, points.length);
+  }
+
+  return samples;
+}
+
 // ─── Smart elevation router ───────────────────────────────────────────────────
 
 export interface ElevationQueryOptions {
@@ -172,6 +261,8 @@ export interface ElevationQueryOptions {
   source?: "online" | "local";
   /** Absolute path to local GeoTIFF / ASC DTM raster. Required when source = "local". */
   localDtmPath?: string;
+  /** In-browser raster bytes for web local-DTM sampling when no file path exists. */
+  localDtmData?: ArrayBuffer;
 }
 
 /**
@@ -188,6 +279,13 @@ export async function queryElevations(
   options?: ElevationQueryOptions,
 ): Promise<ElevationSample[]> {
   if (options?.source === "local") {
+    if (options.localDtmData) {
+      return queryElevationsLocalInBrowser(
+        points,
+        options.localDtmData,
+        onProgress,
+      );
+    }
     return queryElevationsLocal(points, options.localDtmPath ?? "", onProgress);
   }
   const results: ElevationSample[] = [];

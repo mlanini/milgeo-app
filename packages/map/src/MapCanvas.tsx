@@ -289,6 +289,7 @@ function createWmsGetFeatureInfoUrl(
 
   const styles = stringSource(layer.source.styles) ?? "";
   const format = stringSource(layer.source.format) ?? "image/png";
+  const lang = stringSource(layer.source.lang);
   // WMS 1.3.0 renames the SRS parameter to CRS and the pixel coordinates from
   // X/Y to I/J. EPSG:3857 keeps easting/northing axis order across both
   // versions, so the BBOX layout is unchanged.
@@ -320,6 +321,7 @@ function createWmsGetFeatureInfoUrl(
     [isV13 ? "J" : "Y", String(WMS_IDENTIFY_QUERY_CENTER)],
     ["INFO_FORMAT", infoFormat],
     ["FEATURE_COUNT", String(Number.isFinite(featureCount) ? featureCount : 1)],
+    ...(lang ? [["LANG", lang] as [string, string]] : []),
   ]);
 }
 

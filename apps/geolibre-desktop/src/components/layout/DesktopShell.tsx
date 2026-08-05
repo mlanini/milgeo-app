@@ -127,7 +127,7 @@ export function DesktopShell({
   const [milGeoPanelWidth, setMilGeoPanelWidth] = useState(
     DEFAULT_SIDE_PANEL_WIDTH,
   );
-  const [milGeoOpen, setMilGeoOpen] = useState(false);
+  const [milGeoOpen, setMilGeoOpen] = useState(true);
   const [milSymbolModuleEnabled, setMilSymbolModuleEnabled] = useState(true);
   const [dtmAnalysisModuleEnabled, setDtmAnalysisModuleEnabled] =
     useState(true);
@@ -198,6 +198,12 @@ export function DesktopShell({
   const handleToggleDtmAnalysisModule = useCallback(() => {
     setDtmAnalysisModuleEnabled((current) => !current);
   }, []);
+
+  useEffect(() => {
+    if (milSymbolModuleEnabled || dtmAnalysisModuleEnabled) {
+      setMilGeoOpen(true);
+    }
+  }, [milSymbolModuleEnabled, dtmAnalysisModuleEnabled]);
 
   const handleMapDiagnosticEvent = useCallback((event: MapDiagnosticEvent) => {
     appendDiagnostic({

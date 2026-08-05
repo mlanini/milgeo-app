@@ -604,13 +604,13 @@ export function TopToolbar({
             <span className="mr-2 inline-flex w-4 justify-center">
               {milSymbolModuleEnabled ? <Check className="h-3.5 w-3.5" /> : null}
             </span>
-            MILSymbols catalog and layers
+            APP-6(D) catalog and layers
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={onToggleDtmAnalysisModule}>
             <span className="mr-2 inline-flex w-4 justify-center">
               {dtmAnalysisModuleEnabled ? <Check className="h-3.5 w-3.5" /> : null}
             </span>
-            DTM analysis tools
+            Analysis tools
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

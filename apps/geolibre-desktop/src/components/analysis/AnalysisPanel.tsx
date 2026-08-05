@@ -56,6 +56,7 @@ import {
 } from "../../lib/analysis-ephemeris";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
 import { isTauri } from "../../lib/is-tauri";
+import { openLocalDataFileWithFallback } from "../../lib/tauri-io";
 
 type DemSource = "" | "online" | "local";
 
@@ -524,6 +525,7 @@ export function AnalysisPanel({
   const [demPickerOpen, setDemPickerOpen] = useState(false);
   // Local file path input (only used inside DEM picker, before save)
   const [localDtmDraft, setLocalDtmDraft] = useState("");
+  const [localDtmData, setLocalDtmData] = useState<ArrayBuffer | null>(null);
 
   // Show DEM picker whenever the panel opens without a source configured
   useEffect(() => {
@@ -532,18 +534,12 @@ export function AnalysisPanel({
     }
   }, [open, demSource]);
 
-  // In the hosted web version there is no local sidecar, so "local" DTM mode
-  // cannot work. Reset any previously-saved "local" preference to "online" on
-  // first render outside the Tauri desktop webview.
   useEffect(() => {
-    if (!isTauri() && demSource === "local") {
-      setDesktopSettings({
-        ...(desktopSettings as unknown as Record<string, unknown>),
-        demSource: "online",
-      } as unknown as typeof desktopSettings);
+    if (open && !isTauri() && demSource === "local" && localDtmData === null) {
+      setLocalDtmDraft(localDtmPath);
+      setDemPickerOpen(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally runs once on mount
+  }, [open, demSource, localDtmData, localDtmPath]);
 
   const selectedTool = useMemo(
     () => TOOLS.find((t) => t.id === selectedToolId)!,
@@ -693,7 +689,13 @@ export function AnalysisPanel({
         const elevSamples = await queryElevations(
           samples,
           (done, total) => { setProgress(`Querying elevation… ${done}/${total}`); },
-          demSource === "local" ? { source: "local", localDtmPath } : { source: "online" },
+          demSource === "local"
+            ? {
+                source: "local",
+                localDtmPath,
+                localDtmData: localDtmData ?? undefined,
+              }
+            : { source: "online" },
         );
         const distances = cumulativeDistances(samples);
         const elevations = elevSamples.map((s) => s.elevationM ?? NaN);
@@ -728,7 +730,13 @@ export function AnalysisPanel({
         const samples = await queryElevations(
           gridPts,
           (done, total) => { setProgress(`Querying elevation… ${done}/${total}`); },
-          demSource === "local" ? { source: "local", localDtmPath } : { source: "online" },
+          demSource === "local"
+            ? {
+                source: "local",
+                localDtmPath,
+                localDtmData: localDtmData ?? undefined,
+              }
+            : { source: "online" },
         );
         const stats = elevationStats(samples);
         setResult({ toolId: id, elevStats: stats });
@@ -750,9 +758,7 @@ export function AnalysisPanel({
 
       // ─ Sidecar tools (Slope, Hillshade, Viewshed) ────────────────────────────
       if (id === "slope" || id === "hillshade" || id === "viewshed") {
-        const apiKey =
-          (desktopSettings as unknown as { openTopographyApiKey?: string })
-            .openTopographyApiKey;
+        const apiKey = desktopSettings.openTopographyApiKey;
         if (!apiKey) {
           setResult({
             toolId: id,
@@ -821,7 +827,7 @@ export function AnalysisPanel({
       });
       setRunState("error");
     }
-  }, [selectedTool, drawnCoords, ephDate, profileSamples, desktopSettings, demSource, localDtmPath]);
+  }, [selectedTool, drawnCoords, ephDate, profileSamples, desktopSettings, demSource, localDtmData, localDtmPath]);
 
   // Extra state for elevation profile
   const [storedElevations, setStoredElevations] = useState<number[]>([]);
@@ -1055,6 +1061,8 @@ export function AnalysisPanel({
           currentLocalPath={localDtmPath}
           localDtmDraft={localDtmDraft}
           onLocalDtmDraftChange={setLocalDtmDraft}
+          hasLocalDtmData={localDtmData !== null}
+          onLocalDtmDataChange={setLocalDtmData}
           isDesktop={isTauri()}
           onConfirm={(source, path) => {
             setDesktopSettings(
@@ -1079,6 +1087,8 @@ function DemPickerOverlay({
   currentLocalPath,
   localDtmDraft,
   onLocalDtmDraftChange,
+  hasLocalDtmData,
+  onLocalDtmDataChange,
   onConfirm,
   isDesktop = false,
 }: {
@@ -1086,31 +1096,43 @@ function DemPickerOverlay({
   currentLocalPath: string;
   localDtmDraft: string;
   onLocalDtmDraftChange: (v: string) => void;
+  hasLocalDtmData: boolean;
+  onLocalDtmDataChange: (value: ArrayBuffer | null) => void;
   onConfirm: (source: DemSource, localPath: string) => void;
-  /** True when running in the Tauri desktop app; hides unavailable options on web. */
+  /** True when running in the Tauri desktop app. */
   isDesktop?: boolean;
 }) {
   const [selected, setSelected] = useState<DemSource>(
-    // If saved setting is "local" but we're in the web version, reset to online
-    (currentSource !== "" && (currentSource !== "local" || isDesktop))
-      ? currentSource
-      : "online",
+    currentSource !== "" ? currentSource : "online",
   );
   const [localPath, setLocalPath] = useState(localDtmDraft || currentLocalPath);
 
-  const canConfirm = selected === "online" || (selected === "local" && localPath.trim() !== "");
+  const canConfirm =
+    selected === "online" ||
+    (selected === "local" &&
+      (isDesktop ? localPath.trim() !== "" || hasLocalDtmData : hasLocalDtmData));
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    // In a browser context we can only get the file name, not the full path.
-    // The sidecar needs the real FS path, so we show an additional text input.
     const file = files[0];
-    // Prefer the webkitRelativePath or name as a hint; user can correct it.
     const name = (file as File & { path?: string }).path ?? file.name;
     setLocalPath(name);
     onLocalDtmDraftChange(name);
+    void file.arrayBuffer().then((data) => onLocalDtmDataChange(data));
   };
+
+  const handlePickLocalRaster = useCallback(async () => {
+    const picked = await openLocalDataFileWithFallback({
+      filters: [{ name: "Raster", extensions: ["tif", "tiff", "asc", "img", "hgt"] }],
+      accept: ".tif,.tiff,.asc,.img,.hgt,image/tiff",
+      readBinary: true,
+    });
+    if (!picked) return;
+    setLocalPath(picked.path);
+    onLocalDtmDraftChange(picked.path);
+    onLocalDtmDataChange(picked.data ?? null);
+  }, [onLocalDtmDataChange, onLocalDtmDraftChange]);
 
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/90 backdrop-blur-sm">
@@ -1151,20 +1173,16 @@ function DemPickerOverlay({
         {/* Option B — Local DTM */}
         <label
           className={cn(
-            "flex items-start gap-3 rounded-md border p-3 transition-colors",
-            isDesktop
-              ? "cursor-pointer hover:bg-accent/50"
-              : "cursor-not-allowed opacity-50",
-            selected === "local" && isDesktop && "border-primary bg-primary/5",
+            "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors hover:bg-accent/50",
+            selected === "local" && "border-primary bg-primary/5",
           )}
         >
           <input
             type="radio"
             name="dem-source"
             value="local"
-            disabled={!isDesktop}
             checked={selected === "local"}
-            onChange={() => isDesktop && setSelected("local")}
+            onChange={() => setSelected("local")}
             className="mt-0.5 accent-primary"
           />
           <div className="flex flex-col gap-1">
@@ -1172,14 +1190,14 @@ function DemPickerOverlay({
               Local DTM raster file
               {!isDesktop && (
                 <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Desktop only
+                  Session only
                 </span>
               )}
             </span>
             <span className="text-[11px] text-muted-foreground">
               {isDesktop
-                ? <>GeoTIFF, ASCII grid or any GDAL-supported raster. Queries are processed by the local Python sidecar at <code>127.0.0.1:8765</code>.</>
-                : "Requires the local desktop app with the Python sidecar running. Not available in the hosted web version."}
+                ? <>GeoTIFF, ASCII grid or any GDAL-supported raster. The desktop app can use the local sidecar path or an uploaded file for in-browser sampling.</>
+                : "Choose a local GeoTIFF for in-browser elevation sampling during this session. Raster overlay tools still use the online OpenTopography workflow."}
             </span>
             {isDesktop && selected === "local" && (
               <div className="mt-1 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] text-amber-300 leading-relaxed">
@@ -1187,27 +1205,50 @@ function DemPickerOverlay({
                 (<code>geolibre-server</code> on port 8765).
               </div>
             )}
-            {isDesktop && selected === "local" && (
+            {selected === "local" && (
               <div className="mt-1.5 flex flex-col gap-1.5">
-                <input
-                  type="file"
-                  accept=".tif,.tiff,.asc,.img,.hgt"
-                  onChange={handleFileChange}
-                  className="text-[11px] file:mr-2 file:rounded file:border file:border-border file:bg-muted file:px-2 file:py-0.5 file:text-[11px]"
-                />
-                <Input
-                  placeholder="Full path to raster file…"
-                  value={localPath}
-                  onChange={(e) => {
-                    setLocalPath(e.target.value);
-                    onLocalDtmDraftChange(e.target.value);
-                  }}
-                  className="h-7 text-xs font-mono"
-                />
-                <p className="text-[10px] text-muted-foreground">
-                  Enter or paste the absolute file-system path if the browser cannot
-                  resolve it automatically.
-                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => void handlePickLocalRaster()}
+                  >
+                    Choose raster
+                  </Button>
+                  {hasLocalDtmData ? (
+                    <span className="text-[10px] text-muted-foreground">
+                      Raster loaded in memory
+                    </span>
+                  ) : null}
+                </div>
+                {isDesktop ? (
+                  <>
+                    <input
+                      type="file"
+                      accept=".tif,.tiff,.asc,.img,.hgt"
+                      onChange={handleFileChange}
+                      className="text-[11px] file:mr-2 file:rounded file:border file:border-border file:bg-muted file:px-2 file:py-0.5 file:text-[11px]"
+                    />
+                    <Input
+                      placeholder="Full path to raster file…"
+                      value={localPath}
+                      onChange={(e) => {
+                        setLocalPath(e.target.value);
+                        onLocalDtmDraftChange(e.target.value);
+                      }}
+                      className="h-7 text-xs font-mono"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Enter or paste the absolute file-system path if you want sidecar-backed local raster processing.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground">
+                    The selected raster stays in browser memory only and must be chosen again after a page reload.
+                  </p>
+                )}
               </div>
             )}
           </div>
