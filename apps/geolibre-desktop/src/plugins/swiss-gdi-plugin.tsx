@@ -1,12 +1,14 @@
 import type {
   GeoLibreAppAPI,
   GeoLibreLayerDraft,
+  GeoLibreMapControlPosition,
   GeoLibrePlugin,
 } from "@geolibre/plugins";
+import type { IControl, Map as MapLibreMap } from "maplibre-gl";
 import {
   buildSwissGdiCapabilitiesUrl,
   buildSwissGdiLegendGraphicUrl,
-  buildSwissGdiWmsEndpoint,
+  buildSwissGdiWmtsTileUrl,
   normalizeSwissGdiLanguage,
   parseSwissGdiCapabilities,
   SWISS_GDI_DOCS_URL,
@@ -19,10 +21,10 @@ interface SwissGdiPluginState {
   open?: boolean;
 }
 
-const PANEL_ID = SWISS_GDI_PLUGIN_ID;
-const PANEL_TITLE = "Swiss GDI";
-const PANEL_DESCRIPTION =
-  "Browse official geo.admin.ch WMS layers and add them as tiled raster layers.";
+const CONTROL_ID = SWISS_GDI_PLUGIN_ID;
+const CONTROL_TITLE = "Swiss GDI";
+const CONTROL_DESCRIPTION =
+  "Browse geo.admin.ch WMTS services and add them as raster layers.";
 
 interface SwissGdiViewState {
   language: SwissGdiLanguage;
@@ -42,64 +44,26 @@ interface SwissGdiStoreLayer {
   type?: string;
 }
 
+let swissGdiPosition: GeoLibreMapControlPosition = "top-left";
+
 function createLayerId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function appendQuery(endpoint: string, params: Array<[string, string]>): string {
-  const separator = endpoint.includes("?")
-    ? endpoint.endsWith("?") || endpoint.endsWith("&")
-      ? ""
-      : "&"
-    : "?";
-  const query = params
-    .map(([key, value]) => {
-      const encodedValue =
-        value === "{bbox-epsg-3857}" ? value : encodeURIComponent(value);
-      return `${encodeURIComponent(key)}=${encodedValue}`;
-    })
-    .join("&");
-  return `${endpoint}${separator}${query}`;
-}
-
-function createWmsTileUrl(options: {
-  endpoint: string;
-  layers: string;
-  styles: string;
-  format: string;
-  transparent: boolean;
-  tileSize: number;
-}): string {
-  return appendQuery(options.endpoint, [
-    ["SERVICE", "WMS"],
-    ["REQUEST", "GetMap"],
-    ["VERSION", "1.1.1"],
-    ["LAYERS", options.layers],
-    ["STYLES", options.styles],
-    ["FORMAT", options.format],
-    ["TRANSPARENT", options.transparent ? "TRUE" : "FALSE"],
-    ["SRS", "EPSG:3857"],
-    ["BBOX", "{bbox-epsg-3857}"],
-    ["WIDTH", String(options.tileSize)],
-    ["HEIGHT", String(options.tileSize)],
-  ]);
-}
-
 function isSwissGdiLayer(layer: unknown): layer is SwissGdiStoreLayer {
   if (!layer || typeof layer !== "object") return false;
   const candidate = layer as Partial<SwissGdiStoreLayer>;
   return (
-    candidate.type === "wms" &&
+    (candidate.type === "wmts" || candidate.type === "wms") &&
     typeof candidate.id === "string" &&
     typeof candidate.name === "string" &&
     typeof candidate.source === "object" &&
     candidate.source !== null &&
     typeof candidate.metadata === "object" &&
     candidate.metadata !== null &&
-    (candidate.metadata as Record<string, unknown>).swissGdi === true &&
-    typeof (candidate.source as Record<string, unknown>).layers === "string"
+    (candidate.metadata as Record<string, unknown>).swissGdi === true
   );
 }
 
@@ -107,44 +71,48 @@ function swissGdiLayers(app: GeoLibreAppAPI): SwissGdiStoreLayer[] {
   return (app.getLayers?.() ?? []).filter(isSwissGdiLayer);
 }
 
+function swissGdiLayerName(layer: SwissGdiStoreLayer): string {
+  const metadataLayer =
+    typeof layer.metadata.swissGdiLayerName === "string"
+      ? layer.metadata.swissGdiLayerName
+      : null;
+  if (metadataLayer) return metadataLayer;
+  const sourceLayer =
+    typeof layer.source.layer === "string"
+      ? layer.source.layer
+      : typeof layer.source.layers === "string"
+        ? layer.source.layers
+        : null;
+  return sourceLayer ?? layer.name;
+}
+
 function createSwissGdiLayerDraft(
   catalogLayer: SwissGdiCatalogLayer,
   language: SwissGdiLanguage,
 ): GeoLibreLayerDraft {
-  const endpoint = buildSwissGdiWmsEndpoint(language);
   const tileSize = 256;
+  const tileUrl = buildSwissGdiWmtsTileUrl(catalogLayer, language);
   return {
     id: createLayerId(),
     name: catalogLayer.title,
-    type: "wms",
+    type: "wmts",
     source: {
       type: "raster",
-      tiles: [
-        createWmsTileUrl({
-          endpoint,
-          layers: catalogLayer.name,
-          styles: "default",
-          format: "image/png",
-          transparent: true,
-          tileSize,
-        }),
-      ],
+      tiles: [tileUrl],
       tileSize,
-      url: endpoint,
-      layers: catalogLayer.name,
-      styles: "default",
-      format: "image/png",
-      transparent: true,
-      version: "1.3.0",
-      infoFormat: "application/json",
-      featureCount: 10,
+      layer: catalogLayer.name,
       lang: language,
+      ...(catalogLayer.format ? { format: catalogLayer.format } : {}),
+      ...(catalogLayer.tileMatrixSet
+        ? { tileMatrixSet: catalogLayer.tileMatrixSet }
+        : {}),
     },
     metadata: {
-      service: "wms",
+      service: "wmts",
       sourceName: "Swiss GDI",
       swissGdi: true,
       swissGdiLang: language,
+      swissGdiLayerName: catalogLayer.name,
     },
   };
 }
@@ -180,13 +148,17 @@ function createButton(
   button.type = "button";
   button.textContent = label;
   button.onclick = onClick;
-  Object.assign(button.style, {
-    padding: "0.35rem 0.65rem",
-    borderRadius: "0.5rem",
-    fontSize: "0.75rem",
-    lineHeight: "1rem",
-    cursor: "pointer",
-  }, inlineButtonStyle(variant));
+  Object.assign(
+    button.style,
+    {
+      padding: "0.35rem 0.65rem",
+      borderRadius: "0.5rem",
+      fontSize: "0.75rem",
+      lineHeight: "1rem",
+      cursor: "pointer",
+    },
+    inlineButtonStyle(variant),
+  );
   return button;
 }
 
@@ -217,15 +189,15 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
   const render = () => {
     if (!alive) return;
     const activeLayers = swissGdiLayers(app);
-    const identifyLayerId = app.getIdentifyLayerId?.() ?? null;
     const target = state.search.trim().toLowerCase();
     const filteredCatalog = (target
       ? state.catalog.filter((layer) => {
-          const haystack = `${layer.name} ${layer.title} ${layer.abstract ?? ""}`.toLowerCase();
+          const haystack =
+            `${layer.name} ${layer.title} ${layer.abstract ?? ""}`.toLowerCase();
           return haystack.includes(target);
         })
       : state.catalog
-    ).slice(0, 80);
+    ).slice(0, 200);
 
     container.replaceChildren();
     Object.assign(container.style, {
@@ -238,21 +210,26 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
       padding: "0.75rem",
       fontSize: "0.875rem",
       color: "hsl(var(--foreground))",
+      background: "hsl(var(--background))",
     });
 
     const intro = createSectionCard();
     const title = document.createElement("div");
-    title.textContent = PANEL_TITLE;
+    title.textContent = CONTROL_TITLE;
     Object.assign(title.style, { fontWeight: "600", fontSize: "0.95rem" });
     const description = document.createElement("p");
-    description.textContent = PANEL_DESCRIPTION;
+    description.textContent = CONTROL_DESCRIPTION;
     Object.assign(description.style, {
       margin: "0.35rem 0 0",
       fontSize: "0.75rem",
       color: "hsl(var(--muted-foreground))",
     });
     const docsRow = document.createElement("div");
-    Object.assign(docsRow.style, { marginTop: "0.75rem", display: "flex", gap: "0.5rem" });
+    Object.assign(docsRow.style, {
+      marginTop: "0.75rem",
+      display: "flex",
+      gap: "0.5rem",
+    });
     docsRow.appendChild(
       createButton("Open docs", () => {
         window.open(SWISS_GDI_DOCS_URL, "_blank", "noopener,noreferrer");
@@ -265,7 +242,10 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
     Object.assign(filters.style, { display: "grid", gap: "0.75rem" });
     const languageLabel = document.createElement("label");
     languageLabel.textContent = "Language";
-    Object.assign(languageLabel.style, { fontSize: "0.75rem", color: "hsl(var(--muted-foreground))" });
+    Object.assign(languageLabel.style, {
+      fontSize: "0.75rem",
+      color: "hsl(var(--muted-foreground))",
+    });
     const languageSelect = document.createElement("select");
     for (const value of ["de", "fr", "it", "rm", "en"] satisfies SwissGdiLanguage[]) {
       const option = document.createElement("option");
@@ -295,9 +275,13 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
       state.language = normalizeSwissGdiLanguage(languageSelect.value);
       loadCatalog();
     };
+
     const searchLabel = document.createElement("label");
-    searchLabel.textContent = "Search layers";
-    Object.assign(searchLabel.style, { fontSize: "0.75rem", color: "hsl(var(--muted-foreground))" });
+    searchLabel.textContent = "Search services";
+    Object.assign(searchLabel.style, {
+      fontSize: "0.75rem",
+      color: "hsl(var(--muted-foreground))",
+    });
     const searchInput = document.createElement("input");
     searchInput.type = "text";
     searchInput.value = state.search;
@@ -314,6 +298,7 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
       state.search = searchInput.value;
       render();
     };
+
     filters.append(languageLabel, languageSelect, searchLabel, searchInput);
     container.appendChild(filters);
 
@@ -328,8 +313,8 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
     });
     const statusText = document.createElement("span");
     statusText.textContent = state.loading
-      ? "Loading capabilities..."
-      : `${filteredCatalog.length} of ${state.catalog.length} layers shown`;
+      ? "Loading services..."
+      : `${filteredCatalog.length} of ${state.catalog.length} services shown`;
     statusRow.append(statusText, createButton("Refresh", () => loadCatalog(), "ghost"));
     container.appendChild(statusRow);
 
@@ -366,7 +351,7 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
           whiteSpace: "nowrap",
         });
         const layerId = document.createElement("div");
-        layerId.textContent = String(layer.source.layers ?? "");
+        layerId.textContent = swissGdiLayerName(layer);
         Object.assign(layerId.style, {
           fontSize: "0.65rem",
           color: "hsl(var(--muted-foreground))",
@@ -377,42 +362,27 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
         text.append(name, layerId);
         row.appendChild(text);
         row.appendChild(
-          createButton(
-            identifyLayerId === layer.id ? "Identifying" : "Identify",
-            () => app.setIdentifyLayer?.(identifyLayerId === layer.id ? null : layer.id),
-            identifyLayerId === layer.id ? "default" : "outline",
-          ),
-        );
-        row.appendChild(
           createButton("Legend", () => {
-            state.legendLayerName = String(layer.source.layers ?? "");
+            state.legendLayerName = swissGdiLayerName(layer);
             state.legendLanguage = normalizeSwissGdiLanguage(
-              typeof layer.source.lang === "string"
-                ? layer.source.lang
-                : typeof layer.metadata.swissGdiLang === "string"
-                  ? String(layer.metadata.swissGdiLang)
-                  : state.language,
+              typeof layer.metadata.swissGdiLang === "string"
+                ? String(layer.metadata.swissGdiLang)
+                : state.language,
             );
             render();
           }),
         );
         row.appendChild(
-          createButton("Remove", () => {
-            if (identifyLayerId === layer.id) app.setIdentifyLayer?.(null);
-            app.removeLayer?.(layer.id);
-          }, "ghost"),
+          createButton(
+            "Remove",
+            () => {
+              app.removeLayer?.(layer.id);
+            },
+            "ghost",
+          ),
         );
         activeCard.appendChild(row);
       }
-      const identifyHint = document.createElement("p");
-      identifyHint.textContent =
-        "Click Identify, then click the map to issue a WMS GetFeatureInfo request for that layer.";
-      Object.assign(identifyHint.style, {
-        margin: "0.25rem 0 0",
-        fontSize: "0.7rem",
-        color: "hsl(var(--muted-foreground))",
-      });
-      activeCard.appendChild(identifyHint);
       container.appendChild(activeCard);
     }
 
@@ -464,12 +434,17 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
       minHeight: "0",
       overflowY: "auto",
     });
+
     if (!state.loading && !state.error && filteredCatalog.length === 0) {
       const empty = document.createElement("div");
-      empty.textContent = "No Swiss GDI WMS layers match the current search.";
-      Object.assign(empty.style, { fontSize: "0.75rem", color: "hsl(var(--muted-foreground))" });
+      empty.textContent = "No Swiss GDI services match the current search.";
+      Object.assign(empty.style, {
+        fontSize: "0.75rem",
+        color: "hsl(var(--muted-foreground))",
+      });
       catalogCard.appendChild(empty);
     }
+
     for (const layer of filteredCatalog) {
       const row = document.createElement("div");
       Object.assign(row.style, {
@@ -509,7 +484,11 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
         body.appendChild(abstract);
       }
       const actions = document.createElement("div");
-      Object.assign(actions.style, { display: "flex", gap: "0.5rem", flexShrink: "0" });
+      Object.assign(actions.style, {
+        display: "flex",
+        gap: "0.5rem",
+        flexShrink: "0",
+      });
       actions.appendChild(
         createButton("Legend", () => {
           state.legendLayerName = layer.name;
@@ -518,12 +497,16 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
         }),
       );
       actions.appendChild(
-        createButton("Add", () => {
-          app.addLayer?.(createSwissGdiLayerDraft(layer, state.language));
-          state.legendLayerName = layer.name;
-          state.legendLanguage = state.language;
-          render();
-        }, "default"),
+        createButton(
+          "Add",
+          () => {
+            app.addLayer?.(createSwissGdiLayerDraft(layer, state.language));
+            state.legendLayerName = layer.name;
+            state.legendLanguage = state.language;
+            render();
+          },
+          "default",
+        ),
       );
       row.append(body, actions);
       catalogCard.appendChild(row);
@@ -551,22 +534,131 @@ function createSwissGdiPanel(app: GeoLibreAppAPI, container: HTMLElement) {
         if (!alive || currentRequest !== requestId) return;
         state.catalog = [];
         state.loading = false;
-        state.error = error instanceof Error ? error.message : "Could not load Swiss GDI capabilities.";
+        state.error =
+          error instanceof Error
+            ? error.message
+            : "Could not load Swiss GDI capabilities.";
         render();
       });
   };
 
   const disposeLayers = app.onLayersChange?.(() => render()) ?? (() => undefined);
-  const disposeIdentify = app.onIdentifyLayerChange?.(() => render()) ?? (() => undefined);
   loadCatalog();
   render();
+
   return () => {
     alive = false;
     requestId += 1;
     disposeLayers();
-    disposeIdentify();
     container.replaceChildren();
   };
+}
+
+class SwissGdiMapControl implements IControl {
+  private app: GeoLibreAppAPI;
+  private container: HTMLDivElement | null = null;
+  private button: HTMLButtonElement | null = null;
+  private panel: HTMLDivElement | null = null;
+  private panelContentCleanup: (() => void) | null = null;
+  private removeOutsideListener: (() => void) | null = null;
+  private isOpen = false;
+
+  constructor(app: GeoLibreAppAPI) {
+    this.app = app;
+  }
+
+  onAdd(_map: MapLibreMap): HTMLElement {
+    const root = document.createElement("div");
+    root.className = "maplibregl-ctrl maplibregl-ctrl-group geolibre-swiss-gdi-control";
+    Object.assign(root.style, { position: "relative" });
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "maplibregl-ctrl-icon";
+    button.title = CONTROL_TITLE;
+    button.setAttribute("aria-label", CONTROL_TITLE);
+    button.setAttribute("aria-expanded", "false");
+    button.textContent = "CH";
+    Object.assign(button.style, {
+      fontSize: "0.65rem",
+      fontWeight: "700",
+      letterSpacing: "0.02em",
+    });
+
+    const panel = document.createElement("div");
+    Object.assign(panel.style, {
+      position: "absolute",
+      top: "calc(100% + 0.5rem)",
+      left: "0",
+      width: "min(24rem, calc(100vw - 2rem))",
+      height: "min(38rem, 72vh)",
+      borderRadius: "0.75rem",
+      border: "1px solid hsl(var(--border))",
+      boxShadow: "0 12px 30px rgba(0, 0, 0, 0.2)",
+      overflow: "hidden",
+      zIndex: "30",
+      display: "none",
+      background: "hsl(var(--background))",
+    });
+
+    this.container = root;
+    this.button = button;
+    this.panel = panel;
+    this.panelContentCleanup = createSwissGdiPanel(this.app, panel);
+
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setOpen(!this.isOpen);
+    });
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!this.isOpen || !this.container) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!this.container.contains(target)) {
+        this.setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    this.removeOutsideListener = () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+
+    root.append(button, panel);
+    this.setOpen(this.isOpen);
+    return root;
+  }
+
+  onRemove(): void {
+    this.setOpen(false);
+    this.removeOutsideListener?.();
+    this.removeOutsideListener = null;
+    this.panelContentCleanup?.();
+    this.panelContentCleanup = null;
+    this.container?.remove();
+    this.container = null;
+    this.button = null;
+    this.panel = null;
+  }
+
+  setOpen(nextOpen: boolean): void {
+    this.isOpen = nextOpen;
+    if (this.button) {
+      this.button.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    }
+    if (this.panel) {
+      this.panel.style.display = nextOpen ? "block" : "none";
+    }
+  }
+
+  getOpen(): boolean {
+    return this.isOpen;
+  }
+
+  getDefaultPosition(): string {
+    return swissGdiPosition;
+  }
 }
 
 function defaultSwissGdiLanguage(): SwissGdiLanguage {
@@ -581,64 +673,59 @@ function defaultSwissGdiLanguage(): SwissGdiLanguage {
 }
 
 export function createSwissGdiPlugin(): GeoLibrePlugin {
-  let unregisterPanel: (() => void) | undefined;
-  let panelContentCleanup: (() => void) | undefined;
-  let shouldOpenAfterActivate = true;
-  let isPanelOpen = false;
+  let control: SwissGdiMapControl | null = null;
+  let shouldOpenAfterActivate = false;
 
   return {
-    id: PANEL_ID,
-    name: PANEL_TITLE,
-    version: "1.0.0",
+    id: CONTROL_ID,
+    name: CONTROL_TITLE,
+    version: "1.1.0",
     activeByDefault: false,
     activate(app: GeoLibreAppAPI) {
-      if (unregisterPanel) return;
-      unregisterPanel = app.registerRightPanel?.({
-        id: PANEL_ID,
-        title: PANEL_TITLE,
-        dock: "right-of-style",
-        defaultWidth: 380,
-        onOpen: () => {
-          isPanelOpen = true;
-          shouldOpenAfterActivate = true;
-        },
-        onClose: () => {
-          isPanelOpen = false;
-          shouldOpenAfterActivate = false;
-        },
-        render(container) {
-          panelContentCleanup?.();
-          panelContentCleanup = createSwissGdiPanel(app, container);
-          return () => {
-            panelContentCleanup?.();
-            panelContentCleanup = undefined;
-          };
-        },
-      });
-      if (shouldOpenAfterActivate) {
-        app.openRightPanel?.(PANEL_ID);
+      if (!control) {
+        control = new SwissGdiMapControl(app);
       }
+      const added = app.addMapControl(control, swissGdiPosition);
+      if (!added) {
+        control = null;
+        return false;
+      }
+      control.setOpen(shouldOpenAfterActivate);
     },
     deactivate(app: GeoLibreAppAPI) {
-      panelContentCleanup?.();
-      panelContentCleanup = undefined;
-      unregisterPanel?.();
-      unregisterPanel = undefined;
-      shouldOpenAfterActivate = false;
-      isPanelOpen = false;
-      app.closeRightPanel?.(PANEL_ID);
+      if (!control) return;
+      shouldOpenAfterActivate = control.getOpen();
+      app.removeMapControl(control);
+      control = null;
+    },
+    getMapControlPosition: () => swissGdiPosition,
+    setMapControlPosition: (
+      app: GeoLibreAppAPI,
+      position: GeoLibreMapControlPosition,
+    ) => {
+      swissGdiPosition = position;
+      if (!control) return;
+      const wasOpen = control.getOpen();
+      app.removeMapControl(control);
+      const added = app.addMapControl(control, swissGdiPosition);
+      if (!added) {
+        control = null;
+        return false;
+      }
+      control.setOpen(wasOpen);
     },
     getProjectState() {
-      if (!shouldOpenAfterActivate && !isPanelOpen) return undefined;
-      return { open: true } satisfies SwissGdiPluginState;
+      const open = control?.getOpen() ?? shouldOpenAfterActivate;
+      return open ? ({ open: true } satisfies SwissGdiPluginState) : undefined;
     },
     applyProjectState(_app: GeoLibreAppAPI, state: unknown) {
       const nextOpen =
-        state === undefined
-          ? true
-          : (state as SwissGdiPluginState | undefined)?.open === true;
+        (state as SwissGdiPluginState | undefined)?.open === true;
       const changed = shouldOpenAfterActivate !== nextOpen;
       shouldOpenAfterActivate = nextOpen;
+      if (control) {
+        control.setOpen(nextOpen);
+      }
       return changed;
     },
   };

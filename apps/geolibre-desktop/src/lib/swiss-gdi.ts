@@ -4,12 +4,17 @@ export interface SwissGdiCatalogLayer {
   name: string;
   title: string;
   abstract?: string;
+  tileTemplate?: string;
+  format?: string;
+  tileMatrixSet?: string;
 }
 
 export const SWISS_GDI_PLUGIN_ID = "geolibre-swiss-gdi";
 export const SWISS_GDI_DOCS_URL =
-  "https://docs.geo.admin.ch/visualize-data/wms.html";
+  "https://docs.geo.admin.ch/visualize-data/wmts.html";
 export const SWISS_GDI_WMS_BASE_URL = "https://wms.geo.admin.ch";
+export const SWISS_GDI_WMTS_CAPABILITIES_URL =
+  "https://wmts.geo.admin.ch/1.0.0/WMTSCapabilities.xml";
 
 const SUPPORTED_SWISS_GDI_LANGUAGES: readonly SwissGdiLanguage[] = [
   "de",
@@ -33,11 +38,33 @@ export function buildSwissGdiWmsEndpoint(language: SwissGdiLanguage): string {
 }
 
 export function buildSwissGdiCapabilitiesUrl(language: SwissGdiLanguage): string {
-  const url = new URL(buildSwissGdiWmsEndpoint(language));
-  url.searchParams.set("SERVICE", "WMS");
-  url.searchParams.set("REQUEST", "GetCapabilities");
-  url.searchParams.set("VERSION", "1.3.0");
+  const url = new URL(SWISS_GDI_WMTS_CAPABILITIES_URL);
+  url.searchParams.set("lang", language);
   return url.toString();
+}
+
+export function buildSwissGdiWmtsTileUrl(
+  layer: SwissGdiCatalogLayer,
+  language: SwissGdiLanguage,
+): string {
+  const format = (layer.format ?? "image/png").toLowerCase();
+  const extension = format.includes("jpeg") || format.includes("jpg")
+    ? "jpeg"
+    : "png";
+  const matrixSet = layer.tileMatrixSet ?? "3857";
+  const template =
+    layer.tileTemplate ??
+    `https://wmts.geo.admin.ch/1.0.0/${layer.name}/default/current/${matrixSet}/{TileMatrix}/{TileCol}/{TileRow}.${extension}`;
+
+  const tileUrl = template
+    .replaceAll("{Layer}", layer.name)
+    .replaceAll("{Style}", "default")
+    .replaceAll("{TileMatrixSet}", matrixSet);
+
+  const separator = tileUrl.includes("?") ? "&" : "?";
+  return tileUrl.includes("lang=")
+    ? tileUrl
+    : `${tileUrl}${separator}lang=${encodeURIComponent(language)}`;
 }
 
 export function buildSwissGdiLegendGraphicUrl(
@@ -68,6 +95,25 @@ function directChildText(element: Element, name: string): string {
   return "";
 }
 
+function localName(node: Element): string {
+  return node.localName || node.tagName.split(":").at(-1) || node.tagName;
+}
+
+function findDirectChildByLocalName(
+  element: Element,
+  name: string,
+): Element | null {
+  for (const child of Array.from(element.children)) {
+    if (localName(child) === name) return child;
+  }
+  return null;
+}
+
+function directChildTextByLocalName(element: Element, name: string): string {
+  const node = findDirectChildByLocalName(element, name);
+  return node?.textContent?.trim() ?? "";
+}
+
 export function parseSwissGdiCapabilities(xmlText: string): SwissGdiCatalogLayer[] {
   if (typeof DOMParser === "undefined") {
     throw new Error("DOMParser is not available in this runtime.");
@@ -80,13 +126,37 @@ export function parseSwissGdiCapabilities(xmlText: string): SwissGdiCatalogLayer
 
   const byName = new Map<string, SwissGdiCatalogLayer>();
   for (const layer of Array.from(document.getElementsByTagName("Layer"))) {
-    const name = directChildText(layer, "Name");
-    const title = directChildText(layer, "Title");
+    const name =
+      directChildTextByLocalName(layer, "Identifier") ||
+      directChildText(layer, "Name");
+    const title =
+      directChildTextByLocalName(layer, "Title") || directChildText(layer, "Title");
     if (!name || !title) continue;
+
+    const resourceUrl = Array.from(layer.getElementsByTagName("ResourceURL")).find(
+      (node) => node.getAttribute("resourceType")?.toLowerCase() === "tile",
+    );
+    const format =
+      resourceUrl?.getAttribute("format") ||
+      directChildTextByLocalName(layer, "Format") ||
+      undefined;
+    const tileTemplate = resourceUrl?.getAttribute("template") || undefined;
+
+    const matrixSetLink = findDirectChildByLocalName(layer, "TileMatrixSetLink");
+    const tileMatrixSet = matrixSetLink
+      ? directChildTextByLocalName(matrixSetLink, "TileMatrixSet") || undefined
+      : undefined;
+
     byName.set(name, {
       name,
       title,
-      abstract: directChildText(layer, "Abstract") || undefined,
+      abstract:
+        directChildTextByLocalName(layer, "Abstract") ||
+        directChildText(layer, "Abstract") ||
+        undefined,
+      ...(tileTemplate ? { tileTemplate } : {}),
+      ...(format ? { format } : {}),
+      ...(tileMatrixSet ? { tileMatrixSet } : {}),
     });
   }
 
