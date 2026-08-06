@@ -14,8 +14,8 @@
  *                        4=Destroyed  5=FullToCapacity
  *  08     HQ/TF/Dummy    0=None  1=HQ  2=TF  3=Dummy  4=HQTF  5=HQDummy  6=TFDummy  7=All
  *  09-10  Echelon        00=None  11=Team  12=Squad  13=Section  14=Platoon  15=Company
- *                        16=Battalion  17=Regiment  18=Brigade  19=Division  20=Corps
- *                        21=Army  22=ArmyGroup  23=Region  24=Command
+ *                        16=Battalion  17=Regiment  18=Brigade  21=Division  22=Corps
+ *                        23=Army  24=ArmyGroup  25=Region  26=Command
  *  11-16  Entity code    6-digit code (symbol-set specific)
  *  17-18  Modifier 1     2-digit code (symbol-set specific)
  *  19-20  Modifier 2     2-digit code (symbol-set specific)
@@ -40,6 +40,20 @@ export interface SidcParts {
   modifier2:  string;  // 2 chars
 }
 
+const LEGACY_ECHELON_MAP: Record<string, string> = {
+  // Legacy mapping used by older MilGeo builds; align to milsymbol APP-6D mapping.
+  "19": "21", // Division
+  "20": "22", // Corps / MEF
+  "21": "23", // Army
+  "22": "24", // Army Group / Front
+  "23": "25", // Region / Theater
+  "24": "26", // Command
+};
+
+function normalizeEchelonCode(code: string): string {
+  return LEGACY_ECHELON_MAP[code] ?? code;
+}
+
 export function parseSidc(sidc: string): SidcParts {
   const s = (sidc + "0".repeat(20)).slice(0, 20);
   return {
@@ -49,7 +63,7 @@ export function parseSidc(sidc: string): SidcParts {
     symbolSet: s.slice(4, 6),
     status:    s.slice(6, 7),
     hqTfDummy: s.slice(7, 8),
-    echelon:   s.slice(8, 10),
+    echelon:   normalizeEchelonCode(s.slice(8, 10)),
     entity:    s.slice(10, 16),
     modifier1: s.slice(16, 18),
     modifier2: s.slice(18, 20),
@@ -66,7 +80,7 @@ export function buildSidc(p: Partial<SidcParts>): string {
     m.symbolSet +
     m.status +
     m.hqTfDummy +
-    m.echelon +
+    normalizeEchelonCode(m.echelon) +
     m.entity +
     m.modifier1 +
     m.modifier2
@@ -139,12 +153,12 @@ export const ECHELON_OPTIONS: SidcOption[] = [
   { code: "16", label: "Battalion / Squadron" },
   { code: "17", label: "Regiment / Group" },
   { code: "18", label: "Brigade (X)" },
-  { code: "19", label: "Division (XX)" },
-  { code: "20", label: "Corps / MEF (XXX)" },
-  { code: "21", label: "Army (XXXX)" },
-  { code: "22", label: "Army Group / Front (XXXXX)" },
-  { code: "23", label: "Region / Theater (XXXXXX)" },
-  { code: "24", label: "Command" },
+  { code: "21", label: "Division (XX)" },
+  { code: "22", label: "Corps / MEF (XXX)" },
+  { code: "23", label: "Army (XXXX)" },
+  { code: "24", label: "Army Group / Front (XXXXX)" },
+  { code: "25", label: "Region / Theater (XXXXXX)" },
+  { code: "26", label: "Command" },
 ];
 
 // ─── Modifier labels by symbol set ────────────────────────────────────────────
