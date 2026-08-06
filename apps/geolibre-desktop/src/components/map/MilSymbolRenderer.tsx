@@ -295,130 +295,147 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
   // ── Sync mil-graphic items → GeoJSON sources/layers ─────────────────
   useEffect(() => {
     const map = mapControllerRef.current?.getMap();
-    if (!map || !map.isStyleLoaded()) return;
+    if (!map) return;
 
-    // Collect all graphics across visible layers
-    const allGraphics = milLayers.filter(
-      (layer): layer is GeoLibreLayer => layer.type === "mil-graphic"
-    );
-    const graphicIds = new Set(allGraphics.map((layer) => layer.id));
+    const syncGraphics = () => {
+      if (!map.isStyleLoaded()) return;
 
-    // Remove stale graphic sources
-    for (const id of graphicSourcesRef.current) {
-      if (!graphicIds.has(id)) {
-        const lineId = `mg-line-${id}`;
-        const fillId = `mg-fill-${id}`;
-        const dirId = `mg-dir-${id}`;
-        if (map.getLayer(dirId)) map.removeLayer(dirId);
-        if (map.getLayer(lineId)) map.removeLayer(lineId);
-        if (map.getLayer(fillId)) map.removeLayer(fillId);
-        if (map.getSource(id))    map.removeSource(id);
-        graphicSourcesRef.current.delete(id);
+      // Collect all graphics across visible layers
+      const allGraphics = milLayers.filter(
+        (layer): layer is GeoLibreLayer => layer.type === "mil-graphic"
+      );
+      const graphicIds = new Set(allGraphics.map((layer) => layer.id));
+
+      // Remove stale graphic sources
+      for (const id of graphicSourcesRef.current) {
+        if (!graphicIds.has(id)) {
+          const lineId = `mg-line-${id}`;
+          const fillId = `mg-fill-${id}`;
+          const dirId = `mg-dir-${id}`;
+          if (map.getLayer(dirId)) map.removeLayer(dirId);
+          if (map.getLayer(lineId)) map.removeLayer(lineId);
+          if (map.getLayer(fillId)) map.removeLayer(fillId);
+          if (map.getSource(id)) map.removeSource(id);
+          graphicSourcesRef.current.delete(id);
+        }
       }
-    }
 
-    for (const layer of allGraphics) {
-      const source = layer.source as unknown as MilGraphicLayerSource;
-      if (!source.SIDC || !source.coordinates?.length) continue;
+      for (const layer of allGraphics) {
+        const source = layer.source as unknown as MilGraphicLayerSource;
+        if (!source.SIDC || !source.coordinates?.length) continue;
 
-      const color = graphicColorFromAffiliation(source.affiliation);
-      const lineId = `mg-line-${layer.id}`;
-      const fillId = `mg-fill-${layer.id}`;
-      const dirId = `mg-dir-${layer.id}`;
-      const showDirection = layer.metadata.tacticalDirectional === true;
+        const color = graphicColorFromAffiliation(source.affiliation);
+        const lineId = `mg-line-${layer.id}`;
+        const fillId = `mg-fill-${layer.id}`;
+        const dirId = `mg-dir-${layer.id}`;
+        const showDirection = layer.metadata.tacticalDirectional === true;
 
-      const geom =
-        source.geometryType === "Polygon"
-          ? { type: "Polygon"    as const, coordinates: [source.coordinates] }
-          : { type: "LineString" as const, coordinates: source.coordinates };
+        const geom =
+          source.geometryType === "Polygon"
+            ? { type: "Polygon" as const, coordinates: [source.coordinates] }
+            : { type: "LineString" as const, coordinates: source.coordinates };
 
-      const geoData = {
-        type:       "Feature"  as const,
-        geometry:   geom,
-        properties: { name: layer.name, sidc: source.SIDC },
-      };
+        const geoData = {
+          type: "Feature" as const,
+          geometry: geom,
+          properties: { name: layer.name, sidc: source.SIDC },
+        };
 
-      if (graphicSourcesRef.current.has(layer.id)) {
-        (map.getSource(layer.id) as maplibregl.GeoJSONSource)?.setData(geoData);
-        const vis = layer.visible ? "visible" : "none";
-        if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
-        if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
-        if (map.getLayer(dirId)) map.setLayoutProperty(dirId, "visibility", vis);
-      } else {
-        map.addSource(layer.id, { type: "geojson", data: geoData });
+        if (graphicSourcesRef.current.has(layer.id) && map.getSource(layer.id)) {
+          (map.getSource(layer.id) as maplibregl.GeoJSONSource)?.setData(geoData);
+          const vis = layer.visible ? "visible" : "none";
+          if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
+          if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
+          if (map.getLayer(dirId)) map.setLayoutProperty(dirId, "visibility", vis);
+        } else {
+          map.addSource(layer.id, { type: "geojson", data: geoData });
 
-        if (source.geometryType === "Polygon") {
+          if (source.geometryType === "Polygon") {
+            map.addLayer({
+              id: fillId,
+              type: "fill",
+              source: layer.id,
+              paint: {
+                "fill-color": color,
+                "fill-opacity": layer.opacity * 0.15,
+              },
+              layout: { visibility: layer.visible ? "visible" : "none" },
+            });
+          }
+
           map.addLayer({
-            id: fillId,
-            type: "fill",
+            id: lineId,
+            type: "line",
             source: layer.id,
             paint: {
-              "fill-color":   color,
-              "fill-opacity": layer.opacity * 0.15,
-            },
-            layout: { visibility: layer.visible ? "visible" : "none" },
-          });
-        }
-
-        map.addLayer({
-          id: lineId,
-          type: "line",
-          source: layer.id,
-          paint: {
-            "line-color":     color,
-            "line-width": [
-              "interpolate",
-              ["linear"],
-              ["zoom"],
-              4, 1.25,
-              8, 2,
-              12, 3,
-              16, 5,
-              20, 8,
-            ],
-            "line-opacity":   layer.opacity,
-            "line-dasharray": [3, 1.75],
-          },
-          layout: { visibility: layer.visible ? "visible" : "none" },
-        });
-
-        if (source.geometryType === "LineString" && showDirection) {
-          map.addLayer({
-            id: dirId,
-            type: "symbol",
-            source: layer.id,
-            filter: ["==", ["geometry-type"], "LineString"],
-            layout: {
-              "symbol-placement": "line",
-              "symbol-spacing": 180,
-              "text-field": ">",
-              "text-font": ["Open Sans Regular"],
-              "text-size": [
+              "line-color": color,
+              "line-width": [
                 "interpolate",
                 ["linear"],
                 ["zoom"],
-                6, 10,
-                12, 14,
-                18, 18,
+                4, 1.25,
+                8, 2,
+                12, 3,
+                16, 5,
+                20, 8,
               ],
-              "text-keep-upright": false,
+              "line-opacity": layer.opacity,
+              "line-dasharray": [3, 1.75],
             },
-            paint: {
-              "text-color": color,
-              "text-opacity": layer.opacity,
-              "text-halo-color": "#ffffff",
-              "text-halo-width": 1,
-            },
+            layout: { visibility: layer.visible ? "visible" : "none" },
           });
+
+          if (source.geometryType === "LineString" && showDirection) {
+            map.addLayer({
+              id: dirId,
+              type: "symbol",
+              source: layer.id,
+              filter: ["==", ["geometry-type"], "LineString"],
+              layout: {
+                "symbol-placement": "line",
+                "symbol-spacing": 180,
+                "text-field": ">",
+                "text-font": ["Open Sans Regular"],
+                "text-size": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  6, 10,
+                  12, 14,
+                  18, 18,
+                ],
+                "text-keep-upright": false,
+              },
+              paint: {
+                "text-color": color,
+                "text-opacity": layer.opacity,
+                "text-halo-color": "#ffffff",
+                "text-halo-width": 1,
+              },
+            });
+          }
+
+          graphicSourcesRef.current.add(layer.id);
         }
 
-        graphicSourcesRef.current.add(layer.id);
+        if (!showDirection && map.getLayer(dirId)) {
+          map.removeLayer(dirId);
+        }
       }
+    };
 
-      if (!showDirection && map.getLayer(dirId)) {
-        map.removeLayer(dirId);
-      }
+    syncGraphics();
+
+    const onStyleLoad = () => {
+      graphicSourcesRef.current.clear();
+      syncGraphics();
     }
+
+    map.on("style.load", onStyleLoad);
+
+    return () => {
+      map.off("style.load", onStyleLoad);
+    };
   }, [milLayers, mapControllerRef]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────────
