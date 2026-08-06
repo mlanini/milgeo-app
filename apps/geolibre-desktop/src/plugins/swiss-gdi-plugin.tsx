@@ -4,7 +4,11 @@ import type {
   GeoLibreMapControlPosition,
   GeoLibrePlugin,
 } from "@geolibre/plugins";
-import type { IControl, Map as MapLibreMap } from "maplibre-gl";
+import type {
+  ControlPosition,
+  IControl,
+  Map as MapLibreMap,
+} from "maplibre-gl";
 import {
   buildSwissGdiCapabilitiesUrl,
   buildSwissGdiLegendGraphicUrl,
@@ -656,8 +660,8 @@ class SwissGdiMapControl implements IControl {
     return this.isOpen;
   }
 
-  getDefaultPosition(): string {
-    return swissGdiPosition;
+  getDefaultPosition(): ControlPosition {
+    return swissGdiPosition as ControlPosition;
   }
 }
 
