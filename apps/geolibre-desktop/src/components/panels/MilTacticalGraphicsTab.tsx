@@ -70,7 +70,7 @@ interface SnapCandidate {
 
 function parseGraphicSource(layer: GeoLibreLayer): MilGraphicLayerSource | null {
   if (layer.type !== "mil-graphic") return null;
-  const source = layer.source as MilGraphicLayerSource;
+  const source = layer.source as unknown as MilGraphicLayerSource;
   if (!source || !Array.isArray(source.coordinates)) return null;
   return source;
 }
@@ -358,7 +358,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         },
       });
     } else {
-      const src = map.getSource(PREVIEW_SOURCE_ID) as { setData: (value: unknown) => void };
+      const src = map.getSource(PREVIEW_SOURCE_ID) as unknown as { setData: (value: FeatureCollection<LineString | Polygon | Point>) => void } | undefined;
       src?.setData(data);
     }
 
@@ -641,12 +641,16 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
           <div className="max-h-28 space-y-0.5 overflow-y-auto">
             {tacticalLayers.map((layer) => (
               <div key={layer.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-muted/50">
+                {(() => {
+                  const source = parseGraphicSource(layer);
+                  return (
+                    <>
                 <span className="grid h-5 w-5 place-items-center rounded border text-[9px] text-muted-foreground">
-                  {(layer.source as MilGraphicLayerSource).geometryType === "Polygon" ? "A" : "L"}
+                  {source?.geometryType === "Polygon" ? "A" : "L"}
                 </span>
                 <div className="min-w-0 flex-1 text-[10px]">
                   <div className="truncate font-medium">{layer.name}</div>
-                  <div className="truncate text-muted-foreground">{(layer.source as MilGraphicLayerSource).SIDC}</div>
+                  <div className="truncate text-muted-foreground">{source?.SIDC ?? ""}</div>
                 </div>
                 <button
                   title="Modifica vertici"
@@ -673,6 +677,9 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
                 >
                   <Trash2 size={12} />
                 </button>
+                    </>
+                  );
+                })()}
               </div>
             ))}
           </div>
@@ -768,12 +775,12 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
                     <input
                       className="h-6 rounded border px-1 text-[10px]"
                       defaultValue={coord[0].toFixed(6)}
-                      onBlur={(event) => updateVertexCoordinate(editingLayer.id, index, 0, event.target.value)}
+                      onBlur={(event) => updateVertexCoordinate(editingLayer.id, index, 0, event.currentTarget.value)}
                     />
                     <input
                       className="h-6 rounded border px-1 text-[10px]"
                       defaultValue={coord[1].toFixed(6)}
-                      onBlur={(event) => updateVertexCoordinate(editingLayer.id, index, 1, event.target.value)}
+                      onBlur={(event) => updateVertexCoordinate(editingLayer.id, index, 1, event.currentTarget.value)}
                     />
                   </div>
                 </div>
