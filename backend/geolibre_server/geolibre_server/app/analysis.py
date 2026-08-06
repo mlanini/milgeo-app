@@ -53,7 +53,8 @@ class AnalysisRasterRequest(BaseModel):
     actual raster extent is authoritative.
     """
 
-    dem_url: str
+    dem_url: str | None = None
+    dtm_path: str | None = None
     bbox: dict[str, float]  # keys: west, east, south, north
 
 
@@ -81,6 +82,35 @@ def _download_dem(url: str) -> bytes:
             status_code=502,
             detail=f"DEM download failed (HTTP {exc.code}): {exc.reason}",
         ) from exc
+
+
+def _read_dem_from_path(path_str: str) -> bytes:
+    """Read DEM bytes from a local raster path."""
+    path = Path(path_str)
+    if not path.is_file():
+        raise HTTPException(
+            status_code=400,
+            detail=f"DTM file not found or not accessible: {path_str}",
+        )
+    try:
+        return path.read_bytes()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to read DTM file: {exc}",
+        ) from exc
+
+
+def _load_dem_bytes(req: AnalysisRasterRequest) -> bytes:
+    """Resolve DEM input from either a local path or remote URL."""
+    if req.dtm_path and req.dtm_path.strip():
+        return _read_dem_from_path(req.dtm_path.strip())
+    if req.dem_url and req.dem_url.strip():
+        return _download_dem(req.dem_url)
+    raise HTTPException(
+        status_code=400,
+        detail="Either dem_url or dtm_path must be provided.",
+    )
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -140,7 +170,7 @@ async def compute_slope(req: AnalysisRasterRequest) -> dict[str, Any]:
     import numpy as np
     import rasterio
 
-    dem_bytes = _download_dem(req.dem_url)
+    dem_bytes = _load_dem_bytes(req)
 
     with rasterio.open(io.BytesIO(dem_bytes)) as src:
         elev = src.read(1, masked=True).astype("float64")
@@ -173,7 +203,7 @@ async def compute_hillshade(req: AnalysisRasterRequest) -> dict[str, Any]:
     import numpy as np
     import rasterio
 
-    dem_bytes = _download_dem(req.dem_url)
+    dem_bytes = _load_dem_bytes(req)
 
     with rasterio.open(io.BytesIO(dem_bytes)) as src:
         elev = src.read(1, masked=True).astype("float64")
@@ -228,7 +258,7 @@ async def compute_viewshed(req: AnalysisRasterRequest) -> dict[str, Any]:
     obs_lon = (west + east) / 2.0
     obs_lat = (south + north) / 2.0
 
-    dem_bytes = _download_dem(req.dem_url)
+    dem_bytes = _load_dem_bytes(req)
 
     with rasterio.open(io.BytesIO(dem_bytes)) as src:
         elev = src.read(1, masked=True).astype("float64")

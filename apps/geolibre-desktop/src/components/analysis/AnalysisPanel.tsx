@@ -758,12 +758,22 @@ export function AnalysisPanel({
 
       // ─ Sidecar tools (Slope, Hillshade, Viewshed) ────────────────────────────
       if (id === "slope" || id === "hillshade" || id === "viewshed") {
+        const useLocalDtm = demSource === "local" && localDtmPath.trim() !== "";
         const apiKey = desktopSettings.openTopographyApiKey;
-        if (!apiKey) {
+        if (!useLocalDtm && !apiKey) {
           setResult({
             toolId: id,
             error:
-              "No OpenTopography API key configured. Go to Settings → Map to add one.",
+              "No OpenTopography API key configured. Go to Settings → Map to add one, or select a local DTM.",
+          });
+          setRunState("error");
+          return;
+        }
+        if (demSource === "local" && !useLocalDtm) {
+          setResult({
+            toolId: id,
+            error:
+              "Local DTM selected but no local raster path is configured. Open the DEM picker and choose a local file.",
           });
           setRunState("error");
           return;
@@ -779,7 +789,7 @@ export function AnalysisPanel({
           north: Math.max(...lats),
         };
 
-        setProgress("Requesting DEM from OpenTopography…");
+        setProgress(useLocalDtm ? "Reading local DEM…" : "Requesting DEM from OpenTopography…");
 
         try {
           const demUrl = `https://portal.opentopography.org/API/globaldem?demtype=SRTMGL1&south=${bbox.south}&north=${bbox.north}&west=${bbox.west}&east=${bbox.east}&outputFormat=GTiff&API_Key=${apiKey}`;
@@ -796,7 +806,11 @@ export function AnalysisPanel({
             `/analysis/${toolName}`,
             {
               method: "POST",
-              body: JSON.stringify({ dem_url: demUrl, bbox }),
+              body: JSON.stringify(
+                useLocalDtm
+                  ? { dtm_path: localDtmPath.trim(), bbox }
+                  : { dem_url: demUrl, bbox }
+              ),
               headers: { "Content-Type": "application/json" },
             },
           );
