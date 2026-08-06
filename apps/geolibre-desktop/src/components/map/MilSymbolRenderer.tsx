@@ -28,9 +28,9 @@ import type { SymbolOptions } from "milsymbol";
 import type { FeatureCollection, Feature, Point } from "geojson";
 import type {
   GeoLibreLayer,
-  MilGraphicLayerSource,
 } from "@geolibre/core";
 import { parseMilSymbolLayerSource, DEFAULT_MIL_SYMBOL_SIZE_PX } from "../../lib/milsymbol-layer-source";
+import { parseMilGraphicLayerSource } from "../../lib/milgraphic-layer-source";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -321,24 +321,39 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       }
 
       for (const layer of allGraphics) {
-        const source = layer.source as unknown as MilGraphicLayerSource;
-        if (!source.SIDC || !source.coordinates?.length) continue;
+        const parsed = parseMilGraphicLayerSource(layer.source);
+        if (parsed.graphics.length === 0) continue;
 
-        const color = graphicColorFromAffiliation(source.affiliation);
         const lineId = `mg-line-${layer.id}`;
         const fillId = `mg-fill-${layer.id}`;
         const dirId = `mg-dir-${layer.id}`;
-        const showDirection = layer.metadata.tacticalDirectional === true;
+        const hasDirectional = parsed.graphics.some(
+          (graphic) => graphic.geometryType === "LineString" && graphic.tacticalDirectional === true,
+        );
 
-        const geom =
-          source.geometryType === "Polygon"
-            ? { type: "Polygon" as const, coordinates: [source.coordinates] }
-            : { type: "LineString" as const, coordinates: source.coordinates };
+        const features = parsed.graphics.map((graphic) => {
+          const color = graphicColorFromAffiliation(graphic.affiliation);
+          const geom =
+            graphic.geometryType === "Polygon"
+              ? ({ type: "Polygon" as const, coordinates: [graphic.coordinates] })
+              : ({ type: "LineString" as const, coordinates: graphic.coordinates });
+
+          return {
+            type: "Feature" as const,
+            geometry: geom,
+            properties: {
+              id: graphic.id,
+              name: graphic.name,
+              sidc: graphic.SIDC,
+              color,
+              directional: graphic.tacticalDirectional === true ? 1 : 0,
+            },
+          };
+        });
 
         const geoData = {
-          type: "Feature" as const,
-          geometry: geom,
-          properties: { name: layer.name, sidc: source.SIDC },
+          type: "FeatureCollection" as const,
+          features,
         };
 
         if (graphicSourcesRef.current.has(layer.id) && map.getSource(layer.id)) {
@@ -350,25 +365,24 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
         } else {
           map.addSource(layer.id, { type: "geojson", data: geoData });
 
-          if (source.geometryType === "Polygon") {
-            map.addLayer({
-              id: fillId,
-              type: "fill",
-              source: layer.id,
-              paint: {
-                "fill-color": color,
-                "fill-opacity": layer.opacity * 0.15,
-              },
-              layout: { visibility: layer.visible ? "visible" : "none" },
-            });
-          }
+          map.addLayer({
+            id: fillId,
+            type: "fill",
+            source: layer.id,
+            filter: ["==", ["geometry-type"], "Polygon"],
+            paint: {
+              "fill-color": ["coalesce", ["get", "color"], "#4A7FCE"],
+              "fill-opacity": layer.opacity * 0.15,
+            },
+            layout: { visibility: layer.visible ? "visible" : "none" },
+          });
 
           map.addLayer({
             id: lineId,
             type: "line",
             source: layer.id,
             paint: {
-              "line-color": color,
+              "line-color": ["coalesce", ["get", "color"], "#4A7FCE"],
               "line-width": [
                 "interpolate",
                 ["linear"],
@@ -385,12 +399,16 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
             layout: { visibility: layer.visible ? "visible" : "none" },
           });
 
-          if (source.geometryType === "LineString" && showDirection) {
+          if (hasDirectional) {
             map.addLayer({
               id: dirId,
               type: "symbol",
               source: layer.id,
-              filter: ["==", ["geometry-type"], "LineString"],
+              filter: [
+                "all",
+                ["==", ["geometry-type"], "LineString"],
+                [">", ["coalesce", ["get", "directional"], 0], 0],
+              ],
               layout: {
                 "symbol-placement": "line",
                 "symbol-spacing": 180,
@@ -407,7 +425,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
                 "text-keep-upright": false,
               },
               paint: {
-                "text-color": color,
+                "text-color": ["coalesce", ["get", "color"], "#4A7FCE"],
                 "text-opacity": layer.opacity,
                 "text-halo-color": "#ffffff",
                 "text-halo-width": 1,
@@ -418,7 +436,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
           graphicSourcesRef.current.add(layer.id);
         }
 
-        if (!showDirection && map.getLayer(dirId)) {
+        if (!hasDirectional && map.getLayer(dirId)) {
           map.removeLayer(dirId);
         }
       }

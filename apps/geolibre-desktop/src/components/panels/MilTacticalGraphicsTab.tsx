@@ -13,12 +13,19 @@ import {
   odinDisplaySidc,
   type TacticalCatalogEntry,
 } from "../../lib/mil-tactical-catalog";
+import {
+  parseMilGraphicLayerSource,
+  serializeMilGraphicLayerSource,
+  type MilGraphicLayerItem,
+} from "../../lib/milgraphic-layer-source";
 
 const MilSymbol = ms.Symbol;
 const PREVIEW_SOURCE_ID = "mil-tactical-preview-source";
 const PREVIEW_LINE_ID = "mil-tactical-preview-line";
 const PREVIEW_FILL_ID = "mil-tactical-preview-fill";
 const PREVIEW_POINT_ID = "mil-tactical-preview-point";
+const TACTICAL_LAYER_ID = "mil-tactical-graphics-layer";
+const TACTICAL_LAYER_NAME = "Grafiche tattiche";
 
 const AFF_OPTIONS: { id: MilAffiliation; label: string; color: string }[] = [
   { id: "FRIENDLY", label: "Amico", color: "#4A7FCE" },
@@ -66,13 +73,6 @@ interface SnapCandidate {
   layerId: string;
   vertexIndex: number;
   coordinate: [number, number];
-}
-
-function parseGraphicSource(layer: GeoLibreLayer): MilGraphicLayerSource | null {
-  if (layer.type !== "mil-graphic") return null;
-  const source = layer.source as unknown as MilGraphicLayerSource;
-  if (!source || !Array.isArray(source.coordinates)) return null;
-  return source;
 }
 
 function buildPreviewCollection(
@@ -133,9 +133,20 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
   const [snapRadiusPx, setSnapRadiusPx] = useState(14);
   const drawnPointsRef = useRef<[number, number][]>([]);
 
-  const tacticalLayers = useMemo(
-    () => layers.filter((layer) => layer.type === "mil-graphic"),
+  const tacticalLayer = useMemo(
+    () =>
+      layers.find(
+        (layer) =>
+          layer.type === "mil-graphic" &&
+          (layer.id === TACTICAL_LAYER_ID ||
+            (layer.metadata.milgeoManaged === true && layer.metadata.tacticalCollection === true)),
+      ) ?? null,
     [layers],
+  );
+
+  const tacticalGraphics = useMemo(
+    () => (tacticalLayer ? parseMilGraphicLayerSource(tacticalLayer.source).graphics : []),
+    [tacticalLayer],
   );
 
   const entries = useMemo(
@@ -143,21 +154,122 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     [search, family],
   );
 
+  // Migrate pre-aggregation tactical graphics (one layer per graphic) into one shared layer.
+  useEffect(() => {
+    const legacyTacticalLayers = layers.filter(
+      (layer) =>
+        layer.type === "mil-graphic" &&
+        layer.metadata.milgeoManaged === true &&
+        layer.metadata.tacticalCollection !== true,
+    );
+
+    if (legacyTacticalLayers.length === 0) return;
+
+    const migratedGraphics = legacyTacticalLayers
+      .flatMap((layer) => {
+        const parsed = parseMilGraphicLayerSource(layer.source);
+        return parsed.graphics.map((graphic) => ({
+          ...graphic,
+          tacticalDirectional:
+            graphic.tacticalDirectional || layer.metadata.tacticalDirectional === true,
+          tacticalFamily:
+            graphic.tacticalFamily ||
+            (typeof layer.metadata.tacticalFamily === "string"
+              ? layer.metadata.tacticalFamily
+              : undefined),
+        }));
+      });
+
+    if (migratedGraphics.length === 0) {
+      legacyTacticalLayers.forEach((layer) => removeLayer(layer.id));
+      return;
+    }
+
+    if (tacticalLayer) {
+      const existing = parseMilGraphicLayerSource(tacticalLayer.source).graphics;
+      const merged = [...existing, ...migratedGraphics];
+
+      updateLayer(tacticalLayer.id, {
+        source: serializeMilGraphicLayerSource(merged) as unknown as Record<string, unknown>,
+        metadata: {
+          ...tacticalLayer.metadata,
+          milgeoManaged: true,
+          tacticalCollection: true,
+        },
+      });
+
+      legacyTacticalLayers.forEach((layer) => removeLayer(layer.id));
+      return;
+    }
+
+    addLayer({
+      id: TACTICAL_LAYER_ID,
+      name: TACTICAL_LAYER_NAME,
+      type: "mil-graphic",
+      visible: true,
+      opacity: 1,
+      style: { ...DEFAULT_LAYER_STYLE },
+      metadata: {
+        milgeoManaged: true,
+        tacticalCollection: true,
+      },
+      source: serializeMilGraphicLayerSource(migratedGraphics) as unknown as Record<string, unknown>,
+    });
+
+    legacyTacticalLayers.forEach((layer) => removeLayer(layer.id));
+  }, [addLayer, layers, removeLayer, tacticalLayer, updateLayer]);
+
+  const updateTacticalGraphics = useCallback(
+    (nextGraphics: MilGraphicLayerItem[]) => {
+      if (tacticalLayer) {
+        if (nextGraphics.length === 0) {
+          removeLayer(tacticalLayer.id);
+          setEditingLayerId(null);
+          setVertexPickTarget(null);
+          setAppendVertexLayerId(null);
+          return;
+        }
+
+        updateLayer(tacticalLayer.id, {
+          source: serializeMilGraphicLayerSource(nextGraphics) as unknown as Record<string, unknown>,
+        });
+        return;
+      }
+
+      if (nextGraphics.length === 0) return;
+
+      const layer: GeoLibreLayer = {
+        id: TACTICAL_LAYER_ID,
+        name: TACTICAL_LAYER_NAME,
+        type: "mil-graphic",
+        visible: true,
+        opacity: 1,
+        style: { ...DEFAULT_LAYER_STYLE },
+        metadata: {
+          milgeoManaged: true,
+          tacticalCollection: true,
+        },
+        source: serializeMilGraphicLayerSource(nextGraphics) as unknown as Record<string, unknown>,
+      };
+
+      addLayer(layer);
+    },
+    [addLayer, removeLayer, tacticalLayer, updateLayer],
+  );
+
   const snapCandidates = useMemo<SnapCandidate[]>(() => {
     const candidates: SnapCandidate[] = [];
-    for (const layer of tacticalLayers) {
-      const source = parseGraphicSource(layer);
-      if (!source) continue;
-      source.coordinates.forEach((coordinate, vertexIndex) => {
+    for (const item of tacticalGraphics) {
+      item.coordinates.forEach((coordinate, vertexIndex) => {
         candidates.push({
-          layerId: layer.id,
+          layerId: item.id,
           vertexIndex,
           coordinate: [coordinate[0], coordinate[1]],
         });
       });
     }
     return candidates;
-  }, [tacticalLayers]);
+  }, [tacticalGraphics]);
 
   const applySnap = useCallback((
     lon: number,
@@ -202,40 +314,30 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     return { point: [lon, lat], snapped: false };
   }, [mapControllerRef, snapCandidates, snapEnabled, snapRadiusPx]);
 
-  const editingLayer = useMemo(
-    () => tacticalLayers.find((layer) => layer.id === editingLayerId) ?? null,
-    [editingLayerId, tacticalLayers],
-  );
-
   const editingSource = useMemo(
-    () => (editingLayer ? parseGraphicSource(editingLayer) : null),
-    [editingLayer],
+    () => tacticalGraphics.find((item) => item.id === editingLayerId) ?? null,
+    [editingLayerId, tacticalGraphics],
   );
 
   const updateGraphicCoordinates = useCallback(
     (layerId: string, nextCoordinates: [number, number][]) => {
-      const layer = tacticalLayers.find((item) => item.id === layerId);
-      if (!layer) return;
-      const source = parseGraphicSource(layer);
-      if (!source) return;
+      const target = tacticalGraphics.find((item) => item.id === layerId);
+      if (!target) return;
 
-      const min = source.geometryType === "Polygon" ? 3 : 2;
+      const min = target.geometryType === "Polygon" ? 3 : 2;
       if (nextCoordinates.length < min) return;
 
-      updateLayer(layerId, {
-        source: {
-          ...source,
-          coordinates: nextCoordinates,
-        } as unknown as Record<string, unknown>,
-      });
+      const nextGraphics = tacticalGraphics.map((item) =>
+        item.id === layerId ? { ...item, coordinates: nextCoordinates } : item,
+      );
+      updateTacticalGraphics(nextGraphics);
     },
-    [tacticalLayers, updateLayer],
+    [tacticalGraphics, updateTacticalGraphics],
   );
 
   const onMapClick = useCallback((lon: number, lat: number) => {
     if (vertexPickTarget) {
-      const layer = tacticalLayers.find((item) => item.id === vertexPickTarget.layerId);
-      const source = layer ? parseGraphicSource(layer) : null;
+      const source = tacticalGraphics.find((item) => item.id === vertexPickTarget.layerId);
       if (!source) return;
       const snapped = applySnap(lon, lat, vertexPickTarget);
       const next = source.coordinates.map((coord) => ([...coord] as [number, number]));
@@ -247,8 +349,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     }
 
     if (appendVertexLayerId) {
-      const layer = tacticalLayers.find((item) => item.id === appendVertexLayerId);
-      const source = layer ? parseGraphicSource(layer) : null;
+      const source = tacticalGraphics.find((item) => item.id === appendVertexLayerId);
       if (!source) return;
       const snapped = applySnap(lon, lat);
       const next = [...source.coordinates.map((coord) => ([...coord] as [number, number])), snapped.point];
@@ -261,7 +362,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     const snapped = applySnap(lon, lat);
     drawnPointsRef.current = [...drawnPointsRef.current, snapped.point];
     setDrawnPoints([...drawnPointsRef.current]);
-  }, [appendVertexLayerId, applySnap, drawing, selected, tacticalLayers, updateGraphicCoordinates, vertexPickTarget]);
+  }, [appendVertexLayerId, applySnap, drawing, selected, tacticalGraphics, updateGraphicCoordinates, vertexPickTarget]);
 
   const { enable: enableDrawClick, disable: disableDrawClick } = useMapClick(
     mapControllerRef,
@@ -414,26 +515,22 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
       uniqueDesignation: designation.trim() || undefined,
     };
 
-    const layerName = designation.trim() || selected.name;
-
-    const layer: GeoLibreLayer = {
+    const graphicItem: MilGraphicLayerItem = {
       id: crypto.randomUUID(),
-      name: layerName,
-      type: "mil-graphic",
-      visible: true,
-      opacity: 1,
-      style: { ...DEFAULT_LAYER_STYLE },
-      metadata: {
-        milgeoManaged: true,
-        tacticalFamily: selected.family,
-        tacticalDirectional: selected.directional === true,
-      },
-      source: source as unknown as Record<string, unknown>,
+      name: designation.trim() || selected.name,
+      SIDC: source.SIDC,
+      geometryType: source.geometryType,
+      coordinates: source.coordinates,
+      affiliation: source.affiliation,
+      uniqueDesignation: source.uniqueDesignation,
+      additionalInfo: source.additionalInfo,
+      tacticalDirectional: selected.directional === true,
+      tacticalFamily: selected.family,
     };
 
-    addLayer(layer);
+    updateTacticalGraphics([...tacticalGraphics, graphicItem]);
     cancelDrawing();
-  }, [addLayer, affiliation, cancelDrawing, designation, selected]);
+  }, [affiliation, cancelDrawing, designation, selected, tacticalGraphics, updateTacticalGraphics]);
 
   // Right-click while drawing → finish (if enough vertices) or cancel
   useEffect(() => {
@@ -459,16 +556,14 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
   }, [cancelDrawing, drawing, finishDrawing, mapControllerRef, selected]);
 
   const removeVertex = useCallback((layerId: string, vertexIndex: number) => {
-    const layer = tacticalLayers.find((item) => item.id === layerId);
-    const source = layer ? parseGraphicSource(layer) : null;
+    const source = tacticalGraphics.find((item) => item.id === layerId) ?? null;
     if (!source) return;
     const next = source.coordinates.filter((_, idx) => idx !== vertexIndex);
     updateGraphicCoordinates(layerId, next);
-  }, [tacticalLayers, updateGraphicCoordinates]);
+  }, [tacticalGraphics, updateGraphicCoordinates]);
 
   const addVertexAfter = useCallback((layerId: string, vertexIndex: number) => {
-    const layer = tacticalLayers.find((item) => item.id === layerId);
-    const source = layer ? parseGraphicSource(layer) : null;
+    const source = tacticalGraphics.find((item) => item.id === layerId) ?? null;
     if (!source) return;
 
     const coords = source.coordinates;
@@ -495,22 +590,21 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
       ...coords.slice(vertexIndex + 1),
     ];
     updateGraphicCoordinates(layerId, updated);
-  }, [tacticalLayers, updateGraphicCoordinates]);
+  }, [tacticalGraphics, updateGraphicCoordinates]);
 
   const updateVertexCoordinate = useCallback(
     (layerId: string, vertexIndex: number, axis: 0 | 1, value: string) => {
       const parsed = Number(value);
       if (!Number.isFinite(parsed)) return;
 
-      const layer = tacticalLayers.find((item) => item.id === layerId);
-      const source = layer ? parseGraphicSource(layer) : null;
+      const source = tacticalGraphics.find((item) => item.id === layerId) ?? null;
       if (!source) return;
       const next = source.coordinates.map((coord) => ([...coord] as [number, number]));
       if (!next[vertexIndex]) return;
       next[vertexIndex][axis] = parsed;
       updateGraphicCoordinates(layerId, next);
     },
-    [tacticalLayers, updateGraphicCoordinates],
+    [tacticalGraphics, updateGraphicCoordinates],
   );
 
   return (
@@ -656,29 +750,34 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         </div>
       )}
 
-      {tacticalLayers.length > 0 && (
+      {tacticalGraphics.length > 0 && (
         <div className="border-t px-3 py-2">
-          <div className="mb-1 text-[10px] font-medium text-muted-foreground">
-            Grafiche tattiche ({tacticalLayers.length})
+          <div className="mb-1 flex items-center gap-2 text-[10px] font-medium text-muted-foreground">
+            <span>Grafiche tattiche ({tacticalGraphics.length})</span>
+            {tacticalLayer && (
+              <button
+                title={tacticalLayer.visible ? "Nascondi layer" : "Mostra layer"}
+                className="ml-auto text-muted-foreground hover:text-foreground"
+                onClick={() => updateLayer(tacticalLayer.id, { visible: !tacticalLayer.visible })}
+              >
+                {tacticalLayer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
+              </button>
+            )}
           </div>
           <div className="max-h-28 space-y-0.5 overflow-y-auto">
-            {tacticalLayers.map((layer) => (
-              <div key={layer.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-muted/50">
-                {(() => {
-                  const source = parseGraphicSource(layer);
-                  return (
-                    <>
+            {tacticalGraphics.map((graphic) => (
+              <div key={graphic.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-muted/50">
                 <span className="grid h-5 w-5 place-items-center rounded border text-[9px] text-muted-foreground">
-                  {source?.geometryType === "Polygon" ? "A" : "L"}
+                  {graphic.geometryType === "Polygon" ? "A" : "L"}
                 </span>
                 <div className="min-w-0 flex-1 text-[10px]">
-                  <div className="truncate font-medium">{layer.name}</div>
-                  <div className="truncate text-muted-foreground">{source?.SIDC ?? ""}</div>
+                  <div className="truncate font-medium">{graphic.name}</div>
+                  <div className="truncate text-muted-foreground">{graphic.SIDC}</div>
                 </div>
                 <button
                   title="Modifica vertici"
                   onClick={() => {
-                    setEditingLayerId((prev) => (prev === layer.id ? null : layer.id));
+                    setEditingLayerId((prev) => (prev === graphic.id ? null : graphic.id));
                     setVertexPickTarget(null);
                     setAppendVertexLayerId(null);
                   }}
@@ -687,33 +786,27 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
                   <Pencil size={12} />
                 </button>
                 <button
-                  title={layer.visible ? "Nascondi" : "Mostra"}
-                  onClick={() => updateLayer(layer.id, { visible: !layer.visible })}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  {layer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
-                </button>
-                <button
                   title="Rimuovi"
-                  onClick={() => removeLayer(layer.id)}
+                  onClick={() =>
+                    updateTacticalGraphics(
+                      tacticalGraphics.filter((item) => item.id !== graphic.id),
+                    )
+                  }
                   className="text-muted-foreground hover:text-red-400"
                 >
                   <Trash2 size={12} />
                 </button>
-                    </>
-                  );
-                })()}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {editingLayer && editingSource && (
+      {editingSource && (
         <div className="border-t px-3 py-2">
           <div className="mb-1 flex items-center gap-2 text-[11px] font-medium">
             <Crosshair size={12} />
-            <span>Editor vertici: {editingLayer.name}</span>
+            <span>Editor vertici: {editingSource.name}</span>
             <button
               className="ml-auto text-muted-foreground hover:text-foreground"
               onClick={() => {
@@ -731,18 +824,18 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
             <button
               className="rounded border px-2 py-0.5 text-[10px]"
               onClick={() => {
-                if (appendVertexLayerId === editingLayer.id) {
+                if (appendVertexLayerId === editingSource.id) {
                   setAppendVertexLayerId(null);
                 } else {
-                  setAppendVertexLayerId(editingLayer.id);
+                  setAppendVertexLayerId(editingSource.id);
                   setVertexPickTarget(null);
                 }
               }}
             >
               <Plus size={10} className="inline mr-1" />
-              {appendVertexLayerId === editingLayer.id ? "Stop append" : "Aggiungi vertice (click mappa)"}
+              {appendVertexLayerId === editingSource.id ? "Stop append" : "Aggiungi vertice (click mappa)"}
             </button>
-            {vertexPickTarget?.layerId === editingLayer.id && (
+            {vertexPickTarget?.layerId === editingSource.id && (
               <button
                 className="rounded border px-2 py-0.5 text-[10px]"
                 onClick={() => setVertexPickTarget(null)}
@@ -758,11 +851,11 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
               const min = editingSource.geometryType === "Polygon" ? 3 : 2;
               const canRemove = editingSource.coordinates.length > min;
               const isPickActive =
-                vertexPickTarget?.layerId === editingLayer.id &&
+                vertexPickTarget?.layerId === editingSource.id &&
                 vertexPickTarget.vertexIndex === index;
 
               return (
-                <div key={`${editingLayer.id}-${index}`} className="rounded border px-1.5 py-1 text-[10px]">
+                <div key={`${editingSource.id}-${index}`} className="rounded border px-1.5 py-1 text-[10px]">
                   <div className="mb-1 flex items-center gap-1">
                     <span className="font-medium">V{index + 1}</span>
                     <button
@@ -773,7 +866,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
                       onClick={() => {
                         setAppendVertexLayerId(null);
                         setVertexPickTarget(
-                          isPickActive ? null : { layerId: editingLayer.id, vertexIndex: index }
+                          isPickActive ? null : { layerId: editingSource.id, vertexIndex: index }
                         );
                       }}
                     >
@@ -781,14 +874,14 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
                     </button>
                     <button
                       className="rounded border px-1 py-0.5"
-                      onClick={() => addVertexAfter(editingLayer.id, index)}
+                      onClick={() => addVertexAfter(editingSource.id, index)}
                       disabled={editingSource.geometryType === "LineString" && index === editingSource.coordinates.length - 1}
                     >
                       + dopo
                     </button>
                     <button
                       className="ml-auto rounded border px-1 py-0.5 text-red-600 disabled:opacity-50"
-                      onClick={() => removeVertex(editingLayer.id, index)}
+                      onClick={() => removeVertex(editingSource.id, index)}
                       disabled={!canRemove}
                     >
                       Rimuovi
@@ -798,12 +891,12 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
                     <input
                       className="h-6 rounded border px-1 text-[10px]"
                       defaultValue={coord[0].toFixed(6)}
-                      onBlur={(event) => updateVertexCoordinate(editingLayer.id, index, 0, event.currentTarget.value)}
+                      onBlur={(event) => updateVertexCoordinate(editingSource.id, index, 0, event.currentTarget.value)}
                     />
                     <input
                       className="h-6 rounded border px-1 text-[10px]"
                       defaultValue={coord[1].toFixed(6)}
-                      onBlur={(event) => updateVertexCoordinate(editingLayer.id, index, 1, event.currentTarget.value)}
+                      onBlur={(event) => updateVertexCoordinate(editingSource.id, index, 1, event.currentTarget.value)}
                     />
                   </div>
                 </div>
