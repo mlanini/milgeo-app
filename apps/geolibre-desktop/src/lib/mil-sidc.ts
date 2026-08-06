@@ -138,12 +138,12 @@ export const ECHELON_OPTIONS: SidcOption[] = [
   { code: "15", label: "Company / Battery / Troop" },
   { code: "16", label: "Battalion / Squadron" },
   { code: "17", label: "Regiment / Group" },
-  { code: "18", label: "Brigade" },
-  { code: "19", label: "Division" },
-  { code: "20", label: "Corps / MEF" },
-  { code: "21", label: "Army" },
-  { code: "22", label: "Army Group / Front" },
-  { code: "23", label: "Region / Theater" },
+  { code: "18", label: "Brigade (X)" },
+  { code: "19", label: "Division (XX)" },
+  { code: "20", label: "Corps / MEF (XXX)" },
+  { code: "21", label: "Army (XXXX)" },
+  { code: "22", label: "Army Group / Front (XXXXX)" },
+  { code: "23", label: "Region / Theater (XXXXXX)" },
   { code: "24", label: "Command" },
 ];
 
