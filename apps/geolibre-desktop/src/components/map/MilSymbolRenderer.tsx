@@ -152,6 +152,20 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
   });
 }
 
+function graphicColorFromAffiliation(affiliation: unknown): string {
+  switch (affiliation) {
+    case "HOSTILE":
+      return "#CE4A4A";
+    case "NEUTRAL":
+      return "#4ACE8C";
+    case "UNKNOWN":
+      return "#A8A8A8";
+    case "FRIENDLY":
+    default:
+      return "#4A7FCE";
+  }
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendererProps) {
@@ -294,6 +308,8 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       if (!graphicIds.has(id)) {
         const lineId = `mg-line-${id}`;
         const fillId = `mg-fill-${id}`;
+        const dirId = `mg-dir-${id}`;
+        if (map.getLayer(dirId)) map.removeLayer(dirId);
         if (map.getLayer(lineId)) map.removeLayer(lineId);
         if (map.getLayer(fillId)) map.removeLayer(fillId);
         if (map.getSource(id))    map.removeSource(id);
@@ -305,9 +321,11 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       const source = layer.source as unknown as MilGraphicLayerSource;
       if (!source.SIDC || !source.coordinates?.length) continue;
 
-      const color  = "#4A7FCE"; // TODO: derive from SIDC identity
+      const color = graphicColorFromAffiliation(source.affiliation);
       const lineId = `mg-line-${layer.id}`;
       const fillId = `mg-fill-${layer.id}`;
+      const dirId = `mg-dir-${layer.id}`;
+      const showDirection = layer.metadata.tacticalDirectional === true;
 
       const geom =
         source.geometryType === "Polygon"
@@ -325,6 +343,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
         const vis = layer.visible ? "visible" : "none";
         if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
         if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
+        if (map.getLayer(dirId)) map.setLayoutProperty(dirId, "visibility", vis);
       } else {
         map.addSource(layer.id, { type: "geojson", data: geoData });
 
@@ -347,14 +366,57 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
           source: layer.id,
           paint: {
             "line-color":     color,
-            "line-width":     2.5,
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              4, 1.25,
+              8, 2,
+              12, 3,
+              16, 5,
+              20, 8,
+            ],
             "line-opacity":   layer.opacity,
-            "line-dasharray": [6, 3],
+            "line-dasharray": [3, 1.75],
           },
           layout: { visibility: layer.visible ? "visible" : "none" },
         });
 
+        if (source.geometryType === "LineString" && showDirection) {
+          map.addLayer({
+            id: dirId,
+            type: "symbol",
+            source: layer.id,
+            filter: ["==", ["geometry-type"], "LineString"],
+            layout: {
+              "symbol-placement": "line",
+              "symbol-spacing": 180,
+              "text-field": ">",
+              "text-font": ["Open Sans Regular"],
+              "text-size": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                6, 10,
+                12, 14,
+                18, 18,
+              ],
+              "text-keep-upright": false,
+            },
+            paint: {
+              "text-color": color,
+              "text-opacity": layer.opacity,
+              "text-halo-color": "#ffffff",
+              "text-halo-width": 1,
+            },
+          });
+        }
+
         graphicSourcesRef.current.add(layer.id);
+      }
+
+      if (!showDirection && map.getLayer(dirId)) {
+        map.removeLayer(dirId);
       }
     }
   }, [milLayers, mapControllerRef]);

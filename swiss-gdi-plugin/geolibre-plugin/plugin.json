@@ -1,7 +1,0 @@
-{
-  "id": "geolibre-swiss-gdi",
-  "name": "Swiss GDI",
-  "version": "1.0.0",
-  "description": "Browse official geo.admin.ch WMS layers, preview legends, and inspect GetFeatureInfo responses on the map.",
-  "entry": "dist/index.js"
-}

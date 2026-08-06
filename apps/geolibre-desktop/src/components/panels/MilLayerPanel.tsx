@@ -26,6 +26,7 @@ import type { MapController } from "@geolibre/map";
 import type { MilAffiliation } from "@geolibre/core";
 import { useMapClick } from "../../hooks/useMapClick";
 import { OrbatPanel } from "./OrbatPanel";
+import { MilTacticalGraphicsTab } from "./MilTacticalGraphicsTab";
 import { MilSymbolEditor, type MilSymbolPatch } from "./MilSymbolEditor";
 import {
   CATEGORIES,
@@ -46,7 +47,7 @@ const CATALOG_ICON = 32;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type TabId = "catalog" | "orbat";
+type TabId = "catalog" | "tactical" | "orbat";
 
 interface MilLayerPanelProps {
   mapControllerRef: React.RefObject<MapController | null>;
@@ -561,12 +562,14 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
       {/* Tabs */}
       <div className="flex border-b">
         <button className={tabCls("catalog")} onClick={() => setTab("catalog")}>Catalogo</button>
+        <button className={tabCls("tactical")} onClick={() => setTab("tactical")}>Grafica Tattica</button>
         <button className={tabCls("orbat")}   onClick={() => setTab("orbat")}>ORBAT</button>
       </div>
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
         {tab === "catalog" && <CatalogTab mapControllerRef={mapControllerRef} />}
+        {tab === "tactical" && <MilTacticalGraphicsTab mapControllerRef={mapControllerRef} />}
         {tab === "orbat"   && <OrbatPanel mapControllerRef={mapControllerRef} />}
       </div>
     </div>

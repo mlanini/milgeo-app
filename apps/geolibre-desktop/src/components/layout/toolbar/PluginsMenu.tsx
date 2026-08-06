@@ -25,7 +25,6 @@ import {
 import { Puzzle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { usePluginRegistry } from "../../../hooks/usePlugins";
-import { SWISS_GDI_PLUGIN_ID } from "../../../lib/swiss-gdi";
 import {
   type AppApi,
   PLUGIN_POSITION_ITEMS,
@@ -38,7 +37,6 @@ type RegisteredPlugin = PluginRegistry["plugins"][number];
 // Plugins grouped under the "Web Services" submenu of the Plugins menu.
 const WEB_SERVICE_PLUGIN_ID_SET = new Set<string>([
   ...WEB_SERVICE_PLUGIN_IDS,
-  SWISS_GDI_PLUGIN_ID,
 ]);
 
 interface PluginsMenuProps {
