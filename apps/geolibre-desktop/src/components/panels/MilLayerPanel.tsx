@@ -364,8 +364,34 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     disableClick();
   }
 
+  const activeEditor = editingEntry && editingPatch
+    ? (
+        <MilSymbolEditor
+          className="h-full"
+          initial={editingPatch}
+          onSave={handleSaveEditedEntry}
+          onCancel={() => {
+            setEditingEntry(null);
+            setEditingPatch(null);
+          }}
+        />
+      )
+    : editingSymbol && editingPlacedPatch
+      ? (
+          <MilSymbolEditor
+            className="h-full"
+            initial={editingPlacedPatch}
+            onSave={handleSaveEditedPlacedSymbol}
+            onCancel={() => {
+              setEditingSymbol(null);
+              setEditingPlacedPatch(null);
+            }}
+          />
+        )
+      : null;
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="relative flex flex-col h-full">
       <div className="border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
         I simboli vengono aggiunti nel layer milsymbol selezionato nel pannello Layers principale.
       </div>
@@ -508,31 +534,9 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
         </div>
       )}
 
-      {editingEntry && editingPatch && (
-        <div className="border-t bg-background">
-          <MilSymbolEditor
-            className="h-[56vh] min-h-[320px] max-h-[560px]"
-            initial={editingPatch}
-            onSave={handleSaveEditedEntry}
-            onCancel={() => {
-              setEditingEntry(null);
-              setEditingPatch(null);
-            }}
-          />
-        </div>
-      )}
-
-      {editingSymbol && editingPlacedPatch && (
-        <div className="border-t bg-background">
-          <MilSymbolEditor
-            className="h-[56vh] min-h-[320px] max-h-[560px]"
-            initial={editingPlacedPatch}
-            onSave={handleSaveEditedPlacedSymbol}
-            onCancel={() => {
-              setEditingSymbol(null);
-              setEditingPlacedPatch(null);
-            }}
-          />
+      {activeEditor && (
+        <div className="absolute inset-0 z-10 border-t bg-background shadow-2xl">
+          {activeEditor}
         </div>
       )}
     </div>

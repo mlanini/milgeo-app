@@ -28,7 +28,9 @@ import {
 } from "../../lib/mil-sidc";
 
 const MilSymbol = ms.Symbol;
-const PREVIEW_SIZE = 56;
+const PREVIEW_SIZE = 42;
+const PREVIEW_MAX_WIDTH = 220;
+const PREVIEW_MAX_HEIGHT = 108;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -153,7 +155,7 @@ function SymbolPreview({
   combatEffectiveness?: string;
   evaluationRating?: string;
 }) {
-  const svg = useMemo(() => {
+  const preview = useMemo(() => {
     try {
       const sym = new MilSymbol(sidc, {
         size: PREVIEW_SIZE,
@@ -176,7 +178,18 @@ function SymbolPreview({
         outlineWidth: 6,
       });
       if (!sym.isValid()) return null;
-      return sym.asSVG();
+      const size = sym.getSize();
+      const scale = Math.min(
+        1,
+        PREVIEW_MAX_WIDTH / Math.max(1, size.width),
+        PREVIEW_MAX_HEIGHT / Math.max(1, size.height),
+      );
+      return {
+        svg: sym.asSVG(),
+        width: Math.ceil(size.width),
+        height: Math.ceil(size.height),
+        scale,
+      };
     } catch {
       return null;
     }
@@ -199,13 +212,28 @@ function SymbolPreview({
   ]);
 
   return (
-    <div className="flex items-center justify-center w-full py-1.5">
-      {svg ? (
+    <div className="flex items-center justify-center w-full py-2">
+      {preview ? (
         <div
-          className="overflow-hidden [&>svg]:block"
-          style={{ width: PREVIEW_SIZE + 24, height: PREVIEW_SIZE + 24 }}
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
+          className="flex items-center justify-center"
+          style={{
+            width: Math.ceil(preview.width * preview.scale),
+            height: Math.ceil(preview.height * preview.scale),
+            maxWidth: PREVIEW_MAX_WIDTH,
+            maxHeight: PREVIEW_MAX_HEIGHT,
+          }}
+        >
+          <div
+            className="[&>svg]:block [&>svg]:overflow-visible"
+            style={{
+              width: preview.width,
+              height: preview.height,
+              transform: `scale(${preview.scale})`,
+              transformOrigin: "top left",
+            }}
+            dangerouslySetInnerHTML={{ __html: preview.svg }}
+          />
+        </div>
       ) : (
         <div className="text-xs text-muted-foreground italic">Preview non disponibile</div>
       )}

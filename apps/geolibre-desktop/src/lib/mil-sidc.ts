@@ -21,6 +21,8 @@
  *  19-20  Modifier 2     2-digit code (symbol-set specific)
  */
 
+import modifierLabelsData from "./milsymbol-modifier-labels.json";
+
 export const SIDC_BLANK = "10031000000000000000";
 
 // ─── Decompose ────────────────────────────────────────────────────────────────
@@ -118,12 +120,12 @@ export const STATUS_OPTIONS: SidcOption[] = [
 
 export const HQTF_OPTIONS: SidcOption[] = [
   { code: "0", label: "None" },
-  { code: "1", label: "Headquarters (HQ)" },
-  { code: "2", label: "Task Force (TF)" },
-  { code: "3", label: "Feint / Dummy" },
-  { code: "4", label: "HQ + Task Force" },
-  { code: "5", label: "HQ + Feint/Dummy" },
-  { code: "6", label: "TF + Feint/Dummy" },
+  { code: "1", label: "Feint / Dummy" },
+  { code: "2", label: "Headquarters (HQ)" },
+  { code: "3", label: "HQ + Feint/Dummy" },
+  { code: "4", label: "Task Force (TF)" },
+  { code: "5", label: "TF + Feint/Dummy" },
+  { code: "6", label: "HQ + Task Force" },
   { code: "7", label: "HQ + TF + Feint/Dummy" },
 ];
 
@@ -146,7 +148,7 @@ export const ECHELON_OPTIONS: SidcOption[] = [
 ];
 
 // ─── Modifier labels by symbol set ────────────────────────────────────────────
-// Source: APP-6D Ed.4, Table A-V to A-XII (same as kadas-app6d-plugin _MOD_LABELS)
+// Source: extracted from the installed milsymbol APP-6D data tables.
 
 export interface ModifierSet { m1: Record<string, string>; m2: Record<string, string>; }
 
@@ -155,85 +157,36 @@ const NONE_MODS: ModifierSet = {
   m2: { "00": "None" },
 };
 
-export const MODIFIER_LABELS: Record<string, ModifierSet> = {
-  "01": { // Air
-    m1: {
-      "00": "None", "01": "Attack", "02": "Bomber", "03": "Cargo",
-      "04": "Fighter", "05": "Interceptor", "06": "Tanker", "07": "Utility",
-      "08": "VSTOL", "09": "Passenger", "10": "Ultra Light",
-      "11": "Airborne Command Post", "12": "AEW", "13": "Government",
-      "14": "Medevac", "15": "Escort", "16": "Jammer/ECM", "17": "Patrol",
-      "18": "Reconnaissance", "19": "Trainer",
-    },
-    m2: {
-      "00": "None", "01": "Airborne", "02": "Arctic", "03": "Fixed Wing",
-      "04": "Multi-Rotor", "05": "Rotary Wing", "06": "VTOL",
-      "07": "Tiltrotor", "08": "Unmanned", "09": "Lighter Than Air",
-    },
-  },
-  "10": { // Land Unit
-    m1: {
-      "00": "None",
-      "01": "Anti-armor/AT", "02": "Air Defense", "03": "Airborne", "04": "Aviation",
-      "05": "Biological", "06": "Chemical", "07": "Combat Service Support",
-      "08": "Combat Support", "09": "Civil Affairs", "10": "CBRN",
-      "11": "Engineer", "12": "Field Artillery", "13": "Headquarters",
-      "14": "Infantry", "15": "Maintenance", "16": "Medical",
-      "17": "Military Intelligence", "18": "Military Police",
-      "19": "Mortar", "20": "Nuclear", "21": "Psychological Operations",
-      "22": "Reconnaissance", "23": "Signal", "24": "Special Operations",
-      "25": "Transportation", "26": "Unmanned", "27": "Watercraft",
-      "28": "Combat", "29": "CJTF", "30": "Fire Support",
-    },
-    m2: {
-      "00": "None",
-      "01": "Airborne", "02": "Arctic", "03": "Digital", "04": "Dismounted",
-      "05": "Heavy", "06": "Light", "07": "Mechanized", "08": "Motorized",
-      "09": "Mountain", "10": "Wheeled", "11": "Air Assault",
-      "12": "Amphibious", "13": "Armored", "14": "Bicycle",
-    },
-  },
-  "15": { // Land Equipment
-    m1: {
-      "00": "None",
-      "01": "Air Defense", "02": "Ammunition", "03": "Bridge",
-      "04": "Combat Engineer", "05": "Communication", "06": "Engineer",
-      "07": "Fire Control", "08": "Launch", "09": "Medical",
-      "10": "Missile", "11": "Radar", "12": "Rocket",
-    },
-    m2: {
-      "00": "None",
-      "01": "Airborne", "02": "Arctic", "03": "Armored", "04": "Armored Tracked",
-      "05": "Armored Wheeled", "06": "Towed", "07": "Wheeled",
-    },
-  },
-  "20": { // Land Installation
-    m1: { "00": "None", "01": "Command Post", "02": "Communication", "03": "Maintenance" },
-    m2: { "00": "None" },
-  },
-  "30": { // Sea Surface
-    m1: {
-      "00": "None", "01": "Amphibious", "02": "Carrier", "03": "Combatant",
-      "04": "Medical", "05": "Mine Warfare", "06": "Patrol",
-      "07": "Replenishment", "08": "Submarine", "09": "Support",
-    },
-    m2: { "00": "None", "01": "Auxiliary", "02": "Combat" },
-  },
-  "35": { // Sea Subsurface
-    m1: {
-      "00": "None", "01": "Attack", "02": "Ballistic Missile",
-      "03": "Cruise Missile", "04": "Diesel", "05": "Nuclear",
-    },
-    m2: { "00": "None", "01": "Auxiliary" },
-  },
-  "40": { // Activities
-    m1: { "00": "None", "01": "Air Activity", "02": "Land Activity", "03": "Sea Activity" },
-    m2: { "00": "None" },
-  },
-};
+export const MODIFIER_LABELS: Record<string, ModifierSet> = modifierLabelsData as Record<string, ModifierSet>;
+
+const normalizedModifierCache: Record<string, ModifierSet> = {};
+
+function normalizeModifierLabel(label: string): string {
+  return label
+    .replace(/^.*\.M[12]\./, "")
+    .replace(/^[A-Z]{2}\.[A-Z]{2}\.[A-Z]{2}\./, "")
+    .replace(/\s*\/\s*/g, " / ")
+    .replace(/\./g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeModifierSet(set: ModifierSet): ModifierSet {
+  const m1 = Object.fromEntries(
+    Object.entries(set.m1).map(([code, label]) => [code, normalizeModifierLabel(String(label))])
+  );
+  const m2 = Object.fromEntries(
+    Object.entries(set.m2).map(([code, label]) => [code, normalizeModifierLabel(String(label))])
+  );
+  return { m1, m2 };
+}
 
 export function getModifierSet(symbolSet: string): ModifierSet {
-  return MODIFIER_LABELS[symbolSet] ?? NONE_MODS;
+  if (!MODIFIER_LABELS[symbolSet]) return NONE_MODS;
+  if (!normalizedModifierCache[symbolSet]) {
+    normalizedModifierCache[symbolSet] = normalizeModifierSet(MODIFIER_LABELS[symbolSet]);
+  }
+  return normalizedModifierCache[symbolSet];
 }
 
 // ─── Label helpers ────────────────────────────────────────────────────────────
