@@ -301,6 +301,29 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     };
   }, [applySnap, drawing, mapControllerRef]);
 
+  // Right-click while drawing → finish (if enough vertices) or cancel
+  useEffect(() => {
+    if (!drawing) return;
+    const map = mapControllerRef.current?.getMap();
+    if (!map) return;
+
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      if (!selected) return;
+      if (drawnPointsRef.current.length >= minPoints(selected)) {
+        finishDrawing();
+      } else {
+        cancelDrawing();
+      }
+    };
+
+    const canvas = map.getCanvas();
+    canvas.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      canvas.removeEventListener("contextmenu", onContextMenu);
+    };
+  }, [cancelDrawing, drawing, finishDrawing, mapControllerRef, selected]);
+
   useEffect(() => {
     const map = mapControllerRef.current?.getMap();
     if (!map) return;
