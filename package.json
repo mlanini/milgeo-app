@@ -15,9 +15,9 @@
   ],
   "scripts": {
     "dev": "npm run dev -w geolibre-desktop",
-    "build": "npm run build -w geolibre-desktop",
-    "build:render": "npm run build -w geolibre-desktop",
-    "typecheck": "npm run build",
+    "build": "npm run build:render -w geolibre-desktop",
+    "build:render": "npm run build:render -w geolibre-desktop",
+    "typecheck": "npm run typecheck -w geolibre-desktop",
     "lint": "eslint apps packages workers tests",
     "test": "npm run test:frontend",
     "test:frontend": "node --import tsx --test tests/*.test.ts",
