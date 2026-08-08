@@ -23,6 +23,7 @@ import {
   isHttpUrl,
   isTauri,
   loadDroppedRasterPaths,
+  loadDroppedVectorPaths,
   openArcgisProjectFile,
   openProjectFile,
   openQgisProjectFile,
@@ -39,6 +40,7 @@ import {
   materializeQgisRemoteLayers,
   type QgisProjectImportWarning,
 } from "../lib/qgis-project-import";
+import { mapQgisMilxLayers } from "../lib/qgis-milx-layer-mapping";
 import { importArcgisProject, type ArcgisProjectImportWarning } from "../lib/arcgis-project-import";
 import type { MapControllerRef } from "../components/layout/toolbar/constants";
 
@@ -191,6 +193,59 @@ async function addImportedProjectRaster(
   }
 }
 
+async function hydrateImportedQgisLocalVectors(
+  layers: GeoLibreLayer[],
+  importProjectPath: string,
+): Promise<QgisProjectImportWarning[]> {
+  const warnings: QgisProjectImportWarning[] = [];
+  const candidates = layers.filter(
+    (layer) =>
+      layer.type === "geojson" &&
+      !layer.geojson &&
+      typeof layer.sourcePath === "string" &&
+      layer.sourcePath.length > 0 &&
+      !isHttpUrl(layer.sourcePath),
+  );
+  if (candidates.length === 0) return warnings;
+
+  const byPath = new Map<string, GeoLibreLayer[]>();
+  for (const layer of candidates) {
+    const path = layer.sourcePath as string;
+    const group = byPath.get(path);
+    if (group) group.push(layer);
+    else byPath.set(path, [layer]);
+  }
+
+  await Promise.all(
+    Array.from(byPath, async ([path, sourceLayers]) => {
+      try {
+        const loaded = await loadDroppedVectorPaths([path], { importProjectPath });
+        if (loaded.length === 0) {
+          sourceLayers.forEach((layer) => {
+            warnings.push({ layerName: layer.name, reason: "format" });
+          });
+          return;
+        }
+        for (const layer of sourceLayers) {
+          let match = loaded[0];
+          if (loaded.length > 1) {
+            const named = loaded.find((entry) => entry.name === layer.name);
+            if (named) match = named;
+          }
+          layer.geojson = match.data;
+        }
+      } catch (error) {
+        console.error(`Failed to load imported QGIS vector "${path}"`, error);
+        sourceLayers.forEach((layer) => {
+          warnings.push({ layerName: layer.name, reason: "format" });
+        });
+      }
+    }),
+  );
+
+  return warnings;
+}
+
 /**
  * Bundles every project file action (open from file/URL/recent, save, save as)
  * along with the related dialog state (Open-from-URL, env-var strip prompt, and
@@ -287,7 +342,12 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
             reason: "browser-local-raster",
           });
         }
+      } else {
+        imported.warnings.push(
+          ...(await hydrateImportedQgisLocalVectors(imported.project.layers, result.path)),
+        );
       }
+      imported.project.layers = mapQgisMilxLayers(imported.project.layers);
       const mapReady = importedProjectMapReady(
         mapControllerRef,
         useAppStore.getState().basemapStyleUrl !== imported.project.basemapStyleUrl,

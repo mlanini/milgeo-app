@@ -8,9 +8,21 @@ import {
   type LayerGroup,
   type LayerStyle,
   type MapViewState,
+  type MilAffiliation,
 } from "@geolibre/core";
 import { strFromU8, unzipSync } from "fflate";
 import type { FeatureCollection } from "geojson";
+import ms from "milsymbol";
+import {
+  serializeMilSymbolLayerSource,
+  type MilSymbolLayerItem,
+} from "./milsymbol-layer-source";
+import {
+  serializeMilGraphicLayerSource,
+  type MilGraphicLayerItem,
+} from "./milgraphic-layer-source";
+
+const MilSymbol = ms.Symbol;
 
 export interface QgisProjectImportWarning {
   layerName: string;
@@ -176,6 +188,28 @@ export function importQgisProject(
       project.basemapStyleUrl = DEFAULT_BASEMAP;
       project.basemapVisible = visibilityByLayerId.get(id) ?? true;
       project.basemapOpacity = parseOpacity(element);
+      continue;
+    }
+
+    const kadasMilx = parseKadasMilxLayer({
+      element,
+      id,
+      name,
+      visible: visibilityByLayerId.get(id) ?? true,
+      opacity: parseOpacity(element),
+      groupId: groupByLayerId.get(id),
+      provider,
+    });
+    if (kadasMilx.layers.length > 0) {
+      layers.push(...kadasMilx.layers.map((layer) => ({ ...layer, id: uniqueLayerId(layer.id, layers) })));
+      continue;
+    }
+    if (kadasMilx.hadItems) {
+      warnings.push({
+        layerName: name,
+        reason: "format",
+        ...(provider ? { provider } : {}),
+      });
       continue;
     }
 
@@ -611,6 +645,310 @@ function parseLayerStyle(element: Element): LayerStyle {
     if (sizeValue !== null) style.labels.size = sizeValue;
   }
   return style;
+}
+
+interface ParseKadasMilxInput {
+  element: Element;
+  id: string;
+  name: string;
+  visible: boolean;
+  opacity: number;
+  groupId?: string;
+  provider: string;
+}
+
+interface ParsedMssSymbol {
+  sidc: string;
+  attrs: Record<string, string>;
+}
+
+const DIRECTIONAL_FUNCTION_IDS = new Set([
+  // Attack / axis style control measures seen in Kadas/APP-6 datasets.
+  "OLAGM-",
+  "OLAGS-",
+  "OLKA--",
+  "OLKGM-",
+  "OLKGS-",
+  "PF----",
+  // Common directional movement/task graphics.
+  "LCH---",
+  "LCM---",
+  "A-----",
+  "AS----",
+  "F-----",
+]);
+
+function parseKadasMilxLayer(input: ParseKadasMilxInput): {
+  layers: GeoLibreLayer[];
+  hadItems: boolean;
+} {
+  const { element, id, name, visible, opacity, groupId, provider } = input;
+  if (!isKadasMilxLayer(element, provider)) return { layers: [], hadItems: false };
+
+  const itemElements = Array.from(element.querySelectorAll(":scope > MapItem[name='KadasMilxItem']"));
+  if (itemElements.length === 0) return { layers: [], hadItems: false };
+
+  const symbolSize = optionalNumber(element.getAttribute("milx_symbol_size") ?? undefined) ?? 60;
+  const lineWidth = optionalNumber(element.getAttribute("milx_line_width") ?? undefined);
+  const lineColor = element.getAttribute("milx_leader_line_color")?.trim() || undefined;
+  const layerStyle: LayerStyle = {
+    ...structuredClone(DEFAULT_LAYER_STYLE),
+    ...(lineWidth !== null ? { strokeWidth: Math.max(0, lineWidth) } : {}),
+    ...(lineColor ? { strokeColor: lineColor } : {}),
+  };
+
+  const symbols: MilSymbolLayerItem[] = [];
+  const graphics: MilGraphicLayerItem[] = [];
+
+  for (const itemElement of itemElements) {
+    const payloadText = itemElement.textContent?.trim();
+    if (!payloadText) continue;
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(payloadText);
+    } catch {
+      continue;
+    }
+    if (!payload || typeof payload !== "object") continue;
+
+    const record = payload as Record<string, unknown>;
+    const props = (record.props ?? {}) as Record<string, unknown>;
+    const state = (record.state ?? {}) as Record<string, unknown>;
+    const parsed = parseMilxMssString(typeof props.mssString === "string" ? props.mssString : "");
+    if (!parsed || !isValidSidc(parsed.sidc)) continue;
+
+    const points = parseKadasPoints(state.points);
+    if (points.length === 0) continue;
+
+    const symbolType =
+      typeof props.symbolType === "string" && props.symbolType.trim() ? props.symbolType : "Other";
+    const nameFromProps =
+      firstString(
+        props.militaryName,
+        props.objectName,
+        parsed.attrs.T,
+        `${name} item`,
+      ) ?? `${name} item`;
+
+    const hasVariablePoints = props.hasVariablePoints === true;
+    const symbolTypeLower = symbolType.toLowerCase();
+    if (symbolTypeLower === "linestring" || symbolTypeLower === "polygon" || hasVariablePoints) {
+      const geometryType = symbolTypeLower === "polygon" ? "Polygon" : "LineString";
+      const tacticalDirectional =
+        geometryType === "LineString" &&
+        deriveKadasDirectionalFlag({
+          sidc: parsed.sidc,
+          attrs: parsed.attrs,
+          hasVariablePoints,
+          points,
+          controlPoints: parseKadasControlPoints(state.controlPoints),
+          minNPoints: parsePositiveInteger(props.minNPoints),
+        });
+      graphics.push({
+        id: crypto.randomUUID(),
+        name: nameFromProps,
+        SIDC: parsed.sidc,
+        geometryType,
+        coordinates: points,
+        affiliation: inferAffiliation(parsed.sidc),
+        uniqueDesignation: parsed.attrs.T,
+        additionalInfo: parsed.attrs.H ?? parsed.attrs.G,
+        tacticalDirectional,
+      });
+      continue;
+    }
+
+    const [lon, lat] = points[0];
+    symbols.push({
+      id: crypto.randomUUID(),
+      name: nameFromProps,
+      SIDC: parsed.sidc,
+      lon,
+      lat,
+      affiliation: inferAffiliation(parsed.sidc),
+      uniqueDesignation: parsed.attrs.T,
+      higherFormation: parsed.attrs.M,
+      staffComments: parsed.attrs.G,
+      additionalInformation: parsed.attrs.H,
+      direction: optionalNumber(parsed.attrs.Q) ?? undefined,
+      speed: parsed.attrs.Z,
+    });
+  }
+
+  const parsedLayers: GeoLibreLayer[] = [];
+  if (symbols.length > 0) {
+    parsedLayers.push({
+      id: `${id}-mil-symbol`,
+      name: `${name} Symbols`,
+      type: "mil-symbol",
+      source: serializeMilSymbolLayerSource(symbols, symbolSize),
+      visible,
+      opacity,
+      style: { ...layerStyle },
+      metadata: {
+        importedFrom: "qgis",
+        qgisLayerId: id,
+        qgisProvider: provider,
+        qgisMilxLayer: true,
+      },
+      ...(groupId ? { groupId } : {}),
+    });
+  }
+  if (graphics.length > 0) {
+    parsedLayers.push({
+      id: `${id}-mil-graphic`,
+      name: `${name} Tactical Graphics`,
+      type: "mil-graphic",
+      source: serializeMilGraphicLayerSource(graphics),
+      visible,
+      opacity,
+      style: { ...layerStyle },
+      metadata: {
+        importedFrom: "qgis",
+        qgisLayerId: id,
+        qgisProvider: provider,
+        qgisMilxLayer: true,
+      },
+      ...(groupId ? { groupId } : {}),
+    });
+  }
+
+  return { layers: parsedLayers, hadItems: true };
+}
+
+function isKadasMilxLayer(element: Element, provider: string): boolean {
+  if (element.getAttribute("type")?.toLowerCase() !== "plugin") return false;
+  const layerClass = (element.getAttribute("name") ?? "").toLowerCase();
+  const hasMilxItems = element.querySelector(":scope > MapItem[name='KadasMilxItem']") != null;
+  return layerClass === "kadasmilxlayer" || hasMilxItems || provider === "kadasmilx";
+}
+
+function parseMilxMssString(mssString: string): ParsedMssSymbol | null {
+  const raw = mssString.trim();
+  if (!raw) return null;
+  const wrapped = raw.startsWith("<") ? raw : `<Symbol ID="${raw}"/>`;
+  let doc: Document;
+  try {
+    doc = new DOMParser().parseFromString(wrapped, "application/xml");
+  } catch {
+    return null;
+  }
+  if (doc.querySelector("parsererror")) return null;
+  const symbol = doc.querySelector("Symbol");
+  if (!symbol) return null;
+  const sidc = symbol
+    .getAttribute("ID")
+    ?.trim()
+    .toUpperCase()
+    .replace(/\*/g, "-")
+    .replace(/\s+/g, "");
+  if (!sidc) return null;
+  const attrs: Record<string, string> = {};
+  symbol.querySelectorAll("Attribute").forEach((attr) => {
+    const id = attr.getAttribute("ID")?.trim();
+    const value = attr.textContent?.trim();
+    if (id && value) attrs[id] = value;
+  });
+  return { sidc, attrs };
+}
+
+function parseKadasPoints(raw: unknown): [number, number][] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((point): point is [number, number] => Array.isArray(point) && point.length >= 2)
+    .map((point) => [Number(point[0]), Number(point[1])] as [number, number])
+    .filter(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat));
+}
+
+function parseKadasControlPoints(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((index) => Number(index))
+    .filter((index) => Number.isInteger(index) && index >= 0);
+}
+
+function parsePositiveInteger(value: unknown): number | undefined {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : Number.NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function deriveKadasDirectionalFlag(params: {
+  sidc: string;
+  attrs: Record<string, string>;
+  hasVariablePoints: boolean;
+  points: [number, number][];
+  controlPoints: number[];
+  minNPoints?: number;
+}): boolean {
+  const { sidc, attrs, hasVariablePoints, points, controlPoints, minNPoints } = params;
+  if (attrs.Q != null) return true;
+  if (isDirectionalSidc(sidc)) return true;
+  if (!hasVariablePoints || points.length < 2) return false;
+
+  // Kadas tactical arrows commonly mark editable direction handles here.
+  const validControlPoints = controlPoints.filter((index) => index < points.length);
+  if (validControlPoints.length > 0) {
+    const tailWindowStart = Math.max(1, points.length - 2);
+    if (validControlPoints.some((index) => index >= tailWindowStart)) return true;
+    if (points.length >= 3) return true;
+  }
+
+  // Some Kadas graphics duplicate a tail vertex to anchor arrow geometry.
+  const hasTailDuplicate = points.slice(1).some(([lon, lat], index) => {
+    const [prevLon, prevLat] = points[index];
+    return lon === prevLon && lat === prevLat;
+  });
+  if (hasTailDuplicate) return true;
+
+  if (typeof minNPoints === "number" && points.length > minNPoints) return true;
+  return false;
+}
+
+function isDirectionalSidc(sidc: string): boolean {
+  const normalized = sidc.toUpperCase().replace(/\*/g, "-").replace(/\s+/g, "");
+  // Legacy letter SIDC: function id is positions 5-10 (0-based slice 4..10).
+  const functionId = normalized.slice(4, 10);
+  return DIRECTIONAL_FUNCTION_IDS.has(functionId);
+}
+
+function inferAffiliation(sidc: string): MilAffiliation {
+  const upper = sidc.toUpperCase();
+  if (upper.length >= 20) {
+    const aff = upper[3];
+    if (aff === "6" || aff === "5") return "HOSTILE";
+    if (aff === "4") return "NEUTRAL";
+    if (aff === "1" || aff === "0") return "UNKNOWN";
+    return "FRIENDLY";
+  }
+  const aff = upper[1];
+  if (aff === "H") return "HOSTILE";
+  if (aff === "N") return "NEUTRAL";
+  if (aff === "U" || aff === "P") return "UNKNOWN";
+  return "FRIENDLY";
+}
+
+function isValidSidc(sidc: string): boolean {
+  try {
+    const result = new MilSymbol(sidc).isValid();
+    return result === true || (typeof result === "object" && result !== null);
+  } catch {
+    return false;
+  }
+}
+
+function firstString(...values: Array<unknown>): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
 }
 
 function qgisColor(value: string | undefined): { color: string; opacity: number } | null {

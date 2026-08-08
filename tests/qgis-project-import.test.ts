@@ -7,6 +7,8 @@ import {
   importQgisProject,
   materializeQgisRemoteLayers,
 } from "../apps/geolibre-desktop/src/lib/qgis-project-import";
+import { parseMilGraphicLayerSource } from "../apps/geolibre-desktop/src/lib/milgraphic-layer-source";
+import { parseMilSymbolLayerSource } from "../apps/geolibre-desktop/src/lib/milsymbol-layer-source";
 
 globalThis.DOMParser = DOMParser as unknown as typeof globalThis.DOMParser;
 
@@ -118,6 +120,33 @@ function osmBasemapProjectXml(): string {
   </qgis>`;
 }
 
+function kadasMilxProjectXml(): string {
+  return `<qgis version="3.40.0">
+    <title>MILX plugin map</title>
+    <layer-tree-group name="" checked="Qt::Checked">
+      <layer-tree-layer id="BLUE_FORCE" checked="Qt::Checked"/>
+      <layer-tree-layer id="RED_FORCE" checked="Qt::Checked"/>
+    </layer-tree-group>
+    <projectlayers>
+      <maplayer type="plugin" name="KadasMilxLayer" milx_symbol_size="60" milx_line_width="2" milx_leader_line_color="#000000">
+        <id>BLUE_FORCE</id>
+        <layername>BLUE FORCE</layername>
+        <provider>kadasmilx</provider>
+        <MapItem name="KadasMilxItem" editor="KadasMilxEditor" crs="EPSG:4326"><![CDATA[{"props":{"militaryName":"gren team DELTA","mssString":"<Symbol ID=\"S*F*PUC-----A--G\"><Attribute ID=\"T\">DELTA</Attribute><Attribute ID=\"G\">COMMENT</Attribute><Attribute ID=\"H\">INFO</Attribute><Attribute ID=\"XE\">9SCHUXC--------</Attribute></Symbol>","symbolType":"Other"},"state":{"points":[[7.813245897301099,47.03519540336956]]}}]]></MapItem>
+        <MapItem name="KadasMilxItem" editor="KadasMilxEditor" crs="EPSG:4326"><![CDATA[{"props":{"militaryName":"supatk","mssString":"<Symbol ID=\"GFGPOLAGS------\"/>","symbolType":"LineString","hasVariablePoints":true,"minNPoints":2},"state":{"controlPoints":[2],"points":[[7.821938782788509,47.03379093587764],[7.817867657704658,47.03483887646578],[7.817867657704658,47.03483887646578],[7.820702373209466,47.03568402671792]]}}]]></MapItem>
+        <MapItem name="KadasMilxItem" editor="KadasMilxEditor" crs="EPSG:4326"><![CDATA[{"props":{"militaryName":"manatk sidc-only directional","mssString":"<Symbol ID=\"GFGPOLAGM------\"/>","symbolType":"LineString","hasVariablePoints":false},"state":{"points":[[7.840680455350956,47.024147089379106],[7.847206298909191,47.0260580315067]]}}]]></MapItem>
+        <MapItem name="KadasMilxItem" editor="KadasMilxEditor" crs="EPSG:4326"><![CDATA[{"props":{"militaryName":"line non directional","mssString":"<Symbol ID=\"GFGPOLAGS------\"/>","symbolType":"LineString","hasVariablePoints":false},"state":{"points":[[7.83,47.03],[7.831,47.031]]}}]]></MapItem>
+      </maplayer>
+      <maplayer type="plugin" name="KadasMilxLayer" milx_symbol_size="60" milx_line_width="2" milx_leader_line_color="#000000">
+        <id>RED_FORCE</id>
+        <layername>RED FORCE</layername>
+        <provider>kadasmilx</provider>
+        <MapItem name="KadasMilxItem" editor="KadasMilxEditor" crs="EPSG:4326"><![CDATA[{"props":{"militaryName":"para","mssString":"<Symbol ID=\"SHAPM----------\"/>","symbolType":"Other"},"state":{"points":[[7.824036055494383,47.031625575671654]]}}]]></MapItem>
+      </maplayer>
+    </projectlayers>
+  </qgis>`;
+}
+
 describe("QGIS project import", () => {
   it("imports vector layers, styles, visibility, nested groups, extent, and relative paths", () => {
     const result = importQgisProject(projectXml(), "/work/projects/example.qgs");
@@ -188,6 +217,56 @@ describe("QGIS project import", () => {
     assert.deepEqual(result.project.layers, []);
     assert.deepEqual(result.rasters, []);
     assert.deepEqual(result.warnings, []);
+  });
+
+  it("imports KadasMilx plugin maplayers into mil-symbol and mil-graphic layers", () => {
+    const result = importQgisProject(kadasMilxProjectXml(), "/work/mss-test.qgs");
+
+    const milSymbols = result.project.layers.filter((layer) => layer.type === "mil-symbol");
+    const milGraphics = result.project.layers.filter((layer) => layer.type === "mil-graphic");
+
+    assert.equal(milSymbols.length, 2);
+    assert.equal(milGraphics.length, 1);
+    assert.deepEqual(result.rasters, []);
+    assert.deepEqual(result.warnings, []);
+
+    const blueSymbols = milSymbols.find((layer) => layer.name.includes("BLUE FORCE"));
+    const redSymbols = milSymbols.find((layer) => layer.name.includes("RED FORCE"));
+    const blueGraphics = milGraphics.find((layer) => layer.name.includes("BLUE FORCE"));
+
+    assert.ok(blueSymbols);
+    assert.ok(redSymbols);
+    assert.ok(blueGraphics);
+
+    const parsedBlueSymbols = parseMilSymbolLayerSource(blueSymbols?.source);
+    assert.equal(parsedBlueSymbols.symbolSize, 60);
+    assert.equal(parsedBlueSymbols.symbols.length, 1);
+    assert.equal(parsedBlueSymbols.symbols[0].SIDC, "S-F-PUC-----A--G");
+    assert.equal(parsedBlueSymbols.symbols[0].uniqueDesignation, "DELTA");
+    assert.equal(parsedBlueSymbols.symbols[0].staffComments, "COMMENT");
+    assert.equal(parsedBlueSymbols.symbols[0].additionalInformation, "INFO");
+    // The Kadas-specific XE amplifier holds a raw SIDC token (e.g. "9SCHUXC--------"),
+    // not a human-readable equipment type, so it must not leak into the rendered typeStr.
+    assert.equal(parsedBlueSymbols.symbols[0].typeStr, undefined);
+
+    const parsedRedSymbols = parseMilSymbolLayerSource(redSymbols?.source);
+    assert.equal(parsedRedSymbols.symbols.length, 1);
+    assert.equal(parsedRedSymbols.symbols[0].SIDC, "SHAPM----------");
+
+    const parsedBlueGraphics = parseMilGraphicLayerSource(blueGraphics?.source);
+    assert.equal(parsedBlueGraphics.graphics.length, 3);
+    assert.equal(parsedBlueGraphics.graphics[0].SIDC, "GFGPOLAGS------");
+    assert.equal(parsedBlueGraphics.graphics[0].geometryType, "LineString");
+    assert.equal(parsedBlueGraphics.graphics[0].tacticalDirectional, true);
+    assert.deepEqual(parsedBlueGraphics.graphics[0].coordinates, [
+      [7.821938782788509, 47.03379093587764],
+      [7.817867657704658, 47.03483887646578],
+      [7.817867657704658, 47.03483887646578],
+      [7.820702373209466, 47.03568402671792],
+    ]);
+    assert.equal(parsedBlueGraphics.graphics[1].SIDC, "GFGPOLAGM------");
+    assert.equal(parsedBlueGraphics.graphics[1].tacticalDirectional, true);
+    assert.equal(parsedBlueGraphics.graphics[2].tacticalDirectional, false);
   });
 
   it("falls back to the default view for a missing or unsupported-CRS extent", () => {
