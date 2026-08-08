@@ -14,9 +14,9 @@
     "protobufjs"
   ],
   "scripts": {
-    "dev": "npm run dev -w milgeo-app",
-    "build": "npm run build -w milgeo-app",
-    "build:render": "npm run build:render -w milgeo-app",
+    "dev": "npm run dev -w geolibre-desktop",
+    "build": "npm run build -w geolibre-desktop",
+    "build:render": "npm run build -w geolibre-desktop",
     "typecheck": "npm run build",
     "lint": "eslint apps packages workers tests",
     "test": "npm run test:frontend",
