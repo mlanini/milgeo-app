@@ -3,14 +3,22 @@
  * PDF dependencies so it can be unit tested directly.
  */
 import {
+  diagramsSuppressedByPointRenderer,
+  effectiveVectorRules,
+  isHexColor,
+  normalizeHexColor,
+  proportionalSizeRange,
   styleValue,
   type GeoLibreLayer,
+  type LayerStyle,
   type LayerType,
   type LegendConfig,
   type LegendItemOverride,
+  type MarkerShape,
+  type ProportionalSizeRange,
   type VectorStyleStop,
 } from "@geolibre/core";
-import type { LegendEntry, LegendSwatch } from "./print-layout";
+import type { LegendEntry, LegendMarker, LegendSwatch } from "./print-layout";
 
 /** Layer types styled as vectors (colored fills the legend can represent). */
 const VECTOR_TYPES: ReadonlySet<LayerType> = new Set<LayerType>([
@@ -24,7 +32,7 @@ const VECTOR_TYPES: ReadonlySet<LayerType> = new Set<LayerType>([
 ]);
 
 /** Layer types with no meaningful single-swatch legend representation. */
-const NON_LEGEND_TYPES: ReadonlySet<LayerType> = new Set<LayerType>([
+export const NON_LEGEND_TYPES: ReadonlySet<LayerType> = new Set<LayerType>([
   "lidar",
   "gaussian-splat",
   "3d-tiles",
@@ -34,6 +42,17 @@ const NON_LEGEND_TYPES: ReadonlySet<LayerType> = new Set<LayerType>([
 
 const NEUTRAL_SWATCH = "#94a3b8";
 const MAX_RAMP_SWATCHES = 6;
+/**
+ * Upper bound on categorized class rows. Categories are nominal values, so
+ * dropping one loses information no neighbouring row implies (unlike a
+ * graduated ramp, where sampling still reads as the same continuous range) —
+ * every class is listed and only a runaway class count is elided from the tail.
+ * Mirrors the on-map auto legend's `MAX_LEGEND_ROWS` so both legends elide at
+ * the same point; kept as a local copy because `auto-legend.ts` imports from
+ * this module and the reverse import would be circular. Exported so
+ * `tests/print-legend.test.ts` can fail if the two drift apart.
+ */
+export const MAX_CATEGORY_SWATCHES = 100;
 
 /**
  * Build legend entries from the visible layers. Vector layers contribute a
@@ -49,47 +68,145 @@ export function buildLegend(layers: GeoLibreLayer[]): LegendEntry[] {
   // Render order in the store is bottom-first; legends read top-first.
   for (const layer of [...layers].reverse()) {
     if (!layer.visible) continue;
-    if (NON_LEGEND_TYPES.has(layer.type)) continue;
-
-    // MBTiles can carry vector or raster tiles; the app renders it as vector
-    // unless its metadata or source says raster (mirrors layer-sync), so a
-    // missing or legacy tileType is treated as vector here too.
-    const isVector =
-      VECTOR_TYPES.has(layer.type) ||
-      (layer.type === "mbtiles" &&
-        layer.metadata.tileType !== "raster" &&
-        layer.source.type !== "raster");
-    if (isVector) {
-      const mode = styleValue(layer.style, "vectorStyleMode");
-      const stops = styleValue(layer.style, "vectorStyleStops");
-      if (
-        (mode === "graduated" || mode === "categorized") &&
-        Array.isArray(stops) &&
-        stops.length > 0
-      ) {
-        entries.push({
-          id: layer.id,
-          name: layer.name,
-          swatches: rampSwatches(stops, mode),
-        });
-        continue;
-      }
-      entries.push({
-        id: layer.id,
-        name: layer.name,
-        swatches: [{ color: styleValue(layer.style, "fillColor") }],
-      });
-      continue;
-    }
-
-    // Raster / service layers: a single neutral marker swatch.
-    entries.push({
-      id: layer.id,
-      name: layer.name,
-      swatches: [{ color: NEUTRAL_SWATCH }],
-    });
+    const swatches = legendSwatchesForLayer(layer);
+    // No swatches means a type with no meaningful legend representation.
+    if (swatches.length === 0) continue;
+    entries.push({ id: layer.id, name: layer.name, swatches });
   }
   return entries;
+}
+
+/**
+ * The legend swatch(es) for a single layer, independent of its visibility.
+ * Shared by {@link buildLegend} (which filters to visible layers) and the
+ * Layers-panel row symbol (which shows a swatch even for hidden layers). Returns
+ * an empty array for types with no meaningful legend representation
+ * ({@link NON_LEGEND_TYPES}); every legend-able layer yields at least one swatch.
+ */
+export function legendSwatchesForLayer(layer: GeoLibreLayer): LegendSwatch[] {
+  if (NON_LEGEND_TYPES.has(layer.type)) return [];
+
+  if (isVectorStyledLayer(layer)) {
+    const mode = styleValue(layer.style, "vectorStyleMode");
+    const stops = styleValue(layer.style, "vectorStyleStops");
+    // Diagram symbology adds one labeled swatch per charted attribute after the
+    // base symbology's swatches, mirroring the QGIS legend.
+    const diagrams = diagramSwatches(layer);
+    const sizeRange = layerSupportsProportionalLegend(layer)
+      ? proportionalSizeRange(layer.style)
+      : null;
+    // A marker layer's sized rows draw the marker (the map scales the sprite via
+    // icon-size), not a plain circle. Mirrors the on-map auto legend so both
+    // legends show the symbol the reader actually sees. Excluded for lines,
+    // whose sized rows are strokes and which the map never draws a marker for.
+    const sizeMarker =
+      sizeRange && legendGeometryKind(layer) !== "line"
+        ? (pointMarkerSwatch(layer.style)?.marker ?? undefined)
+        : undefined;
+    if (
+      (mode === "graduated" || mode === "categorized") &&
+      Array.isArray(stops) &&
+      stops.length > 0
+    ) {
+      // Reduce once so color/label rows and proportional sizes stay paired when
+      // the class list is long. A graduated ramp is a continuous range, so
+      // sampling evenly still describes it; categories are discrete, so every
+      // one is listed (GH #1608).
+      const displayedStops =
+        mode === "categorized"
+          ? stops.slice(0, MAX_CATEGORY_SWATCHES)
+          : stops.length > MAX_RAMP_SWATCHES
+            ? sampleEvenly(stops, MAX_RAMP_SWATCHES)
+            : stops;
+      const ramp = rampSwatches(displayedStops, mode);
+      const classProperty = styleValue(layer.style, "vectorStyleProperty");
+      // Same field classified and sized: merge sizes into the class rows so the
+      // print legend matches the on-map auto-legend (one block, not two).
+      if (sizeRange && mode === "graduated" && sizeRange.property === classProperty) {
+        return [...sizeClassSwatches(ramp, displayedStops, sizeRange, sizeMarker), ...diagrams];
+      }
+      return [
+        ...ramp,
+        ...(sizeRange
+          ? proportionalSizeSwatches(sizeRange, sizeRampColor(ramp, layer.style), sizeMarker)
+          : []),
+        ...diagrams,
+      ];
+    }
+    if (mode === "rule-based") {
+      const swatches = ruleSwatches(layer);
+      if (swatches.length > 0) {
+        return [
+          ...swatches,
+          ...(sizeRange
+            ? proportionalSizeSwatches(sizeRange, sizeRampColor(swatches, layer.style), sizeMarker)
+            : []),
+          ...diagrams,
+        ];
+      }
+    }
+    // Single symbology with proportional sizing: the size ramp IS the legend.
+    if (sizeRange) {
+      return [
+        ...proportionalSizeSwatches(
+          sizeRange,
+          styleValue(layer.style, "fillColor") || NEUTRAL_SWATCH,
+          sizeMarker,
+        ),
+        ...diagrams,
+      ];
+    }
+    const primary = pointMarkerSwatch(layer.style) ?? {
+      color: styleValue(layer.style, "fillColor"),
+    };
+    return [primary, ...diagrams];
+  }
+
+  // Raster / service layers: a single neutral marker swatch.
+  return [{ color: NEUTRAL_SWATCH }];
+}
+
+/**
+ * Whether a layer is rendered through the vector styling pipeline (a colored
+ * fill/line/circle the legend can represent). MBTiles can carry vector or
+ * raster tiles; the app renders it as vector unless its metadata or source says
+ * raster (mirrors layer-sync), so a missing or legacy tileType is treated as
+ * vector here too. Shared with the on-map auto legend.
+ */
+export function isVectorStyledLayer(layer: GeoLibreLayer): boolean {
+  return (
+    VECTOR_TYPES.has(layer.type) ||
+    (layer.type === "mbtiles" &&
+      layer.metadata.tileType !== "raster" &&
+      layer.source.type !== "raster")
+  );
+}
+
+/**
+ * The primary legend swatch for a single-symbol point layer that renders a
+ * marker icon, carrying the marker so the legend draws the actual shape / SVG
+ * instead of a plain fill square. Mirrors `prepareMarker` (`@geolibre/map`):
+ * enabled only when `markerEnabled` is on, and a `"custom"` marker with no SVG
+ * markup falls through (returns null) to the plain fill swatch. Returns null
+ * for layers with no marker, so the caller keeps the existing fill swatch.
+ */
+export function pointMarkerSwatch(style: LayerStyle): LegendSwatch | null {
+  if (styleValue(style, "markerEnabled") !== true) return null;
+  // Mirror the map (layer-sync gates the marker overlay on the "single" point
+  // renderer): cluster/heatmap draw clustered circles or a density surface with
+  // no individual markers, so the legend must not advertise a marker the map
+  // isn't drawing. Sibling guard to diagramsSuppressedByPointRenderer.
+  if (styleValue(style, "pointRenderer") !== "single") return null;
+  const shape = styleValue(style, "markerShape") as MarkerShape;
+  const color = normalizeHexColor(styleValue(style, "markerColor")) ?? "#3b82f6";
+  if (shape === "custom") {
+    const svg = styleValue(style, "markerSvg").trim();
+    if (!svg) return null;
+    const marker: LegendMarker = { shape, color, svg };
+    return { color, marker };
+  }
+  const marker: LegendMarker = { shape, color };
+  return { color, marker };
 }
 
 /** Stable key for an individual class swatch within an entry. */
@@ -121,10 +238,7 @@ function hasLabelOverride(label: string | undefined): boolean {
  * Reorder base legend entries to follow {@link LegendConfig.order} (top-first).
  * Layers absent from `order` keep their default position after the listed ones.
  */
-function orderEntries(
-  entries: LegendEntry[],
-  order: string[],
-): LegendEntry[] {
+function orderEntries(entries: LegendEntry[], order: string[]): LegendEntry[] {
   if (order.length === 0) return entries;
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
   const seen = new Set<string>();
@@ -151,10 +265,7 @@ function orderEntries(
  * @param config - User customizations from the project.
  * @returns Render-ready legend entries.
  */
-export function applyLegendConfig(
-  base: LegendEntry[],
-  config: LegendConfig,
-): LegendEntry[] {
+export function applyLegendConfig(base: LegendEntry[], config: LegendConfig): LegendEntry[] {
   const ordered = orderEntries(base, config.order);
   const result: LegendEntry[] = [];
   for (const entry of ordered) {
@@ -176,6 +287,8 @@ export function applyLegendConfig(
         label: hasLabelOverride(override?.label)
           ? renderedLabel(override?.label, swatch.label ?? "")
           : swatch.label,
+        marker: swatch.marker,
+        size: swatch.size,
       });
     });
     // Every class hidden: drop the whole entry rather than render an empty box.
@@ -190,11 +303,7 @@ export function applyLegendConfig(
  * the entry when it carries neither a label nor a hidden flag so the persisted
  * config stays minimal.
  */
-function withOverride(
-  config: LegendConfig,
-  key: string,
-  next: LegendItemOverride,
-): LegendConfig {
+function withOverride(config: LegendConfig, key: string, next: LegendItemOverride): LegendConfig {
   const overrides = { ...config.overrides };
   if (next.label === undefined && !next.hidden) {
     delete overrides[key];
@@ -217,16 +326,12 @@ export function setLegendItemLabel(
 ): LegendConfig {
   const current = config.overrides[key] ?? {};
   const trimmed = label.trim();
-  const nextLabel =
-    trimmed === "" || trimmed === defaultLabel.trim() ? undefined : label;
+  const nextLabel = trimmed === "" || trimmed === defaultLabel.trim() ? undefined : label;
   return withOverride(config, key, { ...current, label: nextLabel });
 }
 
 /** Toggle whether a legend item is hidden from the rendered legend. */
-export function toggleLegendItemHidden(
-  config: LegendConfig,
-  key: string,
-): LegendConfig {
+export function toggleLegendItemHidden(config: LegendConfig, key: string): LegendConfig {
   const current = config.overrides[key] ?? {};
   const hidden = !current.hidden;
   return withOverride(config, key, {
@@ -265,6 +370,8 @@ export interface LegendEditorRow {
   kind: "entry" | "class";
   /** Swatch color, when the row has one (entries always do; class rows do too). */
   color?: string;
+  /** Point marker for a single-symbol entry row, so the editor previews it. */
+  marker?: LegendMarker;
   /** The auto-generated label. */
   defaultLabel: string;
   /** Effective label after applying any override. */
@@ -284,10 +391,7 @@ export interface LegendEditorRow {
  * @param config - User customizations from the project.
  * @returns One row per legend entry, with class rows following multi-class entries.
  */
-export function legendEditorRows(
-  base: LegendEntry[],
-  config: LegendConfig,
-): LegendEditorRow[] {
+export function legendEditorRows(base: LegendEntry[], config: LegendConfig): LegendEditorRow[] {
   const ordered = orderEntries(base, config.order);
   const rows: LegendEditorRow[] = [];
   for (const entry of ordered) {
@@ -298,13 +402,9 @@ export function legendEditorRows(
       layerId: entry.id,
       kind: "entry",
       color: single ? entry.swatches[0]?.color : undefined,
+      marker: single ? entry.swatches[0]?.marker : undefined,
       defaultLabel: entry.name,
-      // Show the raw override (so the input can hold spaces mid-edit) but fall
-      // back to the default when it is blank, matching what applyLegendConfig
-      // renders.
-      label: hasLabelOverride(entryOverride?.label)
-        ? (entryOverride?.label as string)
-        : entry.name,
+      label: hasLabelOverride(entryOverride?.label) ? (entryOverride?.label as string) : entry.name,
       hidden: Boolean(entryOverride?.hidden),
       reorderable: true,
     });
@@ -318,10 +418,9 @@ export function legendEditorRows(
         layerId: entry.id,
         kind: "class",
         color: swatch.color,
+        marker: swatch.marker,
         defaultLabel,
-        label: hasLabelOverride(override?.label)
-          ? (override?.label as string)
-          : defaultLabel,
+        label: hasLabelOverride(override?.label) ? (override?.label as string) : defaultLabel,
         hidden: Boolean(override?.hidden),
         reorderable: false,
       });
@@ -330,21 +429,144 @@ export function legendEditorRows(
   return rows;
 }
 
+/**
+ * Legend swatches for a layer's diagram symbology: one per charted attribute,
+ * labeled with the attribute name. Empty whenever the deck overlay would not
+ * draw diagrams for the layer (no in-memory GeoJSON, a deck-viz dataset
+ * layer, diagrams off, or a point-only layer whose heatmap/cluster renderer
+ * suppresses them), matching isDiagramLayer's gate so the legend never lists
+ * charts that are not on the map. Shared with the on-map auto legend.
+ */
+export function diagramSwatches(
+  layer: Pick<GeoLibreLayer, "type" | "geojson" | "style" | "metadata">,
+): { color: string; label: string }[] {
+  if (
+    !layer.geojson ||
+    layer.type === "deckgl-viz" ||
+    layer.metadata.externalDeckLayer === true ||
+    styleValue(layer.style, "diagramType") === "none" ||
+    diagramsSuppressedByPointRenderer(layer.geojson, layer.style)
+  ) {
+    return [];
+  }
+  return styleValue(layer.style, "diagramFields")
+    .filter((field) => field.property !== "")
+    .map((field) => ({ color: field.color, label: field.property }));
+}
+
+/**
+ * Rule-based renderer swatches: one per drawable rule (disabled rules and
+ * group rules are resolved away by {@link effectiveVectorRules}, mirroring the
+ * live map), plus the catch-all else rule when it has a valid color. Labels
+ * fall back to the rule's filter text so unlabeled rules stay identifiable.
+ */
+function ruleSwatches(layer: GeoLibreLayer): { color: string; label: string }[] {
+  const { rules, elseRule } = effectiveVectorRules(layer.style);
+  const limited = rules.length > MAX_RAMP_SWATCHES ? sampleEvenly(rules, MAX_RAMP_SWATCHES) : rules;
+  const swatches = limited.map((rule) => ({
+    color: rule.color,
+    label: rule.label || JSON.stringify(rule.filter),
+  }));
+  if (elseRule && isHexColor(elseRule.color)) {
+    swatches.push({ color: elseRule.color, label: elseRule.label || "Other" });
+  }
+  return swatches;
+}
+
 function rampSwatches(
   stops: VectorStyleStop[],
   mode: "graduated" | "categorized",
 ): { color: string; label: string }[] {
-  const limited =
-    stops.length > MAX_RAMP_SWATCHES
-      ? sampleEvenly(stops, MAX_RAMP_SWATCHES)
-      : stops;
-  return limited.map((stop) => ({
+  return stops.map((stop) => ({
     color: stop.color,
-    label:
-      mode === "graduated"
-        ? `≥ ${formatStopValue(stop.value)}`
-        : formatStopValue(stop.value),
+    label: mode === "graduated" ? `≥ ${formatStopValue(stop.value)}` : formatStopValue(stop.value),
   }));
+}
+
+/**
+ * The geometry the legend should represent this layer as, from its metadata
+ * when present and otherwise sniffed from the loaded features. `null` means
+ * "unknown" — no metadata and nothing conclusive in the sample — which callers
+ * treat permissively (a tiled layer whose features have not loaded yet).
+ */
+function legendGeometryKind(layer: GeoLibreLayer): "point" | "line" | "polygon" | null {
+  const geometryType =
+    typeof layer.metadata?.geometryType === "string" ? layer.metadata.geometryType : null;
+  if (geometryType === "point" || geometryType === "line" || geometryType === "polygon") {
+    return geometryType;
+  }
+
+  const features = layer.geojson?.features;
+  if (!features || features.length === 0) return null;
+  for (const feature of features.slice(0, 200)) {
+    const type = feature.geometry?.type ?? "";
+    if (type === "Point" || type === "MultiPoint") return "point";
+    if (type === "LineString" || type === "MultiLineString") return "line";
+    if (type === "Polygon" || type === "MultiPolygon") return "polygon";
+  }
+  return null;
+}
+
+/**
+ * Whether the map would size this layer's symbols (circles / line strokes).
+ * Polygon fills ignore proportional sizing, matching the on-map auto-legend.
+ */
+function layerSupportsProportionalLegend(layer: GeoLibreLayer): boolean {
+  return legendGeometryKind(layer) !== "polygon";
+}
+
+function lerp(from: number, to: number, ratio: number): number {
+  return from + (to - from) * ratio;
+}
+
+/**
+ * Proportional-symbol size rows: min / middle / max symbol sizes with their
+ * data values, mirroring the interpolate the map renders and the on-map legend.
+ */
+function proportionalSizeSwatches(
+  range: ProportionalSizeRange,
+  color: string,
+  marker?: LegendMarker,
+): LegendSwatch[] {
+  return [0, 0.5, 1].map((ratio) => ({
+    color,
+    label: formatStopValue(lerp(range.minValue, range.maxValue, ratio)),
+    size: lerp(range.minRadius, range.maxRadius, ratio),
+    ...(marker ? { marker } : {}),
+  }));
+}
+
+/**
+ * Size each graduated class swatch at the symbol the map draws for that class
+ * (midpoint of the class range, or the lower bound for the open-ended top
+ * class). Applied when color and size read the same field.
+ */
+function sizeClassSwatches(
+  swatches: { color: string; label: string }[],
+  stops: VectorStyleStop[],
+  range: ProportionalSizeRange,
+  marker?: LegendMarker,
+): LegendSwatch[] {
+  return swatches.map((swatch, index) => {
+    const from = Number(stops[index]?.value);
+    const to = Number(stops[index + 1]?.value);
+    const representative = Number.isFinite(to) ? (from + to) / 2 : from;
+    if (!Number.isFinite(representative)) return swatch;
+    const ratio = (representative - range.minValue) / (range.maxValue - range.minValue);
+    return {
+      ...swatch,
+      size: lerp(range.minRadius, range.maxRadius, Math.min(1, Math.max(0, ratio))),
+      ...(marker ? { marker } : {}),
+    };
+  });
+}
+
+/** Fill color for a standalone size ramp appended after class rows. */
+function sizeRampColor(classSwatches: { color: string }[], style: LayerStyle): string {
+  if (classSwatches.length > 0) {
+    return classSwatches[Math.floor(classSwatches.length / 2)]!.color;
+  }
+  return styleValue(style, "fillColor") || NEUTRAL_SWATCH;
 }
 
 function sampleEvenly<T>(items: T[], count: number): T[] {
