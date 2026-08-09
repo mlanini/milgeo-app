@@ -1,14 +1,21 @@
 import {
+  clearExternalNativePaintBridge,
   DEFAULT_LAYER_STYLE,
   type GeoLibreLayer,
+  interpolateRampColors,
+  setExternalNativePaintBridge,
   useAppStore,
 } from "@geolibre/core";
+import type {
+  QueryGeometry,
+  QueryOptions,
+  QueryResult,
+  Selector,
+  ZarrLayer,
+} from "@carbonplan/zarr-layer";
 import type { Layer } from "@deck.gl/core";
 import type { MapboxOverlay } from "@deck.gl/mapbox";
-import {
-  RasterLayer,
-  type RasterLayerProps,
-} from "@developmentseed/deck.gl-raster";
+import { RasterLayer, type RasterLayerProps } from "@developmentseed/deck.gl-raster";
 import { fromArrayBuffer } from "geotiff";
 import type maplibregl from "maplibre-gl";
 import proj4 from "proj4";
@@ -60,68 +67,64 @@ import type {
   ZarrLayerControl,
   ZarrLayerControlOptions,
   ZarrLayerEventHandler,
+  ZarrLocalStoreProvider,
   ZarrLayerInfo,
 } from "maplibre-gl-components";
-import type {
-  GaussianSplatControl,
-  GaussianSplatLayerAdapter,
-} from "maplibre-gl-splat";
-import type {
-  LidarControlEventHandler,
-  PointCloudInfo,
-} from "maplibre-gl-lidar";
-import type {
-  GeoLibreAppAPI,
-  GeoLibreMapControlPosition,
-  GeoLibrePlugin,
-} from "../types";
+import type { GaussianSplatControl, GaussianSplatLayerAdapter } from "maplibre-gl-splat";
+import type { LidarControlEventHandler, PointCloudInfo } from "maplibre-gl-lidar";
+import type { GeoLibreAppAPI, GeoLibreMapControlPosition, GeoLibrePlugin } from "../types";
 import { ensureMercatorProjection } from "./map-projection-utils";
+import { ensureSharedDeckOverlay, setSharedDeckLayers } from "./shared-deck-overlay";
+import { attachTerrainMeasure, measurePanelElement, type TerrainMapLike } from "./terrain-measure";
+import { INTERNAL_HELPER_LAYER_PATTERNS } from "./internal-layers";
 import {
   KerchunkReferenceStore,
   loadKerchunkReference,
   type KerchunkRefs,
 } from "./kerchunk-reference-store";
+import {
+  nearestTimeIndex,
+  registerTemporalLayer,
+  unregisterTemporalLayer,
+} from "./temporal-layers";
+import { pickTimeDimension, resolveZarrTimeAxis, type ZarrTimeAttributes } from "./zarr-time-axis";
+import {
+  ZarrDirectoryStore,
+  createDirectoryZarrMetadataReader,
+  localZarrStoreUrl,
+  type ZarrDirectoryReader,
+} from "./zarr-directory-store";
 
-type ControlGridConstructor =
-  typeof import("maplibre-gl-components")["ControlGrid"];
-type AddVectorControlConstructor =
-  typeof import("maplibre-gl-components")["AddVectorControl"];
-type BookmarkControlConstructor =
-  typeof import("maplibre-gl-components")["BookmarkControl"];
-type MeasureControlConstructor =
-  typeof import("maplibre-gl-components")["MeasureControl"];
-type MinimapControlConstructor =
-  typeof import("maplibre-gl-components")["MinimapControl"];
-type ViewStateControlConstructor =
-  typeof import("maplibre-gl-components")["ViewStateControl"];
-type CogLayerControlConstructor =
-  typeof import("maplibre-gl-components")["CogLayerControl"];
+/**
+ * `metadata.sourceKind` marking the LiDAR point-cloud layers this plugin adds. Exported so the Layer Library's
+ * restore dispatch keys off the same value this plugin writes rather than a
+ * hand-typed copy (issue #1520).
+ */
+export const LIDAR_SOURCE_KIND = "lidar-url";
+
+type ControlGridConstructor = (typeof import("maplibre-gl-components"))["ControlGrid"];
+type AddVectorControlConstructor = (typeof import("maplibre-gl-components"))["AddVectorControl"];
+type BookmarkControlConstructor = (typeof import("maplibre-gl-components"))["BookmarkControl"];
+type MeasureControlConstructor = (typeof import("maplibre-gl-components"))["MeasureControl"];
+type MinimapControlConstructor = (typeof import("maplibre-gl-components"))["MinimapControl"];
+type ViewStateControlConstructor = (typeof import("maplibre-gl-components"))["ViewStateControl"];
+type CogLayerControlConstructor = (typeof import("maplibre-gl-components"))["CogLayerControl"];
 type ColorbarGuiControlConstructor =
-  typeof import("maplibre-gl-components")["ColorbarGuiControl"];
+  (typeof import("maplibre-gl-components"))["ColorbarGuiControl"];
 type PMTilesLayerControlConstructor =
-  typeof import("maplibre-gl-components")["PMTilesLayerControl"];
-type PrintControlConstructor =
-  typeof import("maplibre-gl-components")["PrintControl"];
-type SearchControlConstructor =
-  typeof import("maplibre-gl-components")["SearchControl"];
-type SpinGlobeControlConstructor =
-  typeof import("maplibre-gl-components")["SpinGlobeControl"];
-type StacSearchControlConstructor =
-  typeof import("maplibre-gl-components")["StacSearchControl"];
-type ZarrLayerControlConstructor =
-  typeof import("maplibre-gl-components")["ZarrLayerControl"];
-type HtmlGuiControlConstructor =
-  typeof import("maplibre-gl-components")["HtmlGuiControl"];
-type LegendGuiControlConstructor =
-  typeof import("maplibre-gl-components")["LegendGuiControl"];
-type LidarControlConstructor =
-  typeof import("maplibre-gl-components")["LidarControl"];
-type LidarLayerAdapterConstructor =
-  typeof import("maplibre-gl-components")["LidarLayerAdapter"];
-type GaussianSplatControlConstructor =
-  typeof import("maplibre-gl-splat")["GaussianSplatControl"];
+  (typeof import("maplibre-gl-components"))["PMTilesLayerControl"];
+type PrintControlConstructor = (typeof import("maplibre-gl-components"))["PrintControl"];
+type SearchControlConstructor = (typeof import("maplibre-gl-components"))["SearchControl"];
+type SpinGlobeControlConstructor = (typeof import("maplibre-gl-components"))["SpinGlobeControl"];
+type StacSearchControlConstructor = (typeof import("maplibre-gl-components"))["StacSearchControl"];
+type ZarrLayerControlConstructor = (typeof import("maplibre-gl-components"))["ZarrLayerControl"];
+type HtmlGuiControlConstructor = (typeof import("maplibre-gl-components"))["HtmlGuiControl"];
+type LegendGuiControlConstructor = (typeof import("maplibre-gl-components"))["LegendGuiControl"];
+type LidarControlConstructor = (typeof import("maplibre-gl-components"))["LidarControl"];
+type LidarLayerAdapterConstructor = (typeof import("maplibre-gl-components"))["LidarLayerAdapter"];
+type GaussianSplatControlConstructor = (typeof import("maplibre-gl-splat"))["GaussianSplatControl"];
 type GaussianSplatLayerAdapterConstructor =
-  typeof import("maplibre-gl-splat")["GaussianSplatLayerAdapter"];
+  (typeof import("maplibre-gl-splat"))["GaussianSplatLayerAdapter"];
 
 interface SplattingControlVisibilityState {
   _container?: HTMLElement | null;
@@ -170,16 +173,34 @@ const lidarControlPosition: GeoLibreMapControlPosition = "top-left";
 const splattingControlPosition: GeoLibreMapControlPosition = "top-left";
 
 const FLATGEOBUF_SAMPLE_URL = "https://flatgeobuf.org/test/data/UScounties.fgb";
+const BUILDING_COUNT_H3_PMTILES_SAMPLE_URL =
+  "https://data.source.coop/giswqs/opengeos/building_count_h3.pmtiles";
 const PMTILES_SAMPLE_URL =
-  "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-05-20.0/buildings.pmtiles";
+  "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-06-17.0/buildings.pmtiles";
 const ZARR_SAMPLE_URL =
   "https://carbonplan-maps.s3.us-west-2.amazonaws.com/v2/demo/4d/tavg-prec-month";
-const LIDAR_SAMPLE_URL =
-  "https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz";
-const SPLATTING_SAMPLE_URL =
-  "https://maplibre.org/maplibre-gl-js/docs/assets/34M_17/34M_17.gltf";
+/**
+ * A cube with a real time axis, so the Zarr panel can demonstrate the Time
+ * Slider binding. The CarbonPlan sample above cannot: its non-spatial dims are
+ * `band` and a bare 1-12 `month` climatology with no CF `units`, which is not a
+ * series of instants, so no temporal adapter is registered for it and the
+ * Layers panel correctly offers no bind action.
+ *
+ * NOAA OI SST V2 monthly means, 1981-2023 on a 1-degree global grid, chunked
+ * one time step per chunk (~165 KiB) so stepping the timeline is a single small
+ * read. Public domain (U.S. Government work); see the store's own attributes
+ * for the citation.
+ */
+const ZARR_TIME_SERIES_SAMPLE_URL =
+  "https://data.source.coop/giswqs/opengeos/noaa-oisst-v2-monthly.zarr";
+const LIDAR_SAMPLE_URL = "https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz";
+const SPLATTING_SAMPLE_URL = "https://maplibre.org/maplibre-gl-js/docs/assets/34M_17/34M_17.gltf";
 const RASTER_PROXY_PATH = "/__geolibre_raster_proxy";
 const GUI_PANEL_VIEWPORT_MARGIN = 16;
+// Poll interval / cap for re-measuring a just-expanded GUI panel while its
+// layout settles (see constrainGuiPanelToViewport).
+const GUI_PANEL_SETTLE_INTERVAL_MS = 100;
+const GUI_PANEL_SETTLE_MAX_TICKS = 20;
 
 const COMPONENT_CONTROL_NAMES = [
   "spinGlobe",
@@ -217,15 +238,9 @@ const COMPONENTS_OPTIONS = {
   collapsed: false,
   columns: 5,
   defaultControls: COMPONENT_CONTROL_NAMES,
-  excludeLayers: [
-    "usgs-lidar-*",
-    "lidar-*",
-    "mapbox-gl-draw-*",
-    "gl-draw-*",
-    "gm_*",
-    "inspect-highlight-*",
-    "measure-*",
-  ],
+  // Shared with Layer Swipe (and any other layer-list control) so the hidden
+  // "chrome" layer set stays consistent; see INTERNAL_HELPER_LAYER_PATTERNS.
+  excludeLayers: [...INTERNAL_HELPER_LAYER_PATTERNS],
   gap: 2,
   rows: 5,
   showRowColumnControls: true,
@@ -264,7 +279,10 @@ const PMTILES_OPTIONS = {
   defaultLineColor: DEFAULT_LAYER_STYLE.strokeColor,
   defaultOpacity: 0.8,
   defaultPickable: false,
-  sampleData: [{ label: "Overture buildings", url: PMTILES_SAMPLE_URL }],
+  sampleData: [
+    { label: "Overture buildings", url: PMTILES_SAMPLE_URL },
+    { label: "H3 building counts", url: BUILDING_COUNT_H3_PMTILES_SAMPLE_URL },
+  ],
   fontColor: "hsl(var(--popover-foreground))",
 } satisfies PMTilesLayerControlOptions;
 
@@ -313,14 +331,11 @@ const bookmarkLabels = {
 };
 
 /** Override the BookmarkControl labels with translated text. */
-export function setBookmarkLabels(
-  labels: Partial<typeof bookmarkLabels>
-): void {
+export function setBookmarkLabels(labels: Partial<typeof bookmarkLabels>): void {
   for (const [key, value] of Object.entries(labels)) {
     // Only overwrite when the caller actually supplied the key; an omitted key
     // keeps the English default rather than being blanked out.
-    if (value !== undefined)
-      bookmarkLabels[key as keyof typeof bookmarkLabels] = value;
+    if (value !== undefined) bookmarkLabels[key as keyof typeof bookmarkLabels] = value;
   }
 }
 
@@ -341,14 +356,10 @@ function captureVisibleLayers(): Record<string, unknown> {
  * were visible, hide the rest. Captured layers that no longer exist are skipped
  * (they cannot be re-added from a view bookmark).
  */
-function restoreVisibleLayers(
-  extra: Record<string, unknown> | undefined
-): void {
+function restoreVisibleLayers(extra: Record<string, unknown> | undefined): void {
   const ids = extra?.visibleLayerIds;
   if (!Array.isArray(ids)) return;
-  const wanted = new Set(
-    ids.filter((id): id is string => typeof id === "string")
-  );
+  const wanted = new Set(ids.filter((id): id is string => typeof id === "string"));
   const { layers } = useAppStore.getState();
   // Apply every visibility change in one store update (instead of one per layer)
   // so restoring a bookmark triggers a single re-render and layer-sync pass.
@@ -367,7 +378,7 @@ function restoreVisibleLayers(
   const missing = [...wanted].filter((id) => !present.has(id)).length;
   if (missing > 0) {
     console.info(
-      `BookmarkControl: ${missing} captured layer(s) are no longer present and were skipped.`
+      `BookmarkControl: ${missing} captured layer(s) are no longer present and were skipped.`,
     );
   }
 }
@@ -418,7 +429,27 @@ const VIEW_STATE_OPTIONS = {
   maxHeight: 520,
   panelWidth: 280,
   position: viewStateControlPosition,
+  // The panel title is applied per-instance in createViewStateControl so it
+  // picks up the translated string pushed via setViewStateLabels.
 } satisfies ViewStateControlOptions;
+
+/**
+ * User-facing strings for the ViewStateControl. The default is English; the
+ * desktop shell pushes a translated value via {@link setViewStateLabels} since
+ * this package is framework-agnostic and has no react-i18next access.
+ */
+const viewStateLabels = {
+  title: "Info",
+};
+
+/** Override the ViewStateControl labels with translated text. */
+export function setViewStateLabels(labels: Partial<typeof viewStateLabels>): void {
+  for (const [key, value] of Object.entries(labels)) {
+    // Only overwrite when the caller actually supplied the key; an omitted key
+    // keeps the English default rather than being blanked out.
+    if (value !== undefined) viewStateLabels[key as keyof typeof viewStateLabels] = value;
+  }
+}
 
 const PRINT_OPTIONS = {
   backgroundColor: "hsl(var(--popover))",
@@ -580,9 +611,7 @@ const STAC_COLOR_RAMP_COLORS: Record<string, string[]> = {
   ],
 };
 
-function getStacColorRampModule(
-  colormap: string
-): typeof STAC_COLOR_RAMP_MODULE {
+function getStacColorRampModule(colormap: string): typeof STAC_COLOR_RAMP_MODULE {
   const colors = STAC_COLOR_RAMP_COLORS[colormap.toLowerCase()];
   if (!colors) return STAC_COLOR_RAMP_MODULE;
 
@@ -606,6 +635,11 @@ function getStacColorRampModule(
   };
 }
 
+// Matches the stop count of the control's own default colormap, so a named ramp
+// renders with the same smoothness as the built-in Zarr panel default. Declared
+// above ZARR_OPTIONS because that initializer resolves a ramp for its samples.
+const ZARR_COLORMAP_STOPS = 9;
+
 const ZARR_OPTIONS = {
   backgroundColor: "hsl(var(--popover))",
   className: "geolibre-zarr-control",
@@ -625,7 +659,23 @@ const ZARR_OPTIONS = {
   defaultOpacity: 0.85,
   defaultPickable: false,
   defaultSelector: { band: "prec", month: 1 },
-  sampleData: [{ label: "Climate (CarbonPlan)", url: ZARR_SAMPLE_URL }],
+  // The SST entry carries its own settings because the `default*` options above
+  // are the CarbonPlan sample's: a -2..35 degree field drawn against a 0-300
+  // ramp is a flat wash, and `{ band, month }` names dimensions it does not
+  // have. Needs maplibre-gl-components >= 0.28.0, which applies these on select.
+  sampleData: [
+    { label: "Climate (CarbonPlan)", url: ZARR_SAMPLE_URL },
+    {
+      label: "Sea surface temperature, monthly (NOAA)",
+      url: ZARR_TIME_SERIES_SAMPLE_URL,
+      variable: "sst",
+      clim: [-2, 32],
+      colormap: interpolateRampColors("turbo", ZARR_COLORMAP_STOPS),
+      // This store's only non-spatial dimension is `time`, which the Time
+      // Slider drives; an empty selector clears the climate sample's.
+      selector: {},
+    },
+  ],
   defaultVariable: "climate",
   fontColor: "hsl(var(--popover-foreground))",
 } satisfies ZarrLayerControlOptions;
@@ -678,10 +728,17 @@ let printControl: PrintControl | null = null;
 let searchControl: SearchControl | null = null;
 let spinGlobeControl: SpinGlobeControl | null = null;
 let measureControl: MeasureControl | null = null;
+let measureTerrainDetach: (() => void) | null = null;
 let bookmarkControl: BookmarkControl | null = null;
 let minimapControl: MinimapControl | null = null;
 let viewStateControl: ViewStateControl | null = null;
 let stacSearchControl: StacSearchControl | null = null;
+// The host API the STAC Search control was opened with, kept so its deck.gl COG
+// layers can reach the shared interleaved overlay from the patched hooks below.
+let stacSearchApp: GeoLibreAppAPI | null = null;
+// Store-derived `beforeId` per STAC Search deck layer id, pushed in by
+// `applyStacSearchLayerOrder`. See `renderStacSearchDeckLayers`.
+const stacSearchBeforeIds = new Map<string, string | undefined>();
 let zarrControl: ZarrLayerControl | null = null;
 let colorbarControl: ColorbarGuiControl | null = null;
 let legendControl: LegendGuiControl | null = null;
@@ -718,10 +775,31 @@ let stacSearchStoreUnsubscribe: (() => void) | null = null;
 let zarrStoreUnsubscribe: (() => void) | null = null;
 let lidarStoreUnsubscribe: (() => void) | null = null;
 let splattingStoreUnsubscribe: (() => void) | null = null;
+
+// Re-streaming saved LiDAR layers on project open. The store only holds a
+// `lidar-url` layer's metadata; the point cloud itself is loaded by the LiDAR
+// control, not the store, so a reopened project shows the layer in the panel
+// but renders nothing until we ask the control to stream it again (see
+// restoreLidarLayers). Because loadPointCloud assigns a fresh id, each entry
+// carries the saved layer's desired state so the load handler can reattach the
+// loaded cloud to the saved layer instead of adding a duplicate. The map is
+// keyed by source URL and holds a FIFO queue per URL, so two saved layers that
+// point at the same COPC file both restore (one entry consumed per load event).
+interface PendingLidarRestore {
+  layerId: string;
+  name: string;
+  visible: boolean;
+  opacity: number;
+  style: GeoLibreLayer["style"];
+  groupId: string | undefined;
+  beforeLayerId: string | null;
+}
+const pendingLidarRestores = new Map<string, PendingLidarRestore[]>();
+let lidarRestoreInFlight = false;
+
 let pluginActive = false;
 let componentsControlRevision = 0;
-let componentsConstructorsPromise: Promise<ComponentsConstructors> | null =
-  null;
+let componentsConstructorsPromise: Promise<ComponentsConstructors> | null = null;
 let searchPlacesPanelVisible = false;
 const searchPlacesPanelListeners = new Set<() => void>();
 let spinGlobePanelVisible = false;
@@ -769,6 +847,7 @@ interface ComponentColorbarGuiState extends ComponentColorbarGuiEntryState {
   hasColorbar: boolean;
   selectedColorbarIndex: number;
   colorbars: ComponentColorbarGuiEntryState[];
+  stackOrientation: "horizontal" | "vertical";
 }
 
 interface ComponentLegendItem {
@@ -833,11 +912,7 @@ const CONTROL_POSITIONS = new Set<GeoLibreMapControlPosition>([
   "bottom-right",
 ]);
 
-const LEGEND_ITEM_SHAPES = new Set<ComponentLegendItem["shape"]>([
-  "square",
-  "circle",
-  "line",
-]);
+const LEGEND_ITEM_SHAPES = new Set<ComponentLegendItem["shape"]>(["square", "circle", "line"]);
 
 const DEFAULT_COLORBAR_GUI_ENTRY: ComponentColorbarGuiEntryState = {
   mode: "named",
@@ -869,9 +944,7 @@ const DEFAULT_HTML_GUI_ENTRY: ComponentHtmlGuiEntryState = {
 };
 
 function constrainGuiPanelToViewport(panelSelector: string): void {
-  // Defer measurement until after the expanded panel has been laid out so
-  // getBoundingClientRect() reflects the fully expanded dimensions.
-  requestAnimationFrame(() => {
+  const apply = () => {
     const panel = document.querySelector<HTMLElement>(panelSelector);
     if (!panel) return;
 
@@ -881,20 +954,64 @@ function constrainGuiPanelToViewport(panelSelector: string): void {
     panel.style.maxWidth = "";
 
     const rect = panel.getBoundingClientRect();
-    const availableHeight = Math.floor(
-      window.innerHeight - rect.top - GUI_PANEL_VIEWPORT_MARGIN
-    );
-    if (availableHeight > 160 && rect.bottom > window.innerHeight) {
+    // Constrain to the map container, not the window: the status bar is a
+    // sibling below the map, so the map's bottom edge already excludes it.
+    // Measuring against window.innerHeight would let a tall panel (e.g. a
+    // many-class legend) run under the status bar. Fall back to the window if
+    // the panel isn't inside a map for some reason.
+    const mapEl = panel.closest<HTMLElement>(".maplibregl-map");
+    const mapRect = mapEl?.getBoundingClientRect();
+    const viewportBottom = mapRect ? mapRect.bottom : window.innerHeight;
+    const viewportRight = mapRect ? mapRect.right : window.innerWidth;
+
+    const availableHeight = Math.floor(viewportBottom - rect.top - GUI_PANEL_VIEWPORT_MARGIN);
+    if (availableHeight > 160 && rect.bottom > viewportBottom) {
       panel.style.maxHeight = `${availableHeight}px`;
     }
 
-    const availableWidth = Math.floor(
-      window.innerWidth - rect.left - GUI_PANEL_VIEWPORT_MARGIN
-    );
-    if (availableWidth > 220 && rect.right > window.innerWidth) {
+    const availableWidth = Math.floor(viewportRight - rect.left - GUI_PANEL_VIEWPORT_MARGIN);
+    if (availableWidth > 220 && rect.right > viewportRight) {
       panel.style.maxWidth = `${availableWidth}px`;
     }
-  });
+  };
+
+  // Opening + populating + expanding a control in the same tick (as the "Create
+  // legend from palette" flow does) leaves both the map container's bottom and
+  // the panel's own top offset shifting for a few hundred ms -- the map sits at
+  // the full window height and the panel starts higher until the status bar row
+  // and control stack claim their space, sometimes plateauing at an
+  // intermediate value before the final one. Measuring only on the first frame
+  // would cap the panel too tall and let it slip under the status bar. Poll the
+  // input geometry (panel top + map bottom) over a bounded window and re-cap
+  // each time it actually changes, so the last change -- the real settle --
+  // lands the cap on the final layout. Applying only on change keeps it from
+  // flickering the scroll position while idle.
+  let previousKey = "";
+  let ticks = 0;
+  const settle = () => {
+    const panel = document.querySelector<HTMLElement>(panelSelector);
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const mapRect = panel.closest<HTMLElement>(".maplibregl-map")?.getBoundingClientRect();
+    // apply() constrains width as well as height, so the settle key tracks both
+    // axes: the panel's top-left corner and the map's bottom-right edge. A shift
+    // on either axis re-caps.
+    const key = [
+      Math.round(rect.top),
+      Math.round(rect.left),
+      Math.round(mapRect?.bottom ?? window.innerHeight),
+      Math.round(mapRect?.right ?? window.innerWidth),
+    ].join(":");
+    if (key !== previousKey) {
+      previousKey = key;
+      apply();
+    }
+    ticks += 1;
+    if (ticks < GUI_PANEL_SETTLE_MAX_TICKS) {
+      setTimeout(settle, GUI_PANEL_SETTLE_INTERVAL_MS);
+    }
+  };
+  requestAnimationFrame(settle);
 }
 
 export interface CogRasterLayerOptions {
@@ -960,11 +1077,7 @@ interface GeoTiffImageLike {
 }
 
 interface MutableStacSearchControl {
-  _addCogLayer?: (
-    url: string,
-    item: StacSearchItem,
-    assetKey: string
-  ) => Promise<void>;
+  _addCogLayer?: (url: string, item: StacSearchItem, assetKey: string) => Promise<void>;
   _cogLayers?: Map<string, StacSearchRenderableLayer>;
   _convertS3ToHttps?: (url: string) => string;
   _deckOverlay?: MapboxOverlay | null;
@@ -1042,7 +1155,7 @@ interface StacCogImageLike {
       boundless: boolean;
       pool?: unknown;
       signal?: AbortSignal;
-    }
+    },
   ) => Promise<{
     array: {
       data: RasterBandValues;
@@ -1089,90 +1202,146 @@ interface StacCogTextureHelper {
   inferTextureFormat?: (
     samplesPerPixel: number,
     bitsPerSample: unknown,
-    sampleFormat: unknown
+    sampleFormat: unknown,
   ) => string;
 }
 
-const getComponentsConstructors = (): Promise<ComponentsConstructors> => {
-  // Load the splatting control from maplibre-gl-splat directly: the copy
-  // re-exported (and bundled) by maplibre-gl-components lags behind, so its
-  // sample-data dropdown would be missing if taken from there.
-  // Load the dedicated splat control separately, but do not let a failure here
-  // take down every other component control. Promise.all rejects the whole
-  // shared promise if any input rejects, so a single failed splat import (a
-  // code-split chunk network hiccup, a missing dev-checkout package) would have
-  // broken BookmarkControl, MeasureControl, etc. for the life of the page. On
-  // failure, fall back to the (older) GaussianSplatControl bundled in
-  // maplibre-gl-components so the rest of the controls still load.
-  componentsConstructorsPromise ??= Promise.all([
+type ComponentsModule = typeof import("maplibre-gl-components");
+type SplatModule = typeof import("maplibre-gl-splat");
+// Both elements can be `undefined` at runtime, not just rejected: a
+// `vite:preloadError` handler that calls preventDefault() makes a failed dynamic
+// import RESOLVE to `undefined` (see getComponentsConstructors). An `undefined`
+// splat is handled the same as a rejected one (null) - both fall back to the
+// bundled GaussianSplatControl via optional chaining - so only `components`
+// being absent is fatal.
+/** @internal The dynamic-import pair {@link getComponentsConstructors} builds from. */
+export type ComponentsModules = [ComponentsModule | undefined, SplatModule | null | undefined];
+
+// The pair of dynamic imports getComponentsConstructors builds from. Split out
+// as an injectable seam so a test can simulate the vite:preloadError +
+// preventDefault() case (see getComponentsConstructors), where a failed import
+// RESOLVES to `undefined` instead of rejecting.
+//
+// Load the splatting control from maplibre-gl-splat directly: the copy
+// re-exported (and bundled) by maplibre-gl-components lags behind, so its
+// sample-data dropdown would be missing if taken from there. Do not let a
+// failure here take down every other component control. Promise.all rejects the
+// whole shared promise if any input rejects, so a single failed splat import (a
+// code-split chunk network hiccup, a missing dev-checkout package) would have
+// broken BookmarkControl, MeasureControl, etc. for the life of the page. On
+// failure, fall back to the (older) GaussianSplatControl bundled in
+// maplibre-gl-components so the rest of the controls still load.
+const defaultLoadComponentsModules = (): Promise<ComponentsModules> =>
+  Promise.all([
     import("maplibre-gl-components"),
     import("maplibre-gl-splat").catch((error: unknown) => {
       console.warn(
         "maplibre-gl-splat failed to load; falling back to the splat control bundled in maplibre-gl-components",
-        error
+        error,
       );
       return null;
     }),
-  ]).then(([components, splat]) => {
-    const {
-      AddVectorControl: AddVectorControlClass,
-      BookmarkControl: BookmarkControlClass,
-      CogLayerControl: CogLayerControlClass,
-      ColorbarGuiControl: ColorbarGuiControlClass,
-      ControlGrid: ControlGridClass,
-      HtmlGuiControl: HtmlGuiControlClass,
-      LegendGuiControl: LegendGuiControlClass,
-      LidarControl: LidarControlClass,
-      LidarLayerAdapter: LidarLayerAdapterClass,
-      MeasureControl: MeasureControlClass,
-      MinimapControl: MinimapControlClass,
-      PMTilesLayerControl: PMTilesLayerControlClass,
-      PrintControl: PrintControlClass,
-      SearchControl: SearchControlClass,
-      SpinGlobeControl: SpinGlobeControlClass,
-      StacSearchControl: StacSearchControlClass,
-      ViewStateControl: ViewStateControlClass,
-      ZarrLayerControl: ZarrLayerControlClass,
-    } = components;
-    // Prefer the dedicated maplibre-gl-splat exports; fall back to the copy
-    // bundled in (and re-exported by) maplibre-gl-components only if the
-    // dedicated import failed. No throw here: this runs inside the memoized
-    // `componentsConstructorsPromise`, so throwing would reject the cached
-    // singleton and break every other component control too. maplibre-gl-components
-    // re-exports GaussianSplatControl, so the fallback is always defined.
-    const GaussianSplatControlClass = (splat?.GaussianSplatControl ??
-      components.GaussianSplatControl) as GaussianSplatControlConstructor;
-    const GaussianSplatLayerAdapterClass = (splat?.GaussianSplatLayerAdapter ??
-      components.GaussianSplatLayerAdapter) as GaussianSplatLayerAdapterConstructor;
-    return {
-      AddVectorControl: AddVectorControlClass,
-      BookmarkControl: BookmarkControlClass,
-      CogLayerControl: CogLayerControlClass,
-      ColorbarGuiControl: ColorbarGuiControlClass,
-      ControlGrid: ControlGridClass,
-      GaussianSplatControl: GaussianSplatControlClass,
-      GaussianSplatLayerAdapter: GaussianSplatLayerAdapterClass,
-      HtmlGuiControl: HtmlGuiControlClass,
-      LegendGuiControl: LegendGuiControlClass,
-      LidarControl: LidarControlClass,
-      LidarLayerAdapter: LidarLayerAdapterClass,
-      MeasureControl: MeasureControlClass,
-      MinimapControl: MinimapControlClass,
-      PMTilesLayerControl: PMTilesLayerControlClass,
-      PrintControl: PrintControlClass,
-      SearchControl: SearchControlClass,
-      SpinGlobeControl: SpinGlobeControlClass,
-      StacSearchControl: StacSearchControlClass,
-      ViewStateControl: ViewStateControlClass,
-      ZarrLayerControl: ZarrLayerControlClass,
-    };
-  });
+  ]);
+
+let loadComponentsModules = defaultLoadComponentsModules;
+
+/**
+ * Test-only seam: swap the component-module loader and reset the memoized
+ * singleton. Passing `null` restores the real dynamic imports.
+ *
+ * @internal
+ */
+export function __setComponentsModuleLoaderForTests(
+  loader: (() => Promise<ComponentsModules>) | null,
+): void {
+  loadComponentsModules = loader ?? defaultLoadComponentsModules;
+  componentsConstructorsPromise = null;
+}
+
+/** @internal Exported so the lazy component-control loader can be unit-tested. */
+export const getComponentsConstructors = (): Promise<ComponentsConstructors> => {
+  componentsConstructorsPromise ??= loadComponentsModules()
+    .then(([components, splat]) => {
+      // A `vite:preloadError` handler that calls preventDefault() makes the
+      // failed dynamic import RESOLVE to `undefined` instead of rejecting. The
+      // stale-chunk reload guard (installStaleChunkReload) does exactly this when
+      // it defers a reload to protect unsaved work: a chunk orphaned by a
+      // redeploy then fails, but the reload is withheld. Destructuring that
+      // `undefined` module throws the cryptic "Cannot destructure property
+      // 'AddVectorControl' of 'undefined'"; turn it into a clear, actionable
+      // error (the .catch below keeps it from poisoning the shared singleton).
+      if (!components) {
+        throw new Error(
+          "The map controls could not be loaded, most likely because the app was updated in the background. Reload the page to finish loading them.",
+        );
+      }
+      const {
+        AddVectorControl: AddVectorControlClass,
+        BookmarkControl: BookmarkControlClass,
+        CogLayerControl: CogLayerControlClass,
+        ColorbarGuiControl: ColorbarGuiControlClass,
+        ControlGrid: ControlGridClass,
+        HtmlGuiControl: HtmlGuiControlClass,
+        LegendGuiControl: LegendGuiControlClass,
+        LidarControl: LidarControlClass,
+        LidarLayerAdapter: LidarLayerAdapterClass,
+        MeasureControl: MeasureControlClass,
+        MinimapControl: MinimapControlClass,
+        PMTilesLayerControl: PMTilesLayerControlClass,
+        PrintControl: PrintControlClass,
+        SearchControl: SearchControlClass,
+        SpinGlobeControl: SpinGlobeControlClass,
+        StacSearchControl: StacSearchControlClass,
+        ViewStateControl: ViewStateControlClass,
+        ZarrLayerControl: ZarrLayerControlClass,
+      } = components;
+      // Prefer the dedicated maplibre-gl-splat exports; fall back to the copy
+      // bundled in (and re-exported by) maplibre-gl-components only if the
+      // dedicated import failed. No throw here: this runs inside the memoized
+      // `componentsConstructorsPromise`, so throwing would reject the cached
+      // singleton and break every other component control too. maplibre-gl-components
+      // re-exports GaussianSplatControl, so the fallback is always defined.
+      const GaussianSplatControlClass = (splat?.GaussianSplatControl ??
+        components.GaussianSplatControl) as GaussianSplatControlConstructor;
+      const GaussianSplatLayerAdapterClass = (splat?.GaussianSplatLayerAdapter ??
+        components.GaussianSplatLayerAdapter) as GaussianSplatLayerAdapterConstructor;
+      return {
+        AddVectorControl: AddVectorControlClass,
+        BookmarkControl: BookmarkControlClass,
+        CogLayerControl: CogLayerControlClass,
+        ColorbarGuiControl: ColorbarGuiControlClass,
+        ControlGrid: ControlGridClass,
+        GaussianSplatControl: GaussianSplatControlClass,
+        GaussianSplatLayerAdapter: GaussianSplatLayerAdapterClass,
+        HtmlGuiControl: HtmlGuiControlClass,
+        LegendGuiControl: LegendGuiControlClass,
+        LidarControl: LidarControlClass,
+        LidarLayerAdapter: LidarLayerAdapterClass,
+        MeasureControl: MeasureControlClass,
+        MinimapControl: MinimapControlClass,
+        PMTilesLayerControl: PMTilesLayerControlClass,
+        PrintControl: PrintControlClass,
+        SearchControl: SearchControlClass,
+        SpinGlobeControl: SpinGlobeControlClass,
+        StacSearchControl: StacSearchControlClass,
+        ViewStateControl: ViewStateControlClass,
+        ZarrLayerControl: ZarrLayerControlClass,
+      };
+    })
+    .catch((error: unknown) => {
+      // Never memoize a failure. This shared singleton backs every component
+      // control (COG, FlatGeobuf, PMTiles, Zarr, Bookmark, Measure, Minimap,
+      // Search, Print, ...), so a cached rejection would break all of them for
+      // the life of the page. Clearing it lets the next action retry the import
+      // once the cause clears (a transient chunk-load hiccup, or a reload after a
+      // redeploy).
+      componentsConstructorsPromise = null;
+      throw error;
+    });
   return componentsConstructorsPromise;
 };
 
-const createComponentsControl = async (
-  app: GeoLibreAppAPI
-): Promise<ControlGrid | null> => {
+const createComponentsControl = async (app: GeoLibreAppAPI): Promise<ControlGrid | null> => {
   const { ControlGrid: ControlGridClass } = await getComponentsConstructors();
   if (!pluginActive) return null;
   return new ControlGridClass(getComponentsOptions(app));
@@ -1181,12 +1350,7 @@ const createComponentsControl = async (
 const createAndMountComponentsControl = (app: GeoLibreAppAPI): void => {
   const revision = ++componentsControlRevision;
   void createComponentsControl(app).then((control) => {
-    if (
-      !pluginActive ||
-      componentsControl ||
-      !control ||
-      revision !== componentsControlRevision
-    ) {
+    if (!pluginActive || componentsControl || !control || revision !== componentsControlRevision) {
       return;
     }
     componentsControl = control;
@@ -1243,10 +1407,7 @@ export const maplibreComponentsPlugin: GeoLibrePlugin = {
     componentsControl = null;
   },
   getMapControlPosition: () => componentsControlPosition,
-  setMapControlPosition: (
-    app: GeoLibreAppAPI,
-    position: GeoLibreMapControlPosition
-  ) => {
+  setMapControlPosition: (app: GeoLibreAppAPI, position: GeoLibreMapControlPosition) => {
     componentsControlPosition = position;
     if (!componentsControl) return;
     app.removeMapControl(componentsControl);
@@ -1274,10 +1435,7 @@ function componentsProjectStateSnapshot(): ComponentsProjectState | undefined {
   return Object.keys(state).length > 0 ? state : undefined;
 }
 
-function applyComponentsProjectState(
-  app: GeoLibreAppAPI,
-  state: unknown
-): void {
+function applyComponentsProjectState(app: GeoLibreAppAPI, state: unknown): void {
   const normalized = normalizeComponentsProjectState(state);
   if (normalized?.colorbar?.visible) {
     void restoreColorbarPanel(app, normalized.colorbar);
@@ -1300,7 +1458,7 @@ function applyComponentsProjectState(
 
 async function restoreColorbarPanel(
   app: GeoLibreAppAPI,
-  state: ComponentColorbarGuiState
+  state: ComponentColorbarGuiState,
 ): Promise<void> {
   const restored = await openStandaloneColorbarControl(app);
   if (!restored) return;
@@ -1318,7 +1476,7 @@ async function restoreColorbarPanel(
 
 async function restoreLegendPanel(
   app: GeoLibreAppAPI,
-  state: ComponentLegendGuiState
+  state: ComponentLegendGuiState,
 ): Promise<void> {
   const restored = await openStandaloneLegendControl(app);
   if (!restored) return;
@@ -1334,10 +1492,7 @@ async function restoreLegendPanel(
   }, 0);
 }
 
-async function restoreHtmlPanel(
-  app: GeoLibreAppAPI,
-  state: ComponentHtmlGuiState
-): Promise<void> {
+async function restoreHtmlPanel(app: GeoLibreAppAPI, state: ComponentHtmlGuiState): Promise<void> {
   const restored = await openStandaloneHtmlControl(app);
   if (!restored) return;
   setTimeout(() => {
@@ -1353,16 +1508,10 @@ async function restoreHtmlPanel(
 }
 
 function restoreGuiControlState<
-  TState extends
-    | ComponentColorbarGuiState
-    | ComponentLegendGuiState
-    | ComponentHtmlGuiState
+  TState extends ComponentColorbarGuiState | ComponentLegendGuiState | ComponentHtmlGuiState,
 >(
-  control:
-    | RestorableColorbarGuiControl
-    | RestorableLegendGuiControl
-    | RestorableHtmlGuiControl,
-  state: TState
+  control: RestorableColorbarGuiControl | RestorableLegendGuiControl | RestorableHtmlGuiControl,
+  state: TState,
 ): void {
   const internals = control as unknown as GuiControlStateInternals<TState>;
   if (internals.setState) {
@@ -1374,9 +1523,7 @@ function restoreGuiControlState<
   internals._render?.();
 }
 
-function normalizeComponentsProjectState(
-  state: unknown
-): ComponentsProjectState | null {
+function normalizeComponentsProjectState(state: unknown): ComponentsProjectState | null {
   if (!state || typeof state !== "object") return null;
   const candidate = state as Partial<ComponentsProjectState>;
   return {
@@ -1386,33 +1533,27 @@ function normalizeComponentsProjectState(
   };
 }
 
-function normalizeColorbarState(
-  state: unknown
-): ComponentColorbarGuiState | undefined {
+/** @internal Exported only so the project-state normalizer can be unit-tested. */
+export function normalizeColorbarState(state: unknown): ComponentColorbarGuiState | undefined {
   if (!state || typeof state !== "object") return undefined;
   const candidate = state as Partial<ComponentColorbarGuiState>;
   const formEntry = normalizeColorbarEntry(candidate);
   const colorbars = Array.isArray(candidate.colorbars)
     ? candidate.colorbars.map(normalizeColorbarEntry)
     : [];
-  const selectedColorbarIndex = selectedIndex(
-    candidate.selectedColorbarIndex,
-    colorbars.length
-  );
+  const selectedColorbarIndex = selectedIndex(candidate.selectedColorbarIndex, colorbars.length);
   return {
     ...formEntry,
     visible: typeof candidate.visible === "boolean" ? candidate.visible : true,
-    collapsed:
-      typeof candidate.collapsed === "boolean" ? candidate.collapsed : false,
+    collapsed: typeof candidate.collapsed === "boolean" ? candidate.collapsed : false,
     hasColorbar: colorbars.length > 0,
     selectedColorbarIndex,
     colorbars,
+    stackOrientation: candidate.stackOrientation === "horizontal" ? "horizontal" : "vertical",
   };
 }
 
-function normalizeLegendState(
-  state: unknown
-): ComponentLegendGuiState | undefined {
+function normalizeLegendState(state: unknown): ComponentLegendGuiState | undefined {
   if (!state || typeof state !== "object") return undefined;
   const candidate = state as Partial<ComponentLegendGuiState>;
   const formEntry = normalizeLegendEntry(candidate);
@@ -1422,13 +1563,9 @@ function normalizeLegendState(
   return {
     ...formEntry,
     visible: typeof candidate.visible === "boolean" ? candidate.visible : true,
-    collapsed:
-      typeof candidate.collapsed === "boolean" ? candidate.collapsed : false,
+    collapsed: typeof candidate.collapsed === "boolean" ? candidate.collapsed : false,
     hasLegend: legends.length > 0,
-    selectedLegendIndex: selectedIndex(
-      candidate.selectedLegendIndex,
-      legends.length
-    ),
+    selectedLegendIndex: selectedIndex(candidate.selectedLegendIndex, legends.length),
     legends,
   };
 }
@@ -1437,23 +1574,18 @@ function normalizeHtmlState(state: unknown): ComponentHtmlGuiState | undefined {
   if (!state || typeof state !== "object") return undefined;
   const candidate = state as Partial<ComponentHtmlGuiState>;
   const formEntry = normalizeHtmlEntry(candidate);
-  const htmls = Array.isArray(candidate.htmls)
-    ? candidate.htmls.map(normalizeHtmlEntry)
-    : [];
+  const htmls = Array.isArray(candidate.htmls) ? candidate.htmls.map(normalizeHtmlEntry) : [];
   return {
     ...formEntry,
     visible: typeof candidate.visible === "boolean" ? candidate.visible : true,
-    collapsed:
-      typeof candidate.collapsed === "boolean" ? candidate.collapsed : false,
+    collapsed: typeof candidate.collapsed === "boolean" ? candidate.collapsed : false,
     hasHtmlControl: htmls.length > 0,
     selectedHtmlIndex: selectedIndex(candidate.selectedHtmlIndex, htmls.length),
     htmls,
   };
 }
 
-function normalizeColorbarEntry(
-  entry: unknown
-): ComponentColorbarGuiEntryState {
+function normalizeColorbarEntry(entry: unknown): ComponentColorbarGuiEntryState {
   const candidate = (
     entry && typeof entry === "object" ? entry : {}
   ) as Partial<ComponentColorbarGuiEntryState>;
@@ -1466,19 +1598,17 @@ function normalizeColorbarEntry(
         ? candidate.colormap
         : DEFAULT_COLORBAR_GUI_ENTRY.colormap,
     customColors:
-      typeof candidate.customColors === "string" &&
-      candidate.customColors.trim()
+      typeof candidate.customColors === "string" && candidate.customColors.trim()
         ? candidate.customColors
         : DEFAULT_COLORBAR_GUI_ENTRY.customColors,
     vmin,
     vmax: vmax === vmin ? vmin + 1 : vmax,
     label: typeof candidate.label === "string" ? candidate.label : "",
     units: typeof candidate.units === "string" ? candidate.units : "",
-    orientation:
-      candidate.orientation === "horizontal" ? "horizontal" : "vertical",
+    orientation: candidate.orientation === "horizontal" ? "horizontal" : "vertical",
     colorbarPosition: normalizeControlPosition(
       candidate.colorbarPosition,
-      DEFAULT_COLORBAR_GUI_ENTRY.colorbarPosition
+      DEFAULT_COLORBAR_GUI_ENTRY.colorbarPosition,
     ),
   };
 }
@@ -1493,14 +1623,11 @@ function normalizeLegendEntry(entry: unknown): ComponentLegendGuiEntryState {
         .filter((item): item is ComponentLegendItem => item !== null)
     : DEFAULT_LEGEND_GUI_ENTRY.items;
   return {
-    title:
-      typeof candidate.title === "string"
-        ? candidate.title
-        : DEFAULT_LEGEND_GUI_ENTRY.title,
+    title: typeof candidate.title === "string" ? candidate.title : DEFAULT_LEGEND_GUI_ENTRY.title,
     items,
     legendPosition: normalizeControlPosition(
       candidate.legendPosition,
-      DEFAULT_LEGEND_GUI_ENTRY.legendPosition
+      DEFAULT_LEGEND_GUI_ENTRY.legendPosition,
     ),
   };
 }
@@ -1510,17 +1637,11 @@ function normalizeHtmlEntry(entry: unknown): ComponentHtmlGuiEntryState {
     entry && typeof entry === "object" ? entry : {}
   ) as Partial<ComponentHtmlGuiEntryState>;
   return {
-    title:
-      typeof candidate.title === "string"
-        ? candidate.title
-        : DEFAULT_HTML_GUI_ENTRY.title,
-    html:
-      typeof candidate.html === "string"
-        ? candidate.html
-        : DEFAULT_HTML_GUI_ENTRY.html,
+    title: typeof candidate.title === "string" ? candidate.title : DEFAULT_HTML_GUI_ENTRY.title,
+    html: typeof candidate.html === "string" ? candidate.html : DEFAULT_HTML_GUI_ENTRY.html,
     htmlPosition: normalizeControlPosition(
       candidate.htmlPosition,
-      DEFAULT_HTML_GUI_ENTRY.htmlPosition
+      DEFAULT_HTML_GUI_ENTRY.htmlPosition,
     ),
     collapsible:
       typeof candidate.collapsible === "boolean"
@@ -1543,36 +1664,26 @@ function normalizeLegendItem(item: unknown): ComponentLegendItem | null {
     label: candidate.label,
     color: candidate.color,
     ...(isLegendItemShape(candidate.shape) ? { shape: candidate.shape } : {}),
-    ...(typeof candidate.strokeColor === "string"
-      ? { strokeColor: candidate.strokeColor }
-      : {}),
+    ...(typeof candidate.strokeColor === "string" ? { strokeColor: candidate.strokeColor } : {}),
     ...(typeof candidate.icon === "string" ? { icon: candidate.icon } : {}),
   };
 }
 
-function isLegendItemShape(
-  value: unknown
-): value is ComponentLegendItem["shape"] {
+function isLegendItemShape(value: unknown): value is ComponentLegendItem["shape"] {
   return LEGEND_ITEM_SHAPES.has(value as ComponentLegendItem["shape"]);
 }
 
 function normalizeControlPosition(
   value: unknown,
-  fallback: GeoLibreMapControlPosition
+  fallback: GeoLibreMapControlPosition,
 ): GeoLibreMapControlPosition {
-  return typeof value === "string" &&
-    CONTROL_POSITIONS.has(value as GeoLibreMapControlPosition)
+  return typeof value === "string" && CONTROL_POSITIONS.has(value as GeoLibreMapControlPosition)
     ? (value as GeoLibreMapControlPosition)
     : fallback;
 }
 
 function selectedIndex(value: unknown, length: number): number {
-  if (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 0 &&
-    value < length
-  ) {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < length) {
     return value;
   }
   return length > 0 ? length - 1 : -1;
@@ -1588,7 +1699,7 @@ export function openFlatGeobufAddVectorLayerPanel(app: GeoLibreAppAPI): void {
 
 export async function addCogRasterLayer(
   app: GeoLibreAppAPI,
-  options: CogRasterLayerOptions
+  options: CogRasterLayerOptions,
 ): Promise<string> {
   if (options.data || shouldUseGenericGeoTiffRenderer(options.url)) {
     return addGeoTiffRasterLayer(app, options);
@@ -1597,9 +1708,7 @@ export async function addCogRasterLayer(
   ensureMercatorProjection(app.getMap?.());
   const control = await ensureCogRasterControl(app);
   if (!control) {
-    throw new Error(
-      "The COG raster layer control could not be added to the map."
-    );
+    throw new Error("The COG raster layer control could not be added to the map.");
   }
 
   try {
@@ -1612,6 +1721,57 @@ export async function addCogRasterLayer(
 
 export function openPMTilesLayerPanel(app: GeoLibreAppAPI): void {
   void openStandalonePMTilesControl(app);
+}
+
+/**
+ * Adds a remote PMTiles archive through the PMTiles control, without opening
+ * its panel.
+ *
+ * The programmatic door onto the panel's own load path: the control reads the
+ * archive header to tell vector from raster, discovers the vector source
+ * layers, assigns per-source-layer colors, and emits `layeradd` — which the
+ * store sync in {@link createPMTilesControl} turns into a Layers-panel entry
+ * that persists with the project. Callers that discover a `.pmtiles` URL
+ * elsewhere in the UI (the Source Cooperative browser, say) should come through
+ * here rather than hand-building a MapLibre source.
+ *
+ * When this mounts the control it leaves it hidden, so adding a layer does not
+ * surface a map button the user never asked for; a panel the user already has
+ * open is left alone.
+ *
+ * @param app - The GeoLibre app API.
+ * @param url - An http(s) URL to a `.pmtiles` archive.
+ * @returns True when the archive was added.
+ * @throws If the archive could not be loaded (unreachable, not PMTiles, 403).
+ */
+export async function addPMTilesLayerFromUrl(app: GeoLibreAppAPI, url: string): Promise<boolean> {
+  const { PMTilesLayerControl: PMTilesLayerControlClass } = await getComponentsConstructors();
+
+  pmtilesControl ??= createPMTilesControl(PMTilesLayerControlClass);
+
+  if (!pmtilesControlMounted) {
+    const added = app.addMapControl(pmtilesControl, pmtilesControlPosition);
+    if (!added) {
+      pmtilesControl = null;
+      return false;
+    }
+    pmtilesControlMounted = true;
+    // Mounted only to borrow its load path — keep it out of sight. A control
+    // the user had already opened is untouched.
+    pmtilesControl.hide();
+  }
+
+  await pmtilesControl.addLayer(url);
+  // A failed load does NOT reject: the control catches it, records it on
+  // `state.error`, and emits "error" (same convention as CogLayerControl, which
+  // addLayerWithCogRasterControl has to check the same way). Without this a
+  // broken archive would resolve as success, and because the control is mounted
+  // hidden its own on-panel error would never be seen either — the caller has
+  // to surface it. `_addLayer` clears `error` on entry, so this reads the
+  // outcome of the call above.
+  const { error } = pmtilesControl.getState();
+  if (error) throw new Error(error);
+  return true;
 }
 
 // The standalone Search panel is intentionally independent from the
@@ -1769,6 +1929,98 @@ export function openLegendPanel(app: GeoLibreAppAPI): void {
   void openStandaloneLegendControl(app);
 }
 
+/**
+ * Opens the Legend control (creating and mounting it if needed) and fills the
+ * currently-selected legend entry with the given title and items, replacing
+ * whatever it held (the default placeholder entry on first open). Used to
+ * populate a legend from a paletted raster's color table.
+ *
+ * @param app - The live app API used to mount the control.
+ * @param options.title - Legend title (typically the raster layer name).
+ * @param options.items - Legend items (color swatch + label) to show.
+ * @param options.legendPosition - Map corner for the rendered on-map legend.
+ *   Defaults to the control's current position (or bottom-left). The editor
+ *   panel itself always docks top-left, so pass a right/other corner to keep
+ *   the on-map legend from overlapping it.
+ * @param options.signal - Abort signal checked just before the mutation. If the
+ *   caller supersedes this call (e.g. the user switches layers) the shared
+ *   Legend control is left untouched, not populated with stale data.
+ * @returns Whether the control was opened and populated.
+ */
+export async function openLegendPanelWithItems(
+  app: GeoLibreAppAPI,
+  options: {
+    title: string;
+    items: ComponentLegendItem[];
+    legendPosition?: GeoLibreMapControlPosition;
+    signal?: AbortSignal;
+  },
+): Promise<boolean> {
+  const opened = await openStandaloneLegendControl(app);
+  if (!opened) return false;
+  // openStandaloneLegendControl shows/expands on a 0ms timer; defer past it so
+  // the state we set is not clobbered by that deferred show, and so getState()
+  // reflects the freshly-created control.
+  return await new Promise<boolean>((resolve) => {
+    setTimeout(() => {
+      if (!legendControl) {
+        resolve(false);
+        return;
+      }
+      // A superseded call (the caller aborted after switching away) must not
+      // populate the shared control with the previous layer's data. Checked
+      // here, inside the deferred timer, because that is the first point after
+      // the caller could have aborted.
+      if (options.signal?.aborted) {
+        resolve(false);
+        return;
+      }
+      // Guard the whole mutation: if the vendor control throws in getState /
+      // setState / expand / show, resolve(false) instead of leaving the promise
+      // (and the caller's "pending" UI) hanging forever.
+      try {
+        const control = legendControl as RestorableLegendGuiControl;
+        const current = legendControl.getState() as unknown as ComponentLegendGuiState;
+        const entry: ComponentLegendGuiEntryState = {
+          title: options.title,
+          items: options.items,
+          legendPosition: options.legendPosition ?? current.legendPosition ?? "bottom-left",
+        };
+        // Mirror the replacement onto both the top-level fields and the selected
+        // slot of the `legends` array so the control's single- and multi-legend
+        // views stay consistent (matches how project restore round-trips state).
+        // `selectedIndex` clamps a stale index into range so the written-back
+        // `selectedLegendIndex` can never point past the array it indexes.
+        const baseLegends =
+          Array.isArray(current.legends) && current.legends.length > 0 ? current.legends : [entry];
+        const index = Math.max(0, selectedIndex(current.selectedLegendIndex, baseLegends.length));
+        const legends = baseLegends.map((existing, i) => (i === index ? entry : existing));
+        restoreGuiControlState(control, {
+          ...current,
+          title: entry.title,
+          items: entry.items,
+          legendPosition: entry.legendPosition,
+          hasLegend: true,
+          selectedLegendIndex: index,
+          legends,
+        });
+        control.expand();
+        control.show();
+        setLegendPanelVisible(true);
+        // The control was already expanded by openStandaloneLegendControl, so
+        // the expand() above is a no-op and its "expand" handler (which fits the
+        // panel to the viewport) never re-fires for this now-taller, populated
+        // panel. Run the constraint directly so a many-class legend doesn't
+        // overflow under the status bar.
+        constrainGuiPanelToViewport(".geolibre-legend-control .legend-gui-panel");
+        resolve(true);
+      } catch {
+        resolve(false);
+      }
+    }, 0);
+  });
+}
+
 export function closeLegendPanel(app: GeoLibreAppAPI): void {
   teardownLegendControl(app);
 }
@@ -1828,6 +2080,76 @@ export function openZarrLayerPanel(app: GeoLibreAppAPI): void {
   void openStandaloneZarrControl(app);
 }
 
+/**
+ * The host's folder picker for the Zarr panel's "Browse folder" button, and the
+ * folders it has opened so far.
+ *
+ * Reading a folder needs a filesystem API the plugins package does not have
+ * (Tauri's `fs`, or the browser's `showDirectoryPicker`), so the app registers
+ * one at startup. It stays null where neither exists, and the panel then shows
+ * no button at all rather than one that cannot deliver.
+ */
+let zarrLocalStoreProvider: ZarrLocalStoreProvider | null = null;
+
+/**
+ * Readers for the local stores opened so far, keyed by the identifier the layer
+ * was added under.
+ *
+ * A local cube's `url` is not an address, so the Time Slider's usual metadata
+ * walk over HTTP has nothing to fetch. Keeping the reader lets
+ * {@link registerZarrTemporalAdapter} read the store's CF `units`/`calendar`
+ * out of the folder instead, for a layer the *panel* added — where, unlike a
+ * programmatic add, the caller has no chance to pass its own context.
+ */
+const zarrLocalStoreReaders = new Map<string, ZarrDirectoryReader>();
+
+/**
+ * Register the host's folder picker for the Zarr panel.
+ *
+ * @param provider - Opens a folder dialog and returns read access to the chosen
+ *   Zarr store, or null when dismissed. Pass null to remove the button.
+ */
+export function setZarrLocalStoreProvider(
+  provider: (() => Promise<ZarrDirectoryReader | null>) | null,
+): void {
+  if (!provider) {
+    zarrLocalStoreProvider = null;
+    return;
+  }
+  zarrLocalStoreProvider = async () => {
+    const reader = await provider();
+    if (!reader) return null;
+    // A reader holds a directory handle — memory, and the capability to read
+    // that folder — so drop the ones no layer is using before taking another.
+    pruneZarrLocalStoreReaders();
+    // Mint the identifier here rather than let the control derive one, so the
+    // reader can be filed under the same string the layer will carry.
+    const url = localZarrStoreUrl(reader.name);
+    zarrLocalStoreReaders.set(url, reader);
+    return { name: reader.name, store: new ZarrDirectoryStore(reader), url };
+  };
+}
+
+/**
+ * Forget the folder readers no live Zarr layer is backed by.
+ *
+ * Run after a layer is removed, and before a new folder is taken: between the
+ * two it also covers a folder the user browsed to and then never added, which
+ * no layer removal would ever account for.
+ */
+function pruneZarrLocalStoreReaders(): void {
+  if (zarrLocalStoreReaders.size === 0) return;
+  const live = new Set(
+    useAppStore
+      .getState()
+      .layers.filter(isZarrControlLayer)
+      .map((layer) => layer.sourcePath),
+  );
+  for (const url of zarrLocalStoreReaders.keys()) {
+    if (!live.has(url)) zarrLocalStoreReaders.delete(url);
+  }
+}
+
 /** Options for {@link addCloudNetcdfLayer}. */
 export interface CloudNetcdfLayerOptions {
   /** URL of the kerchunk reference manifest (JSON) for the NetCDF/HDF file. */
@@ -1843,10 +2165,21 @@ export interface CloudNetcdfLayerOptions {
   selector?: Record<string, number | string>;
   /** Color limits `[min, max]`. */
   clim?: [number, number];
-  /** Colormap (array of hex colors). */
-  colormap?: string[];
+  /**
+   * A named GeoLibre ramp (e.g. `"viridis"`) or an explicit list of hex colors,
+   * matching {@link ZarrRasterLayerOptions.colormap}. An unrecognized name falls
+   * back to the renderer's default ramp.
+   */
+  colormap?: string | string[];
   /** Layer opacity (0-1). */
   opacity?: number;
+  /**
+   * Explicit spatial bounds `[west, south, east, north]`. Recorded on the layer
+   * so "Zoom to layer" and the Metadata panel know where the grid is: the
+   * renderer resolves the extent internally and never reports it back, so
+   * without this the layer has no bounds the host can fly to.
+   */
+  bounds?: [number, number, number, number];
   /** Optional request headers (e.g. for authenticated stores). */
   headers?: Record<string, string>;
 }
@@ -1865,10 +2198,9 @@ export interface CloudNetcdfLayerOptions {
  */
 export async function addCloudNetcdfLayer(
   app: GeoLibreAppAPI,
-  options: CloudNetcdfLayerOptions
+  options: CloudNetcdfLayerOptions,
 ): Promise<void> {
-  const { ZarrLayerControl: ZarrLayerControlClass } =
-    await getComponentsConstructors();
+  const { ZarrLayerControl: ZarrLayerControlClass } = await getComponentsConstructors();
 
   zarrControl ??= createZarrControl(ZarrLayerControlClass);
   if (!zarrControlMounted) {
@@ -1878,6 +2210,11 @@ export async function addCloudNetcdfLayer(
       throw new Error("Could not add the Zarr control to the map.");
     }
     zarrControlMounted = true;
+    // Mounted only to borrow its render path, exactly as addZarrRasterLayer
+    // does. ZARR_OPTIONS sets `collapsed: false` for the "open the Zarr panel"
+    // flow, so without this the panel unfolds over the map the moment a dialog
+    // add lands — on top of the extent the camera has just been flown to.
+    zarrControl.hide();
   }
 
   // The untiled Zarr renderer draws in Web Mercator; switch off globe first
@@ -1885,35 +2222,581 @@ export async function addCloudNetcdfLayer(
   ensureMercatorProjection(app.getMap?.());
 
   const refs =
-    options.refs ??
-    (await loadKerchunkReference(options.url, { headers: options.headers }));
+    options.refs ?? (await loadKerchunkReference(options.url, { headers: options.headers }));
   const store = new KerchunkReferenceStore(refs, { headers: options.headers });
 
   // The control is a module-level singleton and may have been torn down (set to
   // null on plugin deactivation) during the await above.
   if (!zarrControl) {
-    throw new Error(
-      "The Zarr control was removed while loading the reference."
-    );
+    throw new Error("The Zarr control was removed while loading the reference.");
   }
 
   // Success is tracked by the control's "layeradd" event (see createZarrControl),
   // which adds the layer to the store. We intentionally do not read
   // getState().error here: the control is shared, so the error may be stale from
   // a prior operation, and addLayer resolves before async chunk loading finishes.
-  await zarrControl.addLayer(options.url, options.variable, {
-    store,
-    zarrVersion: 2,
-    selector: options.selector,
-    clim: options.clim,
-    colormap: options.colormap,
-    opacity: options.opacity,
+  // Queued with every other programmatic add, because the event carries no
+  // correlation id: overlapping adds would each latch onto the other's event.
+  const control = zarrControl;
+  await queueZarrAdd(async () => {
+    // The same event names the new layer, which the temporal registration below
+    // needs so this add's own references reach the time-axis lookup.
+    let addedLayerId: string | null = null;
+    const captureLayerId: ZarrLayerEventHandler = (event) => {
+      if (event.layerId) addedLayerId = event.layerId;
+    };
+    control.on("layeradd", captureLayerId);
+    // Claim this add, so the shared handler leaves the adapter to us.
+    const endAdd = beginProgrammaticZarrAdd(options.url);
+    try {
+      await control.addLayer(options.url, options.variable, {
+        store,
+        zarrVersion: 2,
+        selector: options.selector,
+        clim: options.clim,
+        colormap: resolveZarrColormap(options.colormap),
+        opacity: options.opacity,
+        bounds: options.bounds,
+      });
+    } finally {
+      control.off("layeradd", captureLayerId);
+      endAdd();
+    }
+
+    // The references carry the coordinate attributes inline, which is the only
+    // way to read a NetCDF cube's CF units: its `url` names the kerchunk
+    // manifest, not a Zarr store whose metadata documents could be walked.
+    if (addedLayerId) {
+      registerZarrTemporalAdapter(addedLayerId, options.url, { refs, headers: options.headers });
+      // Record the extent on the layer itself. The control accepts `bounds` as a
+      // render hint but does not always carry it back on the "layeradd" event,
+      // and the renderer never reports the extent it resolved — so without this
+      // write the Layers panel's "Zoom to layer" has nothing to fly to.
+      if (options.bounds) applyZarrLayerBounds(addedLayerId, options.bounds);
+    }
   });
 
   // Unlike openZarrLayerPanel, the dialog-based flow intentionally leaves the
   // Zarr control collapsed/hidden: the layer is managed from the layer and
   // style panels. Users can still open the Zarr panel from the menu to tweak
   // colormap/clim.
+}
+
+/**
+ * Write a layer's spatial extent onto its store record, so the Layers panel's
+ * "Zoom to layer" and the Metadata panel can read it back.
+ *
+ * @param layerId The layer added by the Zarr control.
+ * @param bounds `[west, south, east, north]`.
+ */
+function applyZarrLayerBounds(layerId: string, bounds: [number, number, number, number]): void {
+  const store = useAppStore.getState();
+  const layer = store.layers.find((item) => item.id === layerId);
+  if (!layer) return;
+  store.updateLayer(layerId, {
+    source: { ...layer.source, bounds },
+    metadata: { ...layer.metadata, bounds },
+  });
+}
+
+/** Options for {@link addZarrRasterLayer}. */
+export interface ZarrRasterLayerOptions {
+  /** URL of the Zarr store (Zarr v2/v3, Icechunk over HTTP). */
+  url: string;
+  /** Layer name shown in the Layers panel. Defaults to `<store> - <variable>`. */
+  name?: string;
+  /** Array/variable to render. Required: the renderer cannot guess it. */
+  variable: string;
+  /** Dimension selector for non-spatial dims, e.g. `{ time: 0 }`. */
+  selector?: Record<string, number | string>;
+  /** Color limits `[min, max]`. */
+  clim?: [number, number];
+  /**
+   * A named GeoLibre ramp (e.g. `"viridis"`) or an explicit list of hex colors.
+   * An unrecognized name falls back to the default ramp, as `addCogLayer` does.
+   */
+  colormap?: string | string[];
+  /** Layer opacity (0-1). */
+  opacity?: number;
+  /** Zarr metadata version. Defaults to the renderer's detection. */
+  zarrVersion?: 2 | 3;
+  /** CRS of the store for built-in projections, e.g. `"EPSG:32633"`. */
+  crs?: string;
+  /** proj4 definition for a CRS the renderer does not know built-in. */
+  proj4?: string;
+  /** Explicit spatial bounds `[xMin, yMin, xMax, yMax]` in the store's CRS. */
+  bounds?: [number, number, number, number];
+  /** Override the names of the spatial dimensions when they are not lat/lon. */
+  spatialDimensions?: { lat?: string; lon?: string };
+  /** Request headers for an authenticated store. */
+  headers?: Record<string, string>;
+  /** Insert the new layer directly beneath this layer. */
+  beforeLayerId?: string | null;
+  /**
+   * A zarrita `Readable` to read the store through, instead of fetching `url`.
+   * With one supplied, `url` is only an identifier (see
+   * {@link localZarrStoreUrl}): it names the layer and keys the control's state,
+   * and is never requested. This is how a Zarr store on local disk renders.
+   */
+  store?: ZarrReadableStore;
+  /**
+   * Read the CF `units`/`calendar` of a coordinate, for a store the Time Slider
+   * cannot look up over HTTP (again: a local folder). Consulted in place of the
+   * metadata walk when the layer turns out to have a time axis.
+   */
+  readTimeAttributes?: ZarrTimeAttributesReader;
+}
+
+/** The minimum of zarrita's `Readable` that the renderer calls. */
+export interface ZarrReadableStore {
+  get(key: string): Promise<Uint8Array | undefined>;
+}
+
+/**
+ * Reads one coordinate's CF time attributes out of a store's own metadata.
+ *
+ * @param dimension - The coordinate's name, e.g. `"time"`.
+ * @returns Its `units`/`calendar`, or null when it declares neither.
+ */
+export type ZarrTimeAttributesReader = (dimension: string) => Promise<ZarrTimeAttributes | null>;
+
+/**
+ * Add a Zarr layer through GeoLibre's own `@carbonplan/zarr-layer` instance and
+ * mirror it into the layer store, without opening the Zarr panel.
+ *
+ * This is the Zarr counterpart of {@link addCogRasterLayer}: the host owns the
+ * renderer, so an external plugin does not bundle a second copy of
+ * `@carbonplan/zarr-layer` (plus its numcodecs WASM) and does not have to add a
+ * raw MapLibre custom layer whose paint the Style panel cannot reach
+ * (opengeos/GeoLibre#1445).
+ *
+ * `crs`/`proj4` are forwarded to the renderer, which reprojects on the GPU, so a
+ * store in a projected CRS (a national grid on `EPSG:32633`, say) lands in the
+ * right place instead of being read as WGS84.
+ *
+ * The Zarr control is mounted hidden when this is the first Zarr layer, so the
+ * user does not get a map button they never asked for; a panel they already
+ * opened is left alone.
+ *
+ * @param app The GeoLibre app API.
+ * @param options Store URL, variable, and optional styling/CRS/selector.
+ * @returns The new layer's id (the Layers-panel entry and the native layer id).
+ * @throws If the control cannot be mounted, `variable` is missing, or the store
+ *   fails to load.
+ */
+export async function addZarrRasterLayer(
+  app: GeoLibreAppAPI,
+  options: ZarrRasterLayerOptions,
+): Promise<string> {
+  const url = options.url?.trim();
+  if (!url) {
+    throw new Error("A Zarr store URL is required.");
+  }
+  // The control renders `state.variable` and reports "Please enter a variable
+  // name" on its (hidden) panel when it is empty, so fail here with a message
+  // that names the option instead.
+  const variable = options.variable?.trim();
+  if (!variable) {
+    throw new Error("A Zarr variable is required (pass options.variable).");
+  }
+
+  return queueZarrAdd(() => addZarrLayerExclusively(app, options, url, variable));
+}
+
+// One add at a time: see the queue comment on queueZarrAdd.
+let zarrAddQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Run a Zarr add exclusively.
+ *
+ * The Zarr control is a shared singleton whose url/variable live in one state
+ * slot, and its `layeradd` event carries no correlation id, so two overlapping
+ * adds would each see the other's event and could return (and then patch, or
+ * resolve the time axis of) the wrong layer. **Every** programmatic add goes
+ * through here — both `addZarrRasterLayer` and `addCloudNetcdfLayer`, which
+ * would otherwise overlap each other even for the same store. A failed add must
+ * not break the chain.
+ *
+ * @param run - The add to run once the queue drains.
+ * @returns Whatever the add resolves to.
+ */
+function queueZarrAdd<T>(run: () => Promise<T>): Promise<T> {
+  const result = zarrAddQueue.then(run);
+  zarrAddQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function addZarrLayerExclusively(
+  app: GeoLibreAppAPI,
+  options: ZarrRasterLayerOptions,
+  url: string,
+  variable: string,
+): Promise<string> {
+  const { ZarrLayerControl: ZarrLayerControlClass } = await getComponentsConstructors();
+
+  zarrControl ??= createZarrControl(ZarrLayerControlClass);
+  if (!zarrControlMounted) {
+    const added = app.addMapControl(zarrControl, zarrControlPosition);
+    if (!added) {
+      zarrControl = null;
+      throw new Error("Could not add the Zarr control to the map.");
+    }
+    zarrControlMounted = true;
+    // Mounted only to borrow its render path — keep it out of sight.
+    zarrControl.hide();
+  }
+
+  // Zarr renders correctly in globe (proj4js reprojects on the GPU), so — unlike the
+  // COG/deck.gl path — do not force Mercator here. This keeps addZarrLayer consistent
+  // with the Add Data → Zarr panel, which never switched projection. See #1466.
+
+  const control = zarrControl;
+  const headers = options.headers;
+
+  let addedLayerId: string | null = null;
+  let failure: string | null = null;
+  const handleLayerAdd: ZarrLayerEventHandler = (event) => {
+    if (event.layerId) addedLayerId = event.layerId;
+  };
+  const handleError: ZarrLayerEventHandler = (event) => {
+    failure = event.error ?? null;
+  };
+
+  control.on("layeradd", handleLayerAdd);
+  control.on("error", handleError);
+  // Claim this add, so the shared `layeradd` handler leaves the adapter to the
+  // registration below, which knows both the layer id and these headers.
+  const endAdd = beginProgrammaticZarrAdd(url);
+  try {
+    // The control awaits its own load before resolving and reports failure by
+    // emitting "error" rather than rejecting, so both outcomes are already
+    // recorded above by the time this returns.
+    await control.addLayer(url, variable, {
+      selector: options.selector,
+      clim: options.clim,
+      colormap: resolveZarrColormap(options.colormap),
+      opacity: options.opacity,
+      ...(options.store ? { store: options.store } : {}),
+      zarrVersion: options.zarrVersion,
+      crs: options.crs,
+      proj4: options.proj4,
+      bounds: options.bounds,
+      spatialDimensions: options.spatialDimensions,
+      ...(headers && Object.keys(headers).length > 0
+        ? { transformRequest: (requestUrl: string) => ({ url: requestUrl, headers }) }
+        : {}),
+    });
+  } finally {
+    control.off("layeradd", handleLayerAdd);
+    control.off("error", handleError);
+    endAdd();
+  }
+
+  if (!addedLayerId) {
+    throw new Error(failure ?? "Failed to add the Zarr layer.");
+  }
+
+  // A cube with a time axis becomes drivable by the Time Slider. Registered
+  // here rather than from the shared `layeradd` handler so this add's own
+  // headers reach the metadata lookup even when another add of the same store
+  // overlaps it (opengeos/GeoLibre#1448 review).
+  registerZarrTemporalAdapter(addedLayerId, url, {
+    headers,
+    ...(options.readTimeAttributes ? { readAttributes: options.readTimeAttributes } : {}),
+  });
+
+  // `createZarrLayerAddHandler` has already mirrored the layer into the store
+  // (the control emits "layeradd" synchronously) along with the spatial
+  // reference the renderer resolved, so only the fields the caller alone knows
+  // are left to apply.
+  const store = useAppStore.getState();
+  const patch: Partial<GeoLibreLayer> = {};
+  const name = options.name?.trim();
+  if (name) patch.name = name;
+  if (options.beforeLayerId) patch.beforeId = options.beforeLayerId;
+  if (Object.keys(patch).length > 0) {
+    store.updateLayer(addedLayerId, patch);
+  }
+
+  return addedLayerId;
+}
+
+/**
+ * Re-select the non-spatial dimensions of a live Zarr layer, e.g. to step a
+ * plugin's own time slider through `{ time: n }` without rebuilding the layer.
+ *
+ * The renderer keeps the fetched chunks, so this is much cheaper than removing
+ * and re-adding the layer. The new selector is written back to the store layer
+ * so the Metadata panel and the project file show what is on screen.
+ *
+ * @param layerId A layer id returned by {@link addZarrRasterLayer}.
+ * @param selector The dimension selector, e.g. `{ time: 3 }`.
+ * @returns True when the layer accepted the selector, false when there is no
+ *   live Zarr layer with that id.
+ */
+export async function setZarrLayerSelector(
+  layerId: string,
+  selector: Record<string, number | string>,
+): Promise<boolean> {
+  const instance = zarrControl?.getLayersMap().get(layerId) as
+    | { setSelector?: (selector: Record<string, number | string>) => Promise<void> | void }
+    | undefined;
+  if (!instance || typeof instance.setSelector !== "function") return false;
+
+  await instance.setSelector(selector);
+
+  const store = useAppStore.getState();
+  const layer = store.layers.find((item) => item.id === layerId);
+  if (layer) {
+    store.updateLayer(layerId, {
+      source: { ...layer.source, selector },
+      metadata: { ...layer.metadata, selector },
+    });
+  }
+  return true;
+}
+
+/**
+ * Read the data values of a live Zarr layer under a GeoJSON geometry: a `Point`
+ * for click-to-value, a `Polygon`/`MultiPolygon` for region statistics.
+ *
+ * The read side of {@link setZarrLayerSelector}, and the reason a plugin does
+ * not need its own zarrita point reader: the renderer already holds the store's
+ * grid, so it does the CRS reprojection and fill-value masking itself. Pass a
+ * WGS84 `[lng, lat]` straight from a map click; the returned `coordinates` are
+ * in the store's **source** CRS (Web Mercator meters for EPSG:3857, degrees for
+ * EPSG:4326, source units for a custom proj4 dataset).
+ *
+ * The renderer answers with empty value arrays rather than an error when the
+ * geometry falls outside the store's grid, or when the layer has not finished
+ * loading its first chunks — so a query fired immediately after the add can
+ * come back empty even though the id is live. An aborted query rejects.
+ *
+ * `selector` scopes the read only: the layer keeps rendering the slice it is on,
+ * so an Identify readout for another time leaves the map alone. Moving the
+ * display is {@link setZarrLayerSelector}'s job.
+ *
+ * @param layerId A layer id returned by {@link addZarrRasterLayer} (or a layer
+ *   the Zarr panel added).
+ * @param geometry The query geometry, in WGS84.
+ * @param selector Dimensions to read instead of the layer's current selector,
+ *   e.g. `{ time: 12 }`. Omit to read the slice on screen.
+ * @param options `signal` to cancel the read, `includeSpatialCoordinates` to
+ *   drop the per-pixel coordinate arrays (default: included).
+ * @returns The renderer's result, or null when there is no live Zarr layer with
+ *   that id (the counterpart of {@link setZarrLayerSelector} returning false).
+ */
+export async function queryZarrLayer(
+  layerId: string,
+  geometry: QueryGeometry,
+  selector?: Selector,
+  options?: QueryOptions,
+): Promise<QueryResult | null> {
+  const instance = zarrControl?.getLayersMap().get(layerId) as
+    | Pick<ZarrLayer, "queryData">
+    | undefined;
+  if (!instance || typeof instance.queryData !== "function") return null;
+
+  return instance.queryData(geometry, selector, options);
+}
+// ----- Zarr time axis --------------------------------------------------------
+// A Zarr cube's time is an internal dimension, so the Time Slider drives it
+// through a temporal adapter (see `temporal-layers.ts`) rather than by filtering
+// features or swapping sources. Registration is best-effort and silent: a store
+// with no time axis simply never becomes bindable.
+
+/**
+ * What resolving a new layer's time axis needs but the `layeradd` event does not
+ * carry: an authenticated store's request headers, and — for a layer whose `url`
+ * is not something the metadata walk can fetch — a way to read the coordinate
+ * attributes anyway. Cloud-Optimized NetCDF supplies the kerchunk references
+ * whose inline `.zattrs` hold them (its `url` names the manifest); a store on
+ * local disk supplies a reader over the folder.
+ */
+interface ZarrTemporalContext {
+  headers?: Record<string, string>;
+  refs?: KerchunkRefs;
+  readAttributes?: ZarrTimeAttributesReader;
+}
+
+/**
+ * Store URLs with a programmatic add in flight, refcounted.
+ *
+ * The `layeradd` event carries no correlation token, so a handler firing for one
+ * add cannot tell which caller's headers or references belong to it — and two
+ * adds of the *same* URL can overlap, because `addCloudNetcdfLayer` runs off
+ * `addZarrRasterLayer`'s queue. Rather than guess, the shared handler skips any
+ * layer whose URL has a programmatic add running: those callers know both the
+ * layer id and their own context, and register the adapter themselves once the
+ * add resolves. Only the Zarr panel's own adds (which have no context to get
+ * wrong) are registered by the handler.
+ */
+const programmaticZarrAdds = new Map<string, number>();
+
+/** Mark a programmatic add in flight, returning a disposer for its `finally`. */
+function beginProgrammaticZarrAdd(url: string): () => void {
+  programmaticZarrAdds.set(url, (programmaticZarrAdds.get(url) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (programmaticZarrAdds.get(url) ?? 1) - 1;
+    if (remaining > 0) programmaticZarrAdds.set(url, remaining);
+    else programmaticZarrAdds.delete(url);
+  };
+}
+
+// How long to wait for `@carbonplan/zarr-layer` to finish loading its coordinate
+// arrays. `addLayer` resolves once the store's metadata is read, but the
+// dimension values land a moment later, so the read polls rather than assuming.
+const ZARR_DIMENSION_POLL_MS = 250;
+const ZARR_DIMENSION_ATTEMPTS = 24;
+
+/**
+ * The raw non-spatial coordinate values `@carbonplan/zarr-layer` loaded for a
+ * layer.
+ *
+ * `dimensionValues` is a real instance property but is **not** part of the
+ * package's public type surface (it is declared `private`), so this reads it
+ * through a structural cast. If the renderer ever renames it, Zarr layers
+ * quietly stop offering a Time Slider binding rather than failing the build;
+ * `tests/zarr-time-axis.test.ts` asserts the property still exists so the drift
+ * shows up in CI instead.
+ *
+ * @param layerId - A live Zarr layer id.
+ * @returns The coordinate values, or null when the layer went away or loaded none.
+ */
+async function readZarrDimensionValues(
+  layerId: string,
+): Promise<Record<string, (number | string)[]> | null> {
+  for (let attempt = 0; attempt < ZARR_DIMENSION_ATTEMPTS; attempt += 1) {
+    const instance = zarrControl?.getLayersMap().get(layerId) as
+      | { dimensionValues?: Record<string, (number | string)[]> }
+      | undefined;
+    if (!instance) return null;
+    const values = instance.dimensionValues;
+    if (values && Object.keys(values).length > 0) return values;
+    await new Promise((resolve) => setTimeout(resolve, ZARR_DIMENSION_POLL_MS));
+  }
+  return null;
+}
+
+/**
+ * A reader for the CF `units`/`calendar` of a local store's coordinate, or null
+ * when this layer is not folder-backed.
+ *
+ * Coordinates sit beside the data variables, which in a multiscale pyramid is
+ * one level down, so both places are tried.
+ *
+ * @param url - The identifier the layer was added under.
+ * @returns A reader over that folder's coordinate attributes, or null.
+ */
+function localZarrTimeAttributesReader(url: string): ZarrTimeAttributesReader | null {
+  const reader = zarrLocalStoreReaders.get(url);
+  if (!reader) return null;
+  const read = createDirectoryZarrMetadataReader(reader);
+  return async (dimension: string) => {
+    for (const prefix of ["", "0/"]) {
+      for (const key of [`${prefix}${dimension}/.zattrs`, `${prefix}${dimension}/zarr.json`]) {
+        const document = await read(key);
+        const attributes = key.endsWith("zarr.json")
+          ? (document as { attributes?: unknown } | undefined)?.attributes
+          : document;
+        if (!attributes || typeof attributes !== "object") continue;
+        const record = attributes as Record<string, unknown>;
+        const units = typeof record.units === "string" ? record.units : undefined;
+        const calendar = typeof record.calendar === "string" ? record.calendar : undefined;
+        if (units !== undefined || calendar !== undefined) return { units, calendar };
+      }
+    }
+    return null;
+  };
+}
+
+/** Read a coordinate's `units`/`calendar` out of an inline kerchunk `.zattrs`. */
+function zarrTimeAttributesFromRefs(
+  refs: KerchunkRefs | undefined,
+  dimension: string,
+): { units?: string; calendar?: string } | null {
+  const entry = refs?.[`${dimension}/.zattrs`];
+  if (typeof entry !== "string") return null;
+  try {
+    const parsed = JSON.parse(entry) as Record<string, unknown>;
+    const units = typeof parsed.units === "string" ? parsed.units : undefined;
+    const calendar = typeof parsed.calendar === "string" ? parsed.calendar : undefined;
+    return units === undefined && calendar === undefined ? null : { units, calendar };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a freshly added Zarr layer's time axis and, when it has one, register
+ * the temporal adapter that lets the Time Slider step it via
+ * {@link setZarrLayerSelector}.
+ *
+ * The caller supplies its own {@link ZarrTemporalContext}: the `layeradd` event
+ * carries no correlation token, so context can only be attributed reliably by
+ * the code that started the add.
+ *
+ * @param layerId - The new layer's id.
+ * @param url - The store URL (or kerchunk manifest URL).
+ * @param context - The add's headers, references, or attribute reader, when the
+ *   caller has them.
+ */
+function registerZarrTemporalAdapter(
+  layerId: string,
+  url: string | undefined,
+  context: ZarrTemporalContext = {},
+): void {
+  const { headers, refs } = context;
+  // A folder the panel opened is not something the caller could have passed
+  // context for, so fall back to the reader filed under this layer's own url.
+  const readAttributes =
+    context.readAttributes ?? localZarrTimeAttributesReader(url ?? "") ?? undefined;
+  void (async () => {
+    const dimensionValues = await readZarrDimensionValues(layerId);
+    if (!dimensionValues) return;
+    const dimension = pickTimeDimension(dimensionValues) ?? "time";
+    // Either source of attributes replaces the HTTP metadata walk, which for
+    // these layers would only produce a run of failed requests.
+    const attributes = refs
+      ? zarrTimeAttributesFromRefs(refs, dimension)
+      : readAttributes
+        ? await readAttributes(dimension).catch(() => null)
+        : undefined;
+    const axis = await resolveZarrTimeAxis(url ?? "", dimensionValues, {
+      ...(headers ? { headers } : {}),
+      ...(attributes !== undefined ? { attributes } : {}),
+    });
+    if (!axis) return;
+    // The layer may have been removed while the axis was being resolved.
+    if (!zarrControl?.getLayersMap().has(layerId)) return;
+    registerTemporalLayer(layerId, {
+      dimension: axis.dimension,
+      getTimeValues: () => axis.values,
+      setTime: async (date) => {
+        const index = nearestTimeIndex(axis.values, date.getTime());
+        if (index < 0) return;
+        await setZarrLayerSelector(layerId, { [axis.dimension]: index });
+      },
+    });
+  })();
+}
+
+// The control takes an explicit list of hex colors; the public option also
+// accepts a named GeoLibre ramp so a JS plugin need not spell out the stops.
+// `interpolateRampColors` falls back to the first built-in ramp for an unknown
+// name, mirroring how addCogLayer treats an unrecognized colormap.
+function resolveZarrColormap(colormap: string | string[] | undefined): string[] | undefined {
+  if (colormap === undefined) return undefined;
+  if (Array.isArray(colormap)) return colormap.length > 0 ? colormap : undefined;
+  const name = colormap.trim();
+  if (!name) return undefined;
+  return interpolateRampColors(name, ZARR_COLORMAP_STOPS);
 }
 
 export function openLidarLayerPanel(app: GeoLibreAppAPI): void {
@@ -1932,19 +2815,13 @@ function getComponentsOptions(app: GeoLibreAppAPI): ControlGridOptions {
   };
 }
 
-async function openStandaloneFlatGeobufControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { AddVectorControl: AddVectorControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneFlatGeobufControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { AddVectorControl: AddVectorControlClass } = await getComponentsConstructors();
 
   flatGeobufControl ??= createFlatGeobufControl(AddVectorControlClass);
 
   if (!flatGeobufControlMounted) {
-    const added = app.addMapControl(
-      flatGeobufControl,
-      flatGeobufControlPosition
-    );
+    const added = app.addMapControl(flatGeobufControl, flatGeobufControlPosition);
     if (!added) {
       flatGeobufControl = null;
       return false;
@@ -1959,11 +2836,8 @@ async function openStandaloneFlatGeobufControl(
   return true;
 }
 
-async function ensureCogRasterControl(
-  app: GeoLibreAppAPI
-): Promise<CogLayerControl | null> {
-  const { CogLayerControl: CogLayerControlClass } =
-    await getComponentsConstructors();
+async function ensureCogRasterControl(app: GeoLibreAppAPI): Promise<CogLayerControl | null> {
+  const { CogLayerControl: CogLayerControlClass } = await getComponentsConstructors();
 
   cogRasterControl ??= createCogRasterControl(CogLayerControlClass);
 
@@ -1983,11 +2857,8 @@ async function ensureCogRasterControl(
   return cogRasterControl;
 }
 
-async function openStandalonePMTilesControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { PMTilesLayerControl: PMTilesLayerControlClass } =
-    await getComponentsConstructors();
+async function openStandalonePMTilesControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { PMTilesLayerControl: PMTilesLayerControlClass } = await getComponentsConstructors();
 
   pmtilesControl ??= createPMTilesControl(PMTilesLayerControlClass);
 
@@ -2007,9 +2878,7 @@ async function openStandalonePMTilesControl(
   return true;
 }
 
-async function openStandalonePrintControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
+async function openStandalonePrintControl(app: GeoLibreAppAPI): Promise<boolean> {
   const { PrintControl: PrintControlClass } = await getComponentsConstructors();
 
   printControl ??= createPrintControl(PrintControlClass);
@@ -2036,11 +2905,8 @@ async function openStandalonePrintControl(
   return true;
 }
 
-async function openStandaloneSearchControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { SearchControl: SearchControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneSearchControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { SearchControl: SearchControlClass } = await getComponentsConstructors();
 
   searchControl ??= createSearchControl(SearchControlClass);
 
@@ -2061,11 +2927,8 @@ async function openStandaloneSearchControl(
   return true;
 }
 
-async function openStandaloneMeasureControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { MeasureControl: MeasureControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneMeasureControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { MeasureControl: MeasureControlClass } = await getComponentsConstructors();
 
   measureControl ??= createMeasureControl(MeasureControlClass);
 
@@ -2076,6 +2939,13 @@ async function openStandaloneMeasureControl(
       return false;
     }
     measureControlMounted = true;
+    // Terrain-aware 3D readouts (surface distance/area) appended to the
+    // control's panel; requires the panel from onAdd, so attach after mounting.
+    measureTerrainDetach = attachTerrainMeasure(
+      measureControl,
+      () => (app.getMap?.() ?? null) as TerrainMapLike | null,
+    );
+    makeMeasurePanelResizable(measureControl);
   }
 
   setTimeout(() => {
@@ -2090,11 +2960,8 @@ async function openStandaloneMeasureControl(
   return true;
 }
 
-async function openStandaloneBookmarkControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { BookmarkControl: BookmarkControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneBookmarkControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { BookmarkControl: BookmarkControlClass } = await getComponentsConstructors();
 
   bookmarkControl ??= createBookmarkControl(BookmarkControlClass, app);
 
@@ -2116,11 +2983,8 @@ async function openStandaloneBookmarkControl(
   return true;
 }
 
-async function openStandaloneSpinGlobeControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { SpinGlobeControl: SpinGlobeControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneSpinGlobeControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { SpinGlobeControl: SpinGlobeControlClass } = await getComponentsConstructors();
 
   spinGlobeControl ??= createSpinGlobeControl(SpinGlobeControlClass);
 
@@ -2147,7 +3011,7 @@ async function openStandaloneSpinGlobeControl(
 }
 
 function createSpinGlobeControl(
-  SpinGlobeControlClass: SpinGlobeControlConstructor
+  SpinGlobeControlClass: SpinGlobeControlConstructor,
 ): SpinGlobeControl {
   return new SpinGlobeControlClass(SPIN_GLOBE_OPTIONS);
 }
@@ -2172,16 +3036,10 @@ function setSpinGlobePanelVisible(visible: boolean): void {
   }
 }
 
-async function openStandaloneMinimapControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { MinimapControl: MinimapControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneMinimapControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { MinimapControl: MinimapControlClass } = await getComponentsConstructors();
 
-  minimapControl ??= createMinimapControl(
-    MinimapControlClass,
-    app.getActiveBasemap()
-  );
+  minimapControl ??= createMinimapControl(MinimapControlClass, app.getActiveBasemap());
 
   if (!minimapControlMounted) {
     const added = app.addMapControl(minimapControl, minimapControlPosition);
@@ -2213,16 +3071,11 @@ async function openStandaloneMinimapControl(
 async function refreshMinimapBasemap(app: GeoLibreAppAPI): Promise<void> {
   if (!minimapControl || !minimapControlMounted) return;
   const controlAtStart = minimapControl;
-  const { MinimapControl: MinimapControlClass } =
-    await getComponentsConstructors();
+  const { MinimapControl: MinimapControlClass } = await getComponentsConstructors();
   // Bail out if a concurrent refresh already rebuilt the control or a teardown
   // ran while awaiting; otherwise rapid basemap switches could double-remove
   // the just-added control and leave two minimap instances on the map.
-  if (
-    !minimapControl ||
-    !minimapControlMounted ||
-    minimapControl !== controlAtStart
-  ) {
+  if (!minimapControl || !minimapControlMounted || minimapControl !== controlAtStart) {
     return;
   }
 
@@ -2231,10 +3084,7 @@ async function refreshMinimapBasemap(app: GeoLibreAppAPI): Promise<void> {
   const wasCollapsed = minimapControl.getState().collapsed;
 
   app.removeMapControl(minimapControl);
-  minimapControl = createMinimapControl(
-    MinimapControlClass,
-    app.getActiveBasemap()
-  );
+  minimapControl = createMinimapControl(MinimapControlClass, app.getActiveBasemap());
   const added = app.addMapControl(minimapControl, minimapControlPosition);
   if (!added) {
     // Also drop the basemap subscription: minimapControlMounted is now false,
@@ -2255,11 +3105,8 @@ async function refreshMinimapBasemap(app: GeoLibreAppAPI): Promise<void> {
   }, 0);
 }
 
-async function openStandaloneViewStateControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { ViewStateControl: ViewStateControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneViewStateControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { ViewStateControl: ViewStateControlClass } = await getComponentsConstructors();
 
   viewStateControl ??= createViewStateControl(ViewStateControlClass);
 
@@ -2281,19 +3128,14 @@ async function openStandaloneViewStateControl(
   return true;
 }
 
-async function openStandaloneStacSearchControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { StacSearchControl: StacSearchControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneStacSearchControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { StacSearchControl: StacSearchControlClass } = await getComponentsConstructors();
 
+  stacSearchApp = app;
   stacSearchControl ??= createStacSearchControl(StacSearchControlClass);
 
   if (!stacSearchControlMounted) {
-    const added = app.addMapControl(
-      stacSearchControl,
-      stacSearchControlPosition
-    );
+    const added = app.addMapControl(stacSearchControl, stacSearchControlPosition);
     if (!added) {
       stacSearchControl = null;
       return false;
@@ -2308,11 +3150,8 @@ async function openStandaloneStacSearchControl(
   return true;
 }
 
-async function openStandaloneZarrControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { ZarrLayerControl: ZarrLayerControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneZarrControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { ZarrLayerControl: ZarrLayerControlClass } = await getComponentsConstructors();
 
   zarrControl ??= createZarrControl(ZarrLayerControlClass);
 
@@ -2332,11 +3171,8 @@ async function openStandaloneZarrControl(
   return true;
 }
 
-async function openStandaloneColorbarControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { ColorbarGuiControl: ColorbarGuiControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneColorbarControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { ColorbarGuiControl: ColorbarGuiControlClass } = await getComponentsConstructors();
 
   colorbarControl ??= createColorbarControl(ColorbarGuiControlClass);
 
@@ -2359,11 +3195,8 @@ async function openStandaloneColorbarControl(
   return true;
 }
 
-async function openStandaloneLegendControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { LegendGuiControl: LegendGuiControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneLegendControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { LegendGuiControl: LegendGuiControlClass } = await getComponentsConstructors();
 
   legendControl ??= createLegendControl(LegendGuiControlClass);
 
@@ -2384,11 +3217,8 @@ async function openStandaloneLegendControl(
   return true;
 }
 
-async function openStandaloneHtmlControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
-  const { HtmlGuiControl: HtmlGuiControlClass } =
-    await getComponentsConstructors();
+async function openStandaloneHtmlControl(app: GeoLibreAppAPI): Promise<boolean> {
+  const { HtmlGuiControl: HtmlGuiControlClass } = await getComponentsConstructors();
 
   htmlControl ??= createHtmlControl(HtmlGuiControlClass);
 
@@ -2410,17 +3240,19 @@ async function openStandaloneHtmlControl(
 }
 
 async function openStandaloneLidarControl(
-  app: GeoLibreAppAPI
+  app: GeoLibreAppAPI,
+  options: { reveal?: boolean } = {},
 ): Promise<boolean> {
-  const {
-    LidarControl: LidarControlClass,
-    LidarLayerAdapter: LidarLayerAdapterClass,
-  } = await getComponentsConstructors();
+  // `reveal` shows and expands the panel (the default, for the Add LiDAR Layer
+  // menu action). Project restore mounts the control only to re-stream saved
+  // clouds, so it passes `reveal: false` to keep the panel out of the user's
+  // way; a freshly created control is hidden so it does not pop open on load.
+  const reveal = options.reveal ?? true;
+  const { LidarControl: LidarControlClass, LidarLayerAdapter: LidarLayerAdapterClass } =
+    await getComponentsConstructors();
 
-  lidarControl ??= createLidarControl(
-    LidarControlClass,
-    LidarLayerAdapterClass
-  );
+  const created = !lidarControl;
+  lidarControl ??= createLidarControl(LidarControlClass, LidarLayerAdapterClass);
 
   if (!lidarControlMounted) {
     const added = app.addMapControl(lidarControl, lidarControlPosition);
@@ -2434,15 +3266,106 @@ async function openStandaloneLidarControl(
   startLidarThemeSync();
 
   setTimeout(() => {
-    showLidarControl(lidarControl);
-    lidarControl?.expand();
+    if (reveal) {
+      showLidarControl(lidarControl);
+      lidarControl?.expand();
+    } else if (created) {
+      hideLidarControl(lidarControl);
+    }
   }, 0);
   return true;
 }
 
-async function openStandaloneSplattingControl(
-  app: GeoLibreAppAPI
-): Promise<boolean> {
+/**
+ * Read the source URL of a `lidar-url` layer, preferring the dedicated
+ * `sourcePath` and falling back to `source.url`.
+ */
+function lidarLayerUrl(layer: GeoLibreLayer): string | null {
+  if (typeof layer.sourcePath === "string" && layer.sourcePath) {
+    return layer.sourcePath;
+  }
+  const url = (layer.source as { url?: unknown }).url;
+  return typeof url === "string" && url ? url : null;
+}
+
+/** Whether a restore is already queued or in flight for this specific layer. */
+function isLidarRestorePending(layer: GeoLibreLayer): boolean {
+  for (const queue of pendingLidarRestores.values()) {
+    if (queue.some((pending) => pending.layerId === layer.id)) return true;
+  }
+  return false;
+}
+
+/**
+ * Re-stream the point clouds for any restored `lidar-url` layers that are not
+ * yet loaded into the LiDAR control (e.g. after opening a saved project). The
+ * store only holds the layer metadata, so without this the layer appears in the
+ * Layers panel but renders nothing. The loaded cloud is reattached to the saved
+ * layer in {@link createLidarLoadHandler}, preserving its visibility, opacity,
+ * style, name, and position.
+ */
+export async function restoreLidarLayers(app: GeoLibreAppAPI): Promise<void> {
+  if (lidarRestoreInFlight) return;
+
+  const pending = useAppStore
+    .getState()
+    .layers.filter(
+      (layer) =>
+        isLidarControlLayer(layer) &&
+        !hasLidarPointCloud(layer.id) &&
+        !isLidarRestorePending(layer),
+    );
+  if (pending.length === 0) return;
+
+  lidarRestoreInFlight = true;
+  try {
+    const opened = await openStandaloneLidarControl(app, { reveal: false });
+    if (!opened || !lidarControl) return;
+    // The deck.gl point-cloud overlay only renders under the Mercator
+    // projection (the streaming loader's viewport math breaks under the default
+    // globe), matching the USGS LiDAR plugin and the other deck.gl controls.
+    ensureMercatorProjection(app.getMap?.());
+
+    for (const layer of pending) {
+      const url = lidarLayerUrl(layer);
+      if (!url) continue;
+      // Re-check against the live store: a layer may have been removed, already
+      // loaded, or queued while the control was loading asynchronously.
+      const current = useAppStore.getState().layers;
+      const index = current.findIndex((item) => item.id === layer.id);
+      if (index === -1) continue;
+      if (hasLidarPointCloud(layer.id) || isLidarRestorePending(layer)) continue;
+
+      const entry: PendingLidarRestore = {
+        layerId: layer.id,
+        name: layer.name,
+        visible: layer.visible,
+        opacity: layer.opacity,
+        style: layer.style,
+        groupId: layer.groupId,
+        beforeLayerId: current[index + 1]?.id ?? null,
+      };
+      const queue = pendingLidarRestores.get(url);
+      if (queue) queue.push(entry);
+      else pendingLidarRestores.set(url, [entry]);
+      lidarControl.loadPointCloud(url).catch((error: unknown) => {
+        // Drop only this layer's entry so a sibling restore for the same URL is
+        // not lost; clean up the map key once its queue empties.
+        const remaining = pendingLidarRestores.get(url);
+        if (remaining) {
+          const at = remaining.indexOf(entry);
+          if (at !== -1) remaining.splice(at, 1);
+          if (remaining.length === 0) pendingLidarRestores.delete(url);
+        }
+        console.warn("[lidar] failed to restore point cloud", url, error);
+      });
+    }
+  } finally {
+    lidarRestoreInFlight = false;
+  }
+}
+
+async function openStandaloneSplattingControl(app: GeoLibreAppAPI): Promise<boolean> {
   const {
     GaussianSplatControl: GaussianSplatControlClass,
     GaussianSplatLayerAdapter: GaussianSplatLayerAdapterClass,
@@ -2450,7 +3373,7 @@ async function openStandaloneSplattingControl(
 
   splattingControl ??= createSplattingControl(
     GaussianSplatControlClass,
-    GaussianSplatLayerAdapterClass
+    GaussianSplatLayerAdapterClass,
   );
 
   if (!splattingControlMounted) {
@@ -2470,7 +3393,7 @@ async function openStandaloneSplattingControl(
 }
 
 function createFlatGeobufControl(
-  AddVectorControlClass: AddVectorControlConstructor
+  AddVectorControlClass: AddVectorControlConstructor,
 ): AddVectorControl {
   const control = new AddVectorControlClass(ADD_VECTOR_OPTIONS);
   control.on("collapse", () => control.hide());
@@ -2485,8 +3408,7 @@ function createFlatGeobufControl(
   flatGeobufStoreUnsubscribe ??= useAppStore.subscribe((state, previous) => {
     const removedLayers = previous.layers.filter(
       (layer) =>
-        isFlatGeobufControlLayer(layer) &&
-        !state.layers.some((current) => current.id === layer.id)
+        isFlatGeobufControlLayer(layer) && !state.layers.some((current) => current.id === layer.id),
     );
     for (const layer of removedLayers) {
       flatGeobufControl?.removeLayer(layer.id);
@@ -2495,9 +3417,7 @@ function createFlatGeobufControl(
   return control;
 }
 
-function createCogRasterControl(
-  CogLayerControlClass: CogLayerControlConstructor
-): CogLayerControl {
+function createCogRasterControl(CogLayerControlClass: CogLayerControlConstructor): CogLayerControl {
   const control = new CogLayerControlClass(COG_RASTER_OPTIONS);
   control.on("layeradd", createCogRasterLayerAddHandler());
   control.on("layerremove", (event) => {
@@ -2531,22 +3451,15 @@ function createCogRasterControl(
         cogRasterControl?.setLayerVisibility(
           currentLayer.id,
           currentLayer.visible,
-          currentLayer.opacity
+          currentLayer.opacity,
         );
       }
 
       if (currentLayer.opacity !== layer.opacity) {
         if (currentLayer.visible) {
-          cogRasterControl?.setLayerOpacity(
-            currentLayer.id,
-            currentLayer.opacity
-          );
+          cogRasterControl?.setLayerOpacity(currentLayer.id, currentLayer.opacity);
         } else {
-          cogRasterControl?.setLayerVisibility(
-            currentLayer.id,
-            false,
-            currentLayer.opacity
-          );
+          cogRasterControl?.setLayerVisibility(currentLayer.id, false, currentLayer.opacity);
         }
       }
     }
@@ -2554,9 +3467,299 @@ function createCogRasterControl(
   return control;
 }
 
+// --- Layer Swipe COG integration -------------------------------------------
+// GeoLibre renders COG rasters (Vantor Open Data, STAC "Visualize", etc.)
+// through the CogLayerControl deck.gl overlay, so they are MapLibre custom
+// layers that Layer Swipe cannot see through getStyle(). These helpers let the
+// swipe plugin's layerProvider list them and render each per its side
+// assignment: mirror right/both onto the swipe comparison map, hide right-only
+// on the main map. See #1240 and swipe-cog-mirror.ts.
+
+/**
+ * A COG raster snapshot for the Layer Swipe provider, read from the app store
+ * (the user's intent) rather than the live control, so swipe's transient
+ * main-map visibility toggles do not perturb its decisions.
+ */
+export interface SwipeCogRasterSnapshot {
+  /** The CogLayerControl layer id (also the store layer id). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** COG URL. */
+  url: string;
+  /** User-facing visibility from the store (not swipe's transient state). */
+  visible: boolean;
+  /** Layer opacity. */
+  opacity: number;
+  /** Band selection string (e.g. "1" or "1,2,3"). */
+  bands?: string;
+  /** Colormap name. */
+  colormap?: CogLayerControlOptions["defaultColormap"];
+  /** Rescale minimum. */
+  rescaleMin?: number;
+  /** Rescale maximum. */
+  rescaleMax?: number;
+  /** Nodata value. */
+  nodata?: number;
+}
+
+// Notified when the set/state of CogLayerControl rasters changes, so the swipe
+// provider can refresh its list and re-mirror. Backed by a single store
+// subscription while at least one listener is registered.
+const swipeCogChangeListeners = new Set<() => void>();
+let swipeCogStoreUnsubscribe: (() => void) | null = null;
+
+function notifySwipeCogChange(): void {
+  for (const listener of swipeCogChangeListeners) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn("[GeoLibre] swipe COG change listener", error);
+    }
+  }
+}
+
+/**
+ * A lightweight fingerprint of the store's COG rasters (id/name/visibility/
+ * opacity/visualization), so the swipe subscription can skip notifying when an
+ * unrelated layer changed. Cheaper than the refreshLayers()/reconcile pass it
+ * guards.
+ */
+function swipeCogFingerprint(layers: GeoLibreLayer[]): string {
+  const parts: unknown[][] = [];
+  for (const layer of layers) {
+    if (!isCogRasterControlLayer(layer)) continue;
+    const source = layer.source as {
+      url?: unknown;
+      bands?: unknown;
+      colormap?: unknown;
+      rescaleMin?: unknown;
+      rescaleMax?: unknown;
+      nodata?: unknown;
+    };
+    // JSON.stringify (not a delimiter join) so a "|"/";" in a layer name or URL
+    // cannot make two genuinely-different states collide and skip a refresh.
+    parts.push([
+      layer.id,
+      layer.name,
+      layer.visible,
+      layer.opacity,
+      source.url,
+      source.bands,
+      source.colormap,
+      source.rescaleMin,
+      source.rescaleMax,
+      source.nodata,
+    ]);
+  }
+  return JSON.stringify(parts);
+}
+
+/**
+ * Subscribes to COG raster set/state changes (add/remove/visibility/opacity),
+ * so the Layer Swipe plugin can keep its panel list and comparison-map mirror
+ * in sync while a swipe is active.
+ *
+ * @param listener - Called after any relevant layer change.
+ * @returns An unsubscribe function.
+ */
+export function subscribeSwipeCogChanges(listener: () => void): () => void {
+  swipeCogChangeListeners.add(listener);
+  // A change to any COG raster surfaces as a store `layers` array change; the
+  // provider recompute is cheap, so notify on any layers change rather than
+  // diffing here. Swipe's own main-map hide goes through the control directly
+  // (setCogRasterMainVisibility), not the store, so it cannot loop back.
+  swipeCogStoreUnsubscribe ??= useAppStore.subscribe((state, previous) => {
+    // Cheap reference gate first; then only notify when the COG-raster subset
+    // actually changed, so unrelated layer edits during a swipe don't trigger a
+    // needless refreshLayers()/reconcile pass. Swipe's own main-map hide goes
+    // through the control directly, not the store, so it cannot loop back.
+    if (state.layers === previous.layers) return;
+    if (swipeCogFingerprint(state.layers) !== swipeCogFingerprint(previous.layers)) {
+      notifySwipeCogChange();
+    }
+  });
+  return () => {
+    swipeCogChangeListeners.delete(listener);
+    if (swipeCogChangeListeners.size === 0) {
+      swipeCogStoreUnsubscribe?.();
+      swipeCogStoreUnsubscribe = null;
+    }
+  };
+}
+
+/**
+ * Snapshots the store's CogLayerControl COG rasters for the Layer Swipe
+ * provider, in store (paint) order.
+ *
+ * Scope: only `cog-url` rasters (Vantor / STAC, rendered by the shared
+ * CogLayerControl) are surfaced. Locally-added GeoTIFFs (`geotiff-url`,
+ * rendered on the separate geoTiffRasterOverlay) are also deck.gl custom layers
+ * with the same #1240 root cause, but they use a different renderer and are out
+ * of scope here; extend this and the mirror to cover them in a follow-up.
+ *
+ * @returns One snapshot per "cog-url" store layer with a URL source.
+ */
+export function getSwipeCogRasters(): SwipeCogRasterSnapshot[] {
+  const snapshots: SwipeCogRasterSnapshot[] = [];
+  for (const layer of useAppStore.getState().layers) {
+    if (!isCogRasterControlLayer(layer)) continue;
+    const source = layer.source as {
+      url?: unknown;
+      bands?: unknown;
+      colormap?: unknown;
+      rescaleMin?: unknown;
+      rescaleMax?: unknown;
+      nodata?: unknown;
+    };
+    if (typeof source.url !== "string") continue;
+    snapshots.push({
+      id: layer.id,
+      name: layer.name,
+      url: source.url,
+      visible: layer.visible,
+      opacity: layer.opacity,
+      bands: typeof source.bands === "string" ? source.bands : undefined,
+      colormap:
+        typeof source.colormap === "string"
+          ? (source.colormap as CogLayerControlOptions["defaultColormap"])
+          : undefined,
+      rescaleMin: typeof source.rescaleMin === "number" ? source.rescaleMin : undefined,
+      rescaleMax: typeof source.rescaleMax === "number" ? source.rescaleMax : undefined,
+      nodata: typeof source.nodata === "number" ? source.nodata : undefined,
+    });
+  }
+  return snapshots;
+}
+
+/**
+ * Shows or hides a COG raster on the main map without writing the change back
+ * to the store, so Layer Swipe can hide a right-only raster on the main map
+ * while the Layers panel still lists it as visible. Visibility is opacity-based
+ * in CogLayerControl, so the stored opacity is restored when showing it again.
+ * A no-op when the control is not mounted.
+ *
+ * @param id - The raster layer id.
+ * @param visible - Whether it should render on the main map.
+ * @param opacity - The opacity to restore when making it visible.
+ */
+export function setCogRasterMainVisibility(id: string, visible: boolean, opacity: number): void {
+  cogRasterControl?.setLayerVisibility(id, visible, opacity);
+}
+
+/**
+ * Reads a COG raster's current visibility on the main map from the control
+ * itself, so Layer Swipe can compare against the live state rather than its own
+ * cached intent. The control's visibility is also driven independently by the
+ * store-diff subscription (a Layers-panel visibility toggle), so a cached value
+ * can drift; reading live avoids leaving a right-only raster shown after such a
+ * toggle. Defaults to visible when the control or layer is absent.
+ *
+ * @param id - The raster layer id.
+ * @returns Whether the raster currently renders on the main map.
+ */
+export function getCogRasterMainVisibility(id: string): boolean {
+  return cogRasterControl?.getLayerVisibility(id) ?? true;
+}
+
+/**
+ * Creates a hidden CogLayerControl bound to a given map (the Layer Swipe
+ * comparison map) so the swipe plugin can render COG mirrors on the swipe's
+ * clipped comparison view. The control's own UI is hidden; only its deck
+ * overlay renders.
+ *
+ * @param map - The map to mount the mirror control on.
+ * @returns The mirror control, or null if the components module fails to load.
+ */
+export async function createSwipeCogMirrorControl(
+  map: maplibregl.Map,
+): Promise<CogLayerControl | null> {
+  const { CogLayerControl: CogLayerControlClass } = await getComponentsConstructors();
+  const control = new CogLayerControlClass(COG_RASTER_OPTIONS);
+  map.addControl(control);
+  // Hide the panel/button: the mirror only contributes its deck overlay, which
+  // the swipe control already clips to the comparison region.
+  control.hide();
+  control.collapse();
+  return control;
+}
+
+/**
+ * Renders one COG snapshot on a mirror control, matching the main map's
+ * visualization (bands/colormap/rescale/nodata/opacity), and returns the
+ * control-assigned layer id so the caller can later update or remove just that
+ * layer.
+ *
+ * @param control - A mirror control from {@link createSwipeCogMirrorControl}.
+ * @param snapshot - The COG raster to render.
+ * @returns The new mirror layer id, or null if the add produced no layer.
+ */
+export async function mirrorAddCogLayer(
+  control: CogLayerControl,
+  snapshot: SwipeCogRasterSnapshot,
+): Promise<string | null> {
+  configureCogRasterControl(control, {
+    url: snapshot.url,
+    name: snapshot.name,
+    bands: snapshot.bands,
+    colormap: snapshot.colormap,
+    rescaleMin: snapshot.rescaleMin,
+    rescaleMax: snapshot.rescaleMax,
+    nodata: snapshot.nodata,
+    opacity: snapshot.opacity,
+  });
+  // addLayer generates the id internally; diff the control's layer-id set
+  // around the call to find it, rather than relying on 'layeradd' firing before
+  // the promise settles. Deterministic and independent of event/promise
+  // ordering. Assumes addLayer adds exactly one new id; if a future
+  // CogLayerControl dedupes/reuses an id and the diff is empty, log it so the
+  // caller's "retry as a fresh add" fallback is visible rather than silent.
+  const before = new Set(control.getLayerIds());
+  await control.addLayer(snapshot.url);
+  const newId = control.getLayerIds().find((id) => !before.has(id)) ?? null;
+  if (!newId) {
+    console.debug("[GeoLibre] swipe COG mirror: no new layer id after addLayer", snapshot.url);
+  }
+  return newId;
+}
+
+/**
+ * Sets the opacity of a single mirrored raster without a reload.
+ *
+ * @param control - A mirror control from {@link createSwipeCogMirrorControl}.
+ * @param mirrorLayerId - The mirror layer id from {@link mirrorAddCogLayer}.
+ * @param opacity - The opacity (0-1).
+ */
+export function mirrorSetCogOpacity(
+  control: CogLayerControl,
+  mirrorLayerId: string,
+  opacity: number,
+): void {
+  control.setLayerOpacity(mirrorLayerId, opacity);
+}
+
+/**
+ * Removes a single mirrored raster by its mirror layer id.
+ *
+ * @param control - A mirror control from {@link createSwipeCogMirrorControl}.
+ * @param mirrorLayerId - The mirror layer id from {@link mirrorAddCogLayer}.
+ */
+export function mirrorRemoveCogLayer(control: CogLayerControl, mirrorLayerId: string): void {
+  control.removeLayer(mirrorLayerId);
+}
+
+/**
+ * Removes every mirrored raster from a mirror control.
+ *
+ * @param control - A mirror control from {@link createSwipeCogMirrorControl}.
+ */
+export function clearMirrorCogLayers(control: CogLayerControl): void {
+  control.removeLayer();
+}
+
 function createLidarControl(
   LidarControlClass: LidarControlConstructor,
-  LidarLayerAdapterClass: LidarLayerAdapterConstructor
+  LidarLayerAdapterClass: LidarLayerAdapterConstructor,
 ): LidarControl {
   // Force the LiDAR panel to follow the in-app light/dark theme rather than the
   // system prefers-color-scheme (which can differ), matching how the panel is
@@ -2599,7 +3802,7 @@ function createLidarControl(
 
 function createSplattingControl(
   GaussianSplatControlClass: GaussianSplatControlConstructor,
-  GaussianSplatLayerAdapterClass: GaussianSplatLayerAdapterConstructor
+  GaussianSplatLayerAdapterClass: GaussianSplatLayerAdapterConstructor,
 ): GaussianSplatControl {
   const control = new GaussianSplatControlClass(SPLATTING_OPTIONS);
   splattingLayerAdapter = new GaussianSplatLayerAdapterClass(control);
@@ -2623,27 +3826,25 @@ function createSplattingControl(
       if (!isSplattingControlLayer(currentLayer)) continue;
 
       if (currentLayer.visible !== layer.visible) {
-        splattingLayerAdapter?.setVisibility(
-          currentLayer.id,
-          currentLayer.visible
-        );
+        splattingLayerAdapter?.setVisibility(currentLayer.id, currentLayer.visible);
       }
 
       if (currentLayer.opacity !== layer.opacity) {
-        splattingLayerAdapter?.setOpacity(
-          currentLayer.id,
-          currentLayer.opacity
-        );
+        splattingLayerAdapter?.setOpacity(currentLayer.id, currentLayer.opacity);
       }
     }
   });
   return control;
 }
 
-function createZarrControl(
-  ZarrLayerControlClass: ZarrLayerControlConstructor
-): ZarrLayerControl {
-  const control = new ZarrLayerControlClass(ZARR_OPTIONS);
+function createZarrControl(ZarrLayerControlClass: ZarrLayerControlConstructor): ZarrLayerControl {
+  const control = new ZarrLayerControlClass({
+    ...ZARR_OPTIONS,
+    // Only when the host registered one: without the option the panel shows no
+    // Browse folder button, which is what a browser with no directory picker
+    // should see.
+    ...(zarrLocalStoreProvider ? { localStoreProvider: zarrLocalStoreProvider } : {}),
+  });
   control.on("collapse", () => control.hide());
   control.on("layeradd", createZarrLayerAddHandler());
   control.on("layerremove", (event) => {
@@ -2655,50 +3856,55 @@ function createZarrControl(
         ? layer.id === event.layerId
         : !activeLayerIds.has(layer.id);
       if (shouldRemove) {
+        unregisterTemporalLayer(layer.id);
         store.removeLayer(layer.id);
       }
     }
+    pruneZarrLocalStoreReaders();
   });
   zarrStoreUnsubscribe ??= useAppStore.subscribe((state, previous) => {
     const currentById = new Map(state.layers.map((layer) => [layer.id, layer]));
 
+    // Visibility and opacity are applied by the paint bridge (see
+    // registerZarrPaintBridge), which layer-sync drives like every other layer
+    // property. Only removal is handled here, because a layer dropped from the
+    // store no longer reaches sync at all.
     for (const layer of previous.layers) {
       if (!isZarrControlLayer(layer)) continue;
-
-      const currentLayer = currentById.get(layer.id);
-      if (!currentLayer) {
-        zarrControl?.removeLayer(layer.id);
-        continue;
-      }
-
-      if (!isZarrControlLayer(currentLayer)) continue;
-
-      if (currentLayer.visible !== layer.visible) {
-        zarrControl?.setLayerVisibility(
-          currentLayer.id,
-          currentLayer.visible,
-          currentLayer.opacity
-        );
-      }
-
-      if (currentLayer.opacity !== layer.opacity) {
-        if (currentLayer.visible) {
-          zarrControl?.setLayerOpacity(currentLayer.id, currentLayer.opacity);
-        } else {
-          zarrControl?.setLayerVisibility(
-            currentLayer.id,
-            false,
-            currentLayer.opacity
-          );
-        }
-      }
+      if (currentById.has(layer.id)) continue;
+      unregisterTemporalLayer(layer.id);
+      clearExternalNativePaintBridge(layer.id);
+      zarrControl?.removeLayer(layer.id);
     }
+    pruneZarrLocalStoreReaders();
   });
   return control;
 }
 
+// Route the panels' opacity/visibility to the Zarr control's setters. The
+// control expresses "hidden" as opacity 0 (a custom layer has no paint), so a
+// hidden layer's stored opacity has to travel with the visibility call or
+// re-showing it would restore full opacity instead of the user's value.
+function registerZarrPaintBridge(layerId: string): void {
+  setExternalNativePaintBridge(layerId, {
+    setOpacity: (opacity) => {
+      const layer = useAppStore.getState().layers.find((item) => item.id === layerId);
+      if (layer && !layer.visible) {
+        zarrControl?.setLayerVisibility(layerId, false, opacity);
+        return;
+      }
+      zarrControl?.setLayerOpacity(layerId, opacity);
+    },
+    setVisibility: (visible) => {
+      const opacity =
+        useAppStore.getState().layers.find((item) => item.id === layerId)?.opacity ?? 1;
+      zarrControl?.setLayerVisibility(layerId, visible, opacity);
+    },
+  });
+}
+
 function createPMTilesControl(
-  PMTilesLayerControlClass: PMTilesLayerControlConstructor
+  PMTilesLayerControlClass: PMTilesLayerControlConstructor,
 ): PMTilesLayerControl {
   const control = new PMTilesLayerControlClass(PMTILES_OPTIONS);
   control.on("collapse", () => control.hide());
@@ -2719,8 +3925,7 @@ function createPMTilesControl(
   pmtilesStoreUnsubscribe ??= useAppStore.subscribe((state, previous) => {
     const removedLayers = previous.layers.filter(
       (layer) =>
-        isPMTilesControlLayer(layer) &&
-        !state.layers.some((current) => current.id === layer.id)
+        isPMTilesControlLayer(layer) && !state.layers.some((current) => current.id === layer.id),
     );
     for (const layer of removedLayers) {
       pmtilesControl?.removeLayer(layer.id);
@@ -2734,23 +3939,42 @@ function createPMTilesControl(
 // to its on-map icon (matching the Colorbar/Legend/HTML panels). Whether the
 // icon stays on the map is governed solely by the Controls-menu checkbox —
 // unchecking it calls the close*Panel helpers, which remove the control.
-function createSearchControl(
-  SearchControlClass: SearchControlConstructor
-): SearchControl {
+function createSearchControl(SearchControlClass: SearchControlConstructor): SearchControl {
   const control = new SearchControlClass(SEARCH_OPTIONS);
   return control;
 }
 
-function createMeasureControl(
-  MeasureControlClass: MeasureControlConstructor
-): MeasureControl {
+function createMeasureControl(MeasureControlClass: MeasureControlConstructor): MeasureControl {
   const control = new MeasureControlClass(MEASURE_OPTIONS);
   return control;
 }
 
+/**
+ * The MeasureControl's panel ships with a hard pixel max-height that forces
+ * its content (measurement list, terrain section) to scroll. Let the panel
+ * size to its content up to most of the viewport instead, and hand the user
+ * the native bottom-right resize handle for manual control.
+ */
+function makeMeasurePanelResizable(control: MeasureControl): void {
+  const panel = measurePanelElement(control);
+  if (!panel) return;
+  // Fit content instead of scrolling at the fixed cap, but never outgrow the
+  // viewport; the map's own chrome needs the remaining room.
+  panel.style.height = "auto";
+  panel.style.maxHeight = "min(75vh, 900px)";
+  // The native CSS resize handle (bottom-right in LTR, mirrored in RTL)
+  // requires a non-visible overflow; content scrolls once the user shrinks
+  // the panel below its natural size.
+  panel.style.overflow = "auto";
+  panel.style.resize = "both";
+  panel.style.minWidth = "220px";
+  panel.style.minHeight = "160px";
+  panel.style.maxWidth = "min(90vw, 560px)";
+}
+
 function createBookmarkControl(
   BookmarkControlClass: BookmarkControlConstructor,
-  app: GeoLibreAppAPI
+  app: GeoLibreAppAPI,
 ): BookmarkControl {
   const control = new BookmarkControlClass({
     ...BOOKMARK_OPTIONS,
@@ -2774,10 +3998,7 @@ function createBookmarkControl(
  * used instead. Falls back to the control's originals if the host does not
  * provide the helpers.
  */
-function routeBookmarkFileIoThroughHost(
-  control: BookmarkControl,
-  app: GeoLibreAppAPI
-): void {
+function routeBookmarkFileIoThroughHost(control: BookmarkControl, app: GeoLibreAppAPI): void {
   // `_exportToFile`/`_importFromFile` are private (underscore-prefixed) members
   // of BookmarkControl as of maplibre-gl-components@0.21.0. If a future version
   // renames them, the overrides below silently stop being called and file I/O
@@ -2795,7 +4016,7 @@ function routeBookmarkFileIoThroughHost(
   if (!io._exportToFile || !io._importFromFile) {
     console.warn(
       "BookmarkControl: _exportToFile/_importFromFile not found; Tauri-aware " +
-        "Import/Export overrides are inactive. Check maplibre-gl-components."
+        "Import/Export overrides are inactive. Check maplibre-gl-components.",
     );
     return;
   }
@@ -2815,11 +4036,7 @@ function routeBookmarkFileIoThroughHost(
       originalExport(mode);
       return;
     }
-    app.exportTextFile(
-      "bookmarks.json",
-      io.exportBookmarks(mode),
-      dialogOptions
-    );
+    app.exportTextFile("bookmarks.json", io.exportBookmarks(mode), dialogOptions);
   };
 
   io._importFromFile = () => {
@@ -2848,7 +4065,7 @@ function routeBookmarkFileIoThroughHost(
             typeof (bookmark as MapBookmark).name === "string" &&
             Number.isFinite((bookmark as MapBookmark).lng) &&
             Number.isFinite((bookmark as MapBookmark).lat) &&
-            Number.isFinite((bookmark as MapBookmark).zoom)
+            Number.isFinite((bookmark as MapBookmark).zoom),
         );
         if (valid.length === 0) {
           console.warn("BookmarkControl: no valid bookmarks found in file");
@@ -2864,7 +4081,7 @@ function routeBookmarkFileIoThroughHost(
 
 function createMinimapControl(
   MinimapControlClass: MinimapControlConstructor,
-  basemapStyleUrl: string
+  basemapStyleUrl: string,
 ): MinimapControl {
   const control = new MinimapControlClass({
     ...MINIMAP_OPTIONS,
@@ -2874,9 +4091,12 @@ function createMinimapControl(
 }
 
 function createViewStateControl(
-  ViewStateControlClass: ViewStateControlConstructor
+  ViewStateControlClass: ViewStateControlConstructor,
 ): ViewStateControl {
-  const control = new ViewStateControlClass(VIEW_STATE_OPTIONS);
+  const control = new ViewStateControlClass({
+    ...VIEW_STATE_OPTIONS,
+    title: viewStateLabels.title,
+  });
   return control;
 }
 
@@ -2891,9 +4111,7 @@ function resolveDocumentTheme(): PrintTheme {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
-function createPrintControl(
-  PrintControlClass: PrintControlConstructor
-): PrintControl {
+function createPrintControl(PrintControlClass: PrintControlConstructor): PrintControl {
   const control = new PrintControlClass({
     ...PRINT_OPTIONS,
     theme: resolveDocumentTheme(),
@@ -2968,21 +4186,17 @@ function stopLidarThemeSync(): void {
 }
 
 function createColorbarControl(
-  ColorbarGuiControlClass: ColorbarGuiControlConstructor
+  ColorbarGuiControlClass: ColorbarGuiControlConstructor,
 ): ColorbarGuiControl {
   const control = new ColorbarGuiControlClass(COLORBAR_OPTIONS);
   control.on("expand", () => {
-    constrainGuiPanelToViewport(
-      ".geolibre-colorbar-control .colorbar-gui-panel"
-    );
+    constrainGuiPanelToViewport(".geolibre-colorbar-control .colorbar-gui-panel");
     setColorbarPanelVisible(true);
   });
   return control;
 }
 
-function createLegendControl(
-  LegendGuiControlClass: LegendGuiControlConstructor
-): LegendGuiControl {
+function createLegendControl(LegendGuiControlClass: LegendGuiControlConstructor): LegendGuiControl {
   const control = new LegendGuiControlClass(LEGEND_OPTIONS);
   control.on("expand", () => {
     constrainGuiPanelToViewport(".geolibre-legend-control .legend-gui-panel");
@@ -2991,9 +4205,7 @@ function createLegendControl(
   return control;
 }
 
-function createHtmlControl(
-  HtmlGuiControlClass: HtmlGuiControlConstructor
-): HtmlGuiControl {
+function createHtmlControl(HtmlGuiControlClass: HtmlGuiControlConstructor): HtmlGuiControl {
   const control = new HtmlGuiControlClass(HTML_OPTIONS);
   control.on("expand", () => {
     constrainGuiPanelToViewport(".geolibre-html-control .html-gui-panel");
@@ -3003,7 +4215,7 @@ function createHtmlControl(
 }
 
 function createStacSearchControl(
-  StacSearchControlClass: StacSearchControlConstructor
+  StacSearchControlClass: StacSearchControlConstructor,
 ): StacSearchControl {
   const control = new StacSearchControlClass(STAC_SEARCH_OPTIONS);
   control.on("collapse", () => control.hide());
@@ -3025,15 +4237,8 @@ function createStacSearchControl(
 
       if (!isStacSearchControlLayer(currentLayer)) continue;
 
-      if (
-        currentLayer.visible !== layer.visible ||
-        currentLayer.opacity !== layer.opacity
-      ) {
-        setStacSearchControlLayerState(
-          currentLayer.id,
-          currentLayer.visible,
-          currentLayer.opacity
-        );
+      if (currentLayer.visible !== layer.visible || currentLayer.opacity !== layer.opacity) {
+        setStacSearchControlLayerState(currentLayer.id, currentLayer.visible, currentLayer.opacity);
       }
     }
   });
@@ -3123,6 +4328,10 @@ function teardownStacSearchControl(app: GeoLibreAppAPI): void {
   }
   stacSearchControl = null;
   stacSearchControlMounted = false;
+  stacSearchApp = null;
+  // Its deck layers live in the shared overlay, which outlives this control.
+  stacSearchBeforeIds.clear();
+  setSharedDeckLayers("stac-search", []);
 }
 
 function hideSearchControl(): void {
@@ -3139,6 +4348,8 @@ function setSearchPlacesPanelVisible(visible: boolean): void {
 }
 
 function teardownMeasureControl(app: GeoLibreAppAPI): void {
+  measureTerrainDetach?.();
+  measureTerrainDetach = null;
   if (measureControl && measureControlMounted) {
     app.removeMapControl(measureControl);
   }
@@ -3271,6 +4482,10 @@ function setHtmlPanelVisible(visible: boolean): void {
 
 function teardownLidarControl(app: GeoLibreAppAPI): void {
   stopLidarThemeSync();
+  // Clear restore bookkeeping so a teardown mid-restore (project reload, map
+  // re-init) cannot strand the in-flight guard and block later restores.
+  pendingLidarRestores.clear();
+  lidarRestoreInFlight = false;
   lidarStoreUnsubscribe?.();
   lidarStoreUnsubscribe = null;
   lidarLayerAdapter?.destroy();
@@ -3300,6 +4515,47 @@ function createLidarLoadHandler(): LidarControlEventHandler {
 
     const store = useAppStore.getState();
     const layer = createLidarStoreLayer(event.pointCloud);
+
+    // Project restore: this load was triggered to re-stream a saved layer (see
+    // restoreLidarLayers). loadPointCloud assigns a fresh id, so swap the inert
+    // placeholder (saved id) for the loaded layer in place, carrying over the
+    // saved visibility, opacity, style, name, and position.
+    const restoreKey = typeof event.pointCloud.source === "string" ? event.pointCloud.source : null;
+    const restoreQueue = restoreKey ? pendingLidarRestores.get(restoreKey) : undefined;
+    const restore = restoreQueue?.shift();
+    if (restore && restoreKey) {
+      if (restoreQueue && restoreQueue.length === 0) {
+        pendingLidarRestores.delete(restoreKey);
+      }
+      const restored: GeoLibreLayer = {
+        ...layer,
+        name: restore.name || layer.name,
+        visible: restore.visible,
+        opacity: restore.opacity,
+        style: restore.style,
+        ...(restore.groupId ? { groupId: restore.groupId } : {}),
+      };
+      if (
+        restore.layerId !== restored.id &&
+        store.layers.some((item) => item.id === restore.layerId)
+      ) {
+        store.removeLayer(restore.layerId);
+      }
+      const beforeLayerId =
+        restore.beforeLayerId &&
+        useAppStore.getState().layers.some((item) => item.id === restore.beforeLayerId)
+          ? restore.beforeLayerId
+          : null;
+      store.addLayer(restored, beforeLayerId);
+      if (!restored.visible) {
+        lidarLayerAdapter?.setVisibility(restored.id, false);
+      }
+      if (restored.opacity !== 1) {
+        lidarLayerAdapter?.setOpacity(restored.id, restored.opacity);
+      }
+      return;
+    }
+
     if (store.layers.some((item) => item.id === layer.id)) {
       store.updateLayer(layer.id, {
         metadata: layer.metadata,
@@ -3314,7 +4570,7 @@ function createLidarLoadHandler(): LidarControlEventHandler {
 }
 
 function createSplattingLoadHandler(
-  assetType: "model" | "splat"
+  assetType: "model" | "splat",
 ): Parameters<GaussianSplatControl["on"]>[1] {
   return (event) => {
     const id = assetType === "splat" ? event.splatId : event.modelId;
@@ -3335,9 +4591,7 @@ function createSplattingLoadHandler(
   };
 }
 
-function createSplattingRemoveHandler(): Parameters<
-  GaussianSplatControl["on"]
->[1] {
+function createSplattingRemoveHandler(): Parameters<GaussianSplatControl["on"]>[1] {
   return (event) => {
     const id = event.splatId ?? event.modelId;
     if (!id) return;
@@ -3363,14 +4617,10 @@ function createLidarUnloadHandler(): LidarControlEventHandler {
   };
 }
 
-function createFlatGeobufLayerAddHandler(
-  control: AddVectorControl
-): AddVectorEventHandler {
+function createFlatGeobufLayerAddHandler(control: AddVectorControl): AddVectorEventHandler {
   return (event) => {
     if (!event.layerId) return;
-    const layerInfo = event.state.layers.find(
-      (layer) => layer.id === event.layerId
-    );
+    const layerInfo = event.state.layers.find((layer) => layer.id === event.layerId);
     if (!layerInfo) return;
 
     const store = useAppStore.getState();
@@ -3391,26 +4641,17 @@ function createFlatGeobufLayerAddHandler(
 function createCogRasterLayerAddHandler(): CogLayerEventHandler {
   return (event) => {
     if (!event.layerId) return;
-    const layerInfo = event.state.layers.find(
-      (layer) => layer.id === event.layerId
-    );
+    const layerInfo = event.state.layers.find((layer) => layer.id === event.layerId);
     if (!layerInfo) return;
 
     const pendingOptions = pendingCogRasterLayerOptions.shift();
-    if (
-      !pendingOptions &&
-      ignoredCogRasterLayerUrls.delete(layerInfo.url || event.url || "")
-    ) {
+    if (!pendingOptions && ignoredCogRasterLayerUrls.delete(layerInfo.url || event.url || "")) {
       cogRasterControl?.removeLayer(event.layerId);
       return;
     }
 
     const store = useAppStore.getState();
-    const layer = createCogRasterStoreLayer(
-      event.layerId,
-      layerInfo,
-      pendingOptions
-    );
+    const layer = createCogRasterStoreLayer(event.layerId, layerInfo, pendingOptions);
     if (store.layers.some((item) => item.id === layer.id)) {
       store.updateLayer(layer.id, {
         metadata: layer.metadata,
@@ -3428,13 +4669,24 @@ function createCogRasterLayerAddHandler(): CogLayerEventHandler {
 function createZarrLayerAddHandler(): ZarrLayerEventHandler {
   return (event) => {
     if (!event.layerId) return;
-    const layerInfo = event.state.layers.find(
-      (layer) => layer.id === event.layerId
-    );
+    const layerInfo = event.state.layers.find((layer) => layer.id === event.layerId);
     if (!layerInfo) return;
 
     const store = useAppStore.getState();
     const layer = createZarrStoreLayer(event.layerId, layerInfo);
+    // The renderer owns the pixels, so the panel's opacity/visibility reach it
+    // through the control's setters rather than MapLibre paint properties.
+    registerZarrPaintBridge(layer.id);
+    // A cube with a time axis becomes drivable by the Time Slider. Resolving the
+    // axis needs the renderer's async metadata load plus a store lookup, so it
+    // runs on its own and registers the adapter whenever it lands.
+    //
+    // Only for the Zarr panel's own adds: a programmatic add knows both its
+    // layer id and its own headers/references, which this event cannot be
+    // attributed to (see `programmaticZarrAdds`), so it registers its own.
+    if (!programmaticZarrAdds.has(layerInfo.url ?? "")) {
+      registerZarrTemporalAdapter(layer.id, layerInfo.url);
+    }
     if (store.layers.some((item) => item.id === layer.id)) {
       store.updateLayer(layer.id, {
         metadata: layer.metadata,
@@ -3452,9 +4704,7 @@ function createZarrLayerAddHandler(): ZarrLayerEventHandler {
 function createPMTilesLayerAddHandler(): PMTilesLayerEventHandler {
   return (event) => {
     if (!event.layerId) return;
-    const layerInfo = event.state.layers.find(
-      (layer) => layer.id === event.layerId
-    );
+    const layerInfo = event.state.layers.find((layer) => layer.id === event.layerId);
     if (!layerInfo) return;
 
     const store = useAppStore.getState();
@@ -3473,9 +4723,7 @@ function createPMTilesLayerAddHandler(): PMTilesLayerEventHandler {
   };
 }
 
-function createStacSearchDisplayHandler(
-  control: StacSearchControl
-): StacSearchEventHandler {
+function createStacSearchDisplayHandler(control: StacSearchControl): StacSearchEventHandler {
   return (event) => {
     const store = useAppStore.getState();
     for (const snapshot of getStacSearchLayerSnapshots(control)) {
@@ -3485,7 +4733,7 @@ function createStacSearchDisplayHandler(
         snapshot,
         event.item ?? event.state.selectedItem,
         event.state.selectedCollection?.id,
-        event.state.selectedCatalog?.url
+        event.state.selectedCatalog?.url,
       );
       store.addLayer(layer);
     }
@@ -3494,7 +4742,7 @@ function createStacSearchDisplayHandler(
 
 function addLayerWithCogRasterControl(
   control: CogLayerControl,
-  options: CogRasterLayerOptions
+  options: CogRasterLayerOptions,
 ): Promise<string> {
   configureCogRasterControl(control, options);
   pendingCogRasterLayerOptions.push(options);
@@ -3506,9 +4754,9 @@ function addLayerWithCogRasterControl(
       settle(() =>
         reject(
           new Error(
-            "The COG raster layer did not finish loading. Trying generic GeoTIFF rendering."
-          )
-        )
+            "The COG raster layer did not finish loading. Trying generic GeoTIFF rendering.",
+          ),
+        ),
       );
     }, 30000);
     const cleanup = () => {
@@ -3531,9 +4779,7 @@ function addLayerWithCogRasterControl(
       settle(() => resolve(event.layerId!));
     };
     const handleError: CogLayerEventHandler = (event) => {
-      settle(() =>
-        reject(new Error(event.error || "Failed to load the COG raster layer."))
-      );
+      settle(() => reject(new Error(event.error || "Failed to load the COG raster layer.")));
     };
 
     control.on("layeradd", handleLayerAdd);
@@ -3551,14 +4797,11 @@ function addLayerWithCogRasterControl(
 async function addGeoTiffRasterLayer(
   app: GeoLibreAppAPI,
   options: CogRasterLayerOptions,
-  cause: unknown = undefined
+  cause: unknown = undefined,
 ): Promise<string> {
   const overlay = await ensureGeoTiffRasterOverlay(app);
   if (!overlay) {
-    throw new Error(
-      "The generic GeoTIFF raster overlay could not be added to the map.",
-      { cause }
-    );
+    throw new Error("The generic GeoTIFF raster overlay could not be added to the map.", { cause });
   }
 
   const id = createGeoTiffRasterLayerId();
@@ -3589,9 +4832,7 @@ async function addGeoTiffRasterLayer(
   return id;
 }
 
-async function ensureGeoTiffRasterOverlay(
-  app: GeoLibreAppAPI
-): Promise<MapboxOverlay | null> {
+async function ensureGeoTiffRasterOverlay(app: GeoLibreAppAPI): Promise<MapboxOverlay | null> {
   const { MapboxOverlay: MapboxOverlayClass } = await import("@deck.gl/mapbox");
   geoTiffRasterOverlay ??= new MapboxOverlayClass({
     interleaved: false,
@@ -3599,10 +4840,7 @@ async function ensureGeoTiffRasterOverlay(
   });
 
   if (!geoTiffRasterOverlayMounted) {
-    const added = app.addMapControl(
-      geoTiffRasterOverlay,
-      cogRasterControlPosition
-    );
+    const added = app.addMapControl(geoTiffRasterOverlay, cogRasterControlPosition);
     if (!added) {
       geoTiffRasterOverlay = null;
       return null;
@@ -3625,10 +4863,7 @@ async function ensureGeoTiffRasterOverlay(
 
       if (!isGeoTiffRasterLayer(currentLayer)) continue;
 
-      if (
-        currentLayer.visible !== layer.visible ||
-        currentLayer.opacity !== layer.opacity
-      ) {
+      if (currentLayer.visible !== layer.visible || currentLayer.opacity !== layer.opacity) {
         const rasterState = geoTiffRasterLayerProps.get(layer.id);
         if (!rasterState) continue;
         rasterState.visible = currentLayer.visible;
@@ -3648,7 +4883,7 @@ async function fetchGeoTiffRasterInput(
   app: GeoLibreAppAPI,
   options: CogRasterLayerOptions,
   url: string,
-  cause: unknown
+  cause: unknown,
 ): Promise<ArrayBuffer> {
   if (options.data) return options.data;
 
@@ -3677,7 +4912,7 @@ async function fetchGeoTiffRasterInput(
 
 async function loadGeoTiffRasterData(
   input: ArrayBuffer,
-  options: CogRasterLayerOptions
+  options: CogRasterLayerOptions,
 ): Promise<{
   bounds: [number, number, number, number];
   raster: GeoTiffRasterData;
@@ -3695,7 +4930,7 @@ async function loadGeoTiffRasterData(
   }
   const bounds = getGeoTiffGeographicBounds(
     imageBounds as [number, number, number, number],
-    projection.def
+    projection.def,
   );
   const reprojectionFns = createGeoTiffReprojectionFns(image, projection.def);
   const sampleCount = image.getSamplesPerPixel();
@@ -3720,7 +4955,7 @@ async function loadGeoTiffRasterData(
 }
 
 async function parseGeoTiffProjection(
-  geoKeys: Record<string, unknown>
+  geoKeys: Record<string, unknown>,
 ): Promise<Awaited<ReturnType<StacGeoKeysParser>>> {
   const parser = await getStacGeoKeysParser();
   return parser(geoKeys);
@@ -3728,21 +4963,15 @@ async function parseGeoTiffProjection(
 
 function createGeoTiffReprojectionFns(
   image: GeoTiffImageLike,
-  sourceProjection: Parameters<typeof proj4>[0]
+  sourceProjection: Parameters<typeof proj4>[0],
 ): RasterLayerProps["reprojectionFns"] {
   const [originX, originY] = image.getOrigin();
   const [resolutionX, resolutionY] = image.getResolution();
   const converter = proj4(sourceProjection, "EPSG:4326");
 
   return {
-    forwardTransform: (x, y) => [
-      originX + x * resolutionX,
-      originY + y * resolutionY,
-    ],
-    inverseTransform: (x, y) => [
-      (x - originX) / resolutionX,
-      (y - originY) / resolutionY,
-    ],
+    forwardTransform: (x, y) => [originX + x * resolutionX, originY + y * resolutionY],
+    inverseTransform: (x, y) => [(x - originX) / resolutionX, (y - originY) / resolutionY],
     forwardReproject: (x, y) => converter.forward([x, y]),
     inverseReproject: (x, y) => converter.inverse([x, y]),
   };
@@ -3757,34 +4986,26 @@ function createRasterImageData(
   values: RasterBandValues,
   width: number,
   height: number,
-  options: CogRasterLayerOptions
+  options: CogRasterLayerOptions,
 ): ImageData {
   const stats = getRasterValueStats(values, options.nodata);
   const useAutoScale =
-    (options.rescaleMin ?? 0) === 0 &&
-    (options.rescaleMax ?? 255) === 255 &&
-    stats.max > 255;
-  const min = useAutoScale ? stats.min : options.rescaleMin ?? stats.min;
-  const max = useAutoScale ? stats.max : options.rescaleMax ?? stats.max;
+    (options.rescaleMin ?? 0) === 0 && (options.rescaleMax ?? 255) === 255 && stats.max > 255;
+  const min = useAutoScale ? stats.min : (options.rescaleMin ?? stats.min);
+  const max = useAutoScale ? stats.max : (options.rescaleMax ?? stats.max);
   const scale = max > min ? max - min : 1;
   const pixels = new Uint8ClampedArray(width * height * 4);
 
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     const pixelIndex = index * 4;
-    if (
-      !Number.isFinite(value) ||
-      (options.nodata !== undefined && value === options.nodata)
-    ) {
+    if (!Number.isFinite(value) || (options.nodata !== undefined && value === options.nodata)) {
       pixels[pixelIndex + 3] = 0;
       continue;
     }
 
     const normalized = Math.max(0, Math.min(1, (value - min) / scale));
-    const [red, green, blue] = colorFromRasterValue(
-      normalized,
-      options.colormap
-    );
+    const [red, green, blue] = colorFromRasterValue(normalized, options.colormap);
     pixels[pixelIndex] = red;
     pixels[pixelIndex + 1] = green;
     pixels[pixelIndex + 2] = blue;
@@ -3796,7 +5017,7 @@ function createRasterImageData(
 
 function getRasterValueStats(
   values: RasterBandValues,
-  nodata: number | undefined
+  nodata: number | undefined,
 ): { max: number; min: number } {
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
@@ -3815,7 +5036,7 @@ function getRasterValueStats(
 
 function colorFromRasterValue(
   value: number,
-  colormap: CogRasterLayerOptions["colormap"]
+  colormap: CogRasterLayerOptions["colormap"],
 ): [number, number, number] {
   if (colormap === "terrain") {
     return interpolateColorRamp(value, [
@@ -3866,7 +5087,7 @@ function colorFromRasterValue(
 
 function interpolateColorRamp(
   value: number,
-  stops: [number, number, number][]
+  stops: [number, number, number][],
 ): [number, number, number] {
   if (stops.length === 1) return stops[0];
   const scaled = value * (stops.length - 1);
@@ -3883,7 +5104,7 @@ function interpolateColorRamp(
 
 function getGeoTiffGeographicBounds(
   projectedBounds: [number, number, number, number],
-  sourceProjection: Parameters<typeof proj4>[0]
+  sourceProjection: Parameters<typeof proj4>[0],
 ): [number, number, number, number] {
   const converter = proj4(sourceProjection, "EPSG:4326");
   const [minX, minY, maxX, maxY] = projectedBounds;
@@ -3937,10 +5158,7 @@ function addOrUpdateGeoTiffStoreLayer(state: GeoTiffRasterLayerState): void {
   store.addLayer(layer, state.options.beforeLayerId);
 }
 
-function configureCogRasterControl(
-  control: CogLayerControl,
-  options: CogRasterLayerOptions
-): void {
+function configureCogRasterControl(control: CogLayerControl, options: CogRasterLayerOptions): void {
   const mutableControl = control as unknown as MutableCogLayerControl;
   const state = mutableControl._state;
   if (state) {
@@ -3963,7 +5181,7 @@ function configureCogRasterControl(
 function createFlatGeobufStoreLayer(
   id: string,
   layerInfo: AddVectorLayerInfo,
-  control: AddVectorControl
+  control: AddVectorControl,
 ): GeoLibreLayer {
   const nativeLayerIds = control
     .getLayerIds()
@@ -4003,7 +5221,7 @@ function createFlatGeobufStoreLayer(
 function createCogRasterStoreLayer(
   id: string,
   layerInfo: CogLayerInfo,
-  options?: CogRasterLayerOptions
+  options?: CogRasterLayerOptions,
 ): GeoLibreLayer {
   const url = options?.url ?? layerInfo.url;
   const bands = options?.bands?.trim() || layerInfo.bands || "1";
@@ -4050,9 +5268,7 @@ function createCogRasterStoreLayer(
   };
 }
 
-function createGeoTiffRasterStoreLayer(
-  state: GeoTiffRasterLayerState
-): GeoLibreLayer {
+function createGeoTiffRasterStoreLayer(state: GeoTiffRasterLayerState): GeoLibreLayer {
   const bands = state.options.bands?.trim() || "1";
   const colormap = state.options.colormap ?? "none";
   const rescaleMin = state.options.rescaleMin ?? 0;
@@ -4099,10 +5315,7 @@ function createGeoTiffRasterStoreLayer(
   };
 }
 
-function createPMTilesStoreLayer(
-  id: string,
-  layerInfo: PMTilesLayerInfo
-): GeoLibreLayer {
+function createPMTilesStoreLayer(id: string, layerInfo: PMTilesLayerInfo): GeoLibreLayer {
   const firstSourceLayer = layerInfo.sourceLayers[0];
   const fillColor =
     (firstSourceLayer && layerInfo.sourceLayerColors?.[firstSourceLayer]) ??
@@ -4141,15 +5354,10 @@ function createPMTilesStoreLayer(
   };
 }
 
-function createZarrStoreLayer(
-  id: string,
-  layerInfo: ZarrLayerInfo
-): GeoLibreLayer {
+function createZarrStoreLayer(id: string, layerInfo: ZarrLayerInfo): GeoLibreLayer {
   const name =
     layerInfo.name ||
-    [layerNameFromUrl(layerInfo.url, id), layerInfo.variable]
-      .filter(Boolean)
-      .join(" - ");
+    [layerNameFromUrl(layerInfo.url, id), layerInfo.variable].filter(Boolean).join(" - ");
 
   return {
     id,
@@ -4163,6 +5371,13 @@ function createZarrStoreLayer(
       type: "raster",
       url: layerInfo.url,
       variable: layerInfo.variable,
+      // The spatial reference the renderer actually used, whether it came from
+      // the panel's CRS fields, an addZarrLayer option, or the store's own
+      // metadata. Recorded so the Metadata panel and the project file show how a
+      // projected store was placed.
+      ...(layerInfo.crs ? { crs: layerInfo.crs } : {}),
+      ...(layerInfo.proj4 ? { proj4: layerInfo.proj4 } : {}),
+      ...(layerInfo.bounds ? { bounds: layerInfo.bounds } : {}),
     },
     visible: true,
     opacity: layerInfo.opacity,
@@ -4176,6 +5391,14 @@ function createZarrStoreLayer(
       externalNativeLayer: true,
       identifiable: false,
       nativeLayerIds: [layerInfo.id],
+      // A Zarr layer is a MapLibre custom (WebGL) layer with no paint
+      // properties: brightness/saturation/contrast/hue would be inert sliders.
+      // The Style panel therefore shows the generic controls only, and opacity
+      // reaches the renderer through the paint bridge registered alongside this
+      // record (opengeos/GeoLibre#1445).
+      paintMode: "plugin",
+      ...(layerInfo.crs ? { crs: layerInfo.crs } : {}),
+      ...(layerInfo.proj4 ? { proj4: layerInfo.proj4 } : {}),
       selector: layerInfo.selector,
       sourceId: layerInfo.id,
       sourceKind: "zarr-url",
@@ -4190,15 +5413,13 @@ function createStacSearchStoreLayer(
   snapshot: StacSearchLayerSnapshot,
   item?: StacSearchItem | null,
   collectionId?: string,
-  catalogUrl?: string
+  catalogUrl?: string,
 ): GeoLibreLayer {
   const rasterLayerInfo = getStacSearchRasterLayerInfo(snapshot.layer);
   const deckLayerProps = "props" in snapshot.layer ? snapshot.layer.props : {};
   const sourceKind = rasterLayerInfo ? "stac-search-raster" : "stac-search-cog";
   const url = rasterLayerInfo?.tileUrl ?? getDeckLayerSourceUrl(snapshot.layer);
-  const nativeLayerIds = rasterLayerInfo
-    ? [rasterLayerInfo.layerId]
-    : [snapshot.id];
+  const nativeLayerIds = rasterLayerInfo ? [rasterLayerInfo.layerId] : [snapshot.id];
   const sourceId = rasterLayerInfo?.sourceId ?? snapshot.id;
 
   return {
@@ -4223,6 +5444,11 @@ function createStacSearchStoreLayer(
     metadata: {
       collectionId,
       customLayerType: "raster",
+      // The COG variant renders as a deck.gl layer with no MapLibre style layer
+      // to move, so layer-sync must hand its computed `beforeId` to the control
+      // instead of calling `moveLayer` (#1718). The raster-tile variant is a
+      // real style layer and reorders normally.
+      ...(rasterLayerInfo ? {} : { externalDeckLayer: true }),
       externalNativeLayer: true,
       identifiable: false,
       nativeLayerIds,
@@ -4234,9 +5460,7 @@ function createStacSearchStoreLayer(
       stacItemId: item?.id,
       tileType: "raster",
       ...(item?.bbox ? { bounds: item.bbox } : {}),
-      ...(deckLayerProps &&
-      typeof deckLayerProps === "object" &&
-      "_colormap" in deckLayerProps
+      ...(deckLayerProps && typeof deckLayerProps === "object" && "_colormap" in deckLayerProps
         ? { colormap: deckLayerProps._colormap }
         : {}),
     },
@@ -4272,7 +5496,7 @@ function createLidarStoreLayer(pointCloud: PointCloudInfo): GeoLibreLayer {
       identifiable: false,
       pointCount: pointCloud.pointCount,
       sourceId: pointCloud.id,
-      sourceKind: "lidar-url",
+      sourceKind: LIDAR_SOURCE_KIND,
       wkt: pointCloud.wkt,
     },
     sourcePath: pointCloud.source,
@@ -4282,7 +5506,7 @@ function createLidarStoreLayer(pointCloud: PointCloudInfo): GeoLibreLayer {
 function createSplattingStoreLayer(
   id: string,
   url: string,
-  assetType: "model" | "splat"
+  assetType: "model" | "splat",
 ): GeoLibreLayer {
   return {
     id,
@@ -4361,7 +5585,7 @@ function isStacSearchControlLayer(layer: GeoLibreLayer): boolean {
 function isLidarControlLayer(layer: GeoLibreLayer): boolean {
   return (
     layer.type === "lidar" &&
-    layer.metadata.sourceKind === "lidar-url" &&
+    layer.metadata.sourceKind === LIDAR_SOURCE_KIND &&
     layer.metadata.externalNativeLayer === true
   );
 }
@@ -4374,16 +5598,12 @@ function isSplattingControlLayer(layer: GeoLibreLayer): boolean {
   );
 }
 
-function getStacSearchLayerSnapshots(
-  control: StacSearchControl
-): StacSearchLayerSnapshot[] {
+function getStacSearchLayerSnapshots(control: StacSearchControl): StacSearchLayerSnapshot[] {
   const mutableControl = control as unknown as MutableStacSearchControl;
-  return Array.from(mutableControl._cogLayers?.entries() ?? []).map(
-    ([id, layer]) => ({
-      id,
-      layer,
-    })
-  );
+  return Array.from(mutableControl._cogLayers?.entries() ?? []).map(([id, layer]) => ({
+    id,
+    layer,
+  }));
 }
 
 function patchStacSearchRemoveLayer(control: StacSearchControl): void {
@@ -4392,10 +5612,12 @@ function patchStacSearchRemoveLayer(control: StacSearchControl): void {
   if (!removeLayer) return;
 
   mutableControl._removeLayer = (id?: string) => {
-    const layerIds = id
-      ? [id]
-      : Array.from(mutableControl._cogLayers?.keys() ?? []);
+    const layerIds = id ? [id] : Array.from(mutableControl._cogLayers?.keys() ?? []);
     removeLayer(id);
+    // Upstream repaints its own overlay, which GeoLibre bypasses, so drop the
+    // removed layers from the shared interleaved overlay here (#1718).
+    for (const layerId of layerIds) stacSearchBeforeIds.delete(layerId);
+    renderStacSearchDeckLayers();
     const store = useAppStore.getState();
     for (const layerId of layerIds) {
       const layer = store.layers.find((item) => item.id === layerId);
@@ -4425,26 +5647,23 @@ function patchStacSearchCogLayer(control: StacSearchControl): void {
     return;
   }
 
-  mutableControl._addCogLayer = async (
-    url: string,
-    item: StacSearchItem,
-    assetKey: string
-  ) => {
+  mutableControl._addCogLayer = async (url: string, item: StacSearchItem, assetKey: string) => {
     ensureMercatorProjection(mutableControl._map);
-    await mutableControl._ensureOverlay?.();
+    // Deliberately NOT `_ensureOverlay()`: that builds the control's own
+    // non-interleaved overlay, which can never be ordered against the style.
+    // The shared interleaved overlay renders these layers instead (#1718).
+    if (stacSearchApp) await ensureSharedDeckOverlay(stacSearchApp);
     const selectedAsset = getStacSearchSelectedAsset(mutableControl, item, {
       key: assetKey,
       url,
     });
     const layerUrl = normalizeStacRasterUrl(
-      mutableControl._convertS3ToHttps?.(selectedAsset.url) ?? selectedAsset.url
+      mutableControl._convertS3ToHttps?.(selectedAsset.url) ?? selectedAsset.url,
     );
-    const { COGLayer: COGLayerClass, texture } = await import(
-      "@developmentseed/deck.gl-geotiff"
-    );
+    const { COGLayer: COGLayerClass, texture } = await import("@developmentseed/deck.gl-geotiff");
     const renderProps = await createStacCogRenderProps(
       texture,
-      getStacSearchRenderOptions(mutableControl)
+      getStacSearchRenderOptions(mutableControl),
     );
     await patchStacSearchCOGLayerClass(COGLayerClass);
     const layerCounter = mutableControl._layerCounter ?? 0;
@@ -4460,9 +5679,7 @@ function patchStacSearchCogLayer(control: StacSearchControl): void {
       ...renderProps,
     });
     mutableControl._cogLayers?.set(id, layer as unknown as Layer);
-    mutableControl._deckOverlay?.setProps({
-      layers: Array.from(mutableControl._cogLayers?.values() ?? []) as Layer[],
-    });
+    renderStacSearchDeckLayers();
     if (mutableControl._state) {
       mutableControl._state.hasLayer = true;
       mutableControl._state.layerCount = mutableControl._cogLayers?.size ?? 0;
@@ -4481,7 +5698,7 @@ function patchStacSearchCogLayer(control: StacSearchControl): void {
 function getStacSearchSelectedAsset(
   control: MutableStacSearchControl,
   item: StacSearchItem,
-  fallback: { key: string; url: string }
+  fallback: { key: string; url: string },
 ): { key: string; url: string } {
   const state = control._state;
   if (state?.isRgbMode !== false) return fallback;
@@ -4491,19 +5708,14 @@ function getStacSearchSelectedAsset(
   return asset?.href ? { key: selectedBand, url: asset.href } : fallback;
 }
 
-function getStacAsset(
-  item: StacSearchItem,
-  key: string
-): { href?: string } | null {
+function getStacAsset(item: StacSearchItem, key: string): { href?: string } | null {
   const assets = (item as { assets?: Record<string, unknown> }).assets;
   const asset = assets?.[key];
   if (!asset || typeof asset !== "object") return null;
   return asset as { href?: string };
 }
 
-function getStacSearchRenderOptions(
-  control: MutableStacSearchControl
-): StacCogRenderOptions {
+function getStacSearchRenderOptions(control: MutableStacSearchControl): StacCogRenderOptions {
   const state = control._state;
   return {
     colormap: state?.colormap ?? STAC_SEARCH_OPTIONS.defaultColormap,
@@ -4515,12 +5727,9 @@ function getStacSearchRenderOptions(
 
 async function createStacCogRenderProps(
   texture: unknown,
-  renderOptions: StacCogRenderOptions
+  renderOptions: StacCogRenderOptions,
 ): Promise<{
-  getTileData: (
-    image: StacCogImageLike,
-    options: StacCogTileOptions
-  ) => Promise<StacCogTileData>;
+  getTileData: (image: StacCogImageLike, options: StacCogTileOptions) => Promise<StacCogTileData>;
   renderTile: (tileData: StacCogTileData) => {
     renderPipeline: Array<{ module: unknown; props?: Record<string, unknown> }>;
   };
@@ -4530,8 +5739,7 @@ async function createStacCogRenderProps(
   const { getColormap } = (await import("maplibre-gl-components")) as {
     getColormap?: (name: string) => StacColorStop[];
   };
-  const inferTextureFormat = (texture as StacCogTextureHelper)
-    .inferTextureFormat;
+  const inferTextureFormat = (texture as StacCogTextureHelper).inferTextureFormat;
 
   return {
     getTileData: async (image, options) => {
@@ -4576,11 +5784,7 @@ async function createStacCogRenderProps(
 
       const format =
         textureFormat ??
-        inferTextureFormat?.(
-          samplesPerPixel,
-          textureBitsPerSample,
-          textureSampleFormat
-        ) ??
+        inferTextureFormat?.(samplesPerPixel, textureBitsPerSample, textureSampleFormat) ??
         "r8unorm";
       const textureObject = device.createTexture({
         data: textureData,
@@ -4631,7 +5835,7 @@ async function createStacCogRenderProps(
       renderPipeline.push(
         renderOptions.colormap === "none"
           ? { module: BlackIsZero }
-          : { module: getStacColorRampModule(renderOptions.colormap) }
+          : { module: getStacColorRampModule(renderOptions.colormap) },
       );
       return { renderPipeline };
     },
@@ -4649,7 +5853,7 @@ function createStacSingleBandRgba(
     nodata?: number | null;
     rescaleMax: number;
     rescaleMin: number;
-  }
+  },
 ): Uint8Array {
   const pixelCount = width * height;
   const output = new Uint8Array(pixelCount * 4);
@@ -4662,9 +5866,7 @@ function createStacSingleBandRgba(
     if (
       options.mask?.[index] === 0 ||
       !Number.isFinite(rawValue) ||
-      (options.nodata !== null &&
-        options.nodata !== undefined &&
-        rawValue === options.nodata)
+      (options.nodata !== null && options.nodata !== undefined && rawValue === options.nodata)
     ) {
       output[target] = 0;
       output[target + 1] = 0;
@@ -4673,10 +5875,7 @@ function createStacSingleBandRgba(
       continue;
     }
 
-    const normalized = Math.max(
-      0,
-      Math.min(1, (rawValue - options.rescaleMin) / range)
-    );
+    const normalized = Math.max(0, Math.min(1, (rawValue - options.rescaleMin) / range));
     const color = stops
       ? interpolateStacColormap(stops, normalized)
       : [normalized * 255, normalized * 255, normalized * 255];
@@ -4692,7 +5891,7 @@ function createStacSingleBandRgba(
 
 function getStacColormapStops(
   colormap: string,
-  getColormap?: (name: string) => StacColorStop[]
+  getColormap?: (name: string) => StacColorStop[],
 ): StacColorStop[] | null {
   if (colormap === "none") return null;
   try {
@@ -4710,13 +5909,8 @@ function getStacColormapStops(
   }));
 }
 
-function interpolateStacColormap(
-  stops: StacColorStop[],
-  value: number
-): [number, number, number] {
-  const sortedStops = stops
-    .slice()
-    .sort((left, right) => left.position - right.position);
+function interpolateStacColormap(stops: StacColorStop[], value: number): [number, number, number] {
+  const sortedStops = stops.slice().sort((left, right) => left.position - right.position);
   const first = sortedStops[0];
   const last = sortedStops[sortedStops.length - 1];
   if (!first || !last) return [0, 0, 0];
@@ -4766,7 +5960,7 @@ function addOpaqueAlphaChannel(
   data: RasterBandValues,
   width: number,
   height: number,
-  bitsPerSample: ArrayLike<number>
+  bitsPerSample: ArrayLike<number>,
 ): RasterBandValues {
   const pixelCount = width * height;
   const Constructor = data.constructor as {
@@ -4785,10 +5979,7 @@ function addOpaqueAlphaChannel(
   return output;
 }
 
-function getAlphaValue(
-  data: RasterBandValues,
-  bitsPerSample: ArrayLike<number>
-): number {
+function getAlphaValue(data: RasterBandValues, bitsPerSample: ArrayLike<number>): number {
   if (data instanceof Float32Array || data instanceof Float64Array) return 1;
   const bits = bitsPerSample[0] ?? 8;
   return bits >= 16 ? 65535 : 255;
@@ -4798,20 +5989,12 @@ function getStacCogShaderNoData(): number | null {
   return null;
 }
 
-async function patchStacSearchCOGLayerClass(
-  COGLayerClass: unknown
-): Promise<void> {
+async function patchStacSearchCOGLayerClass(COGLayerClass: unknown): Promise<void> {
   if (stacCogLayerPatched) return;
-  const {
-    CogLayerControl: CogLayerControlClass,
-    StacLayerControl: StacLayerControlClass,
-  } = await import("maplibre-gl-components");
-  const stacPatcher = new StacLayerControlClass(
-    {}
-  ) as unknown as StacLayerControlPatcher;
-  const cogPatcher = new CogLayerControlClass(
-    {}
-  ) as unknown as StacLayerControlPatcher;
+  const { CogLayerControl: CogLayerControlClass, StacLayerControl: StacLayerControlClass } =
+    await import("maplibre-gl-components");
+  const stacPatcher = new StacLayerControlClass({}) as unknown as StacLayerControlPatcher;
+  const cogPatcher = new CogLayerControlClass({}) as unknown as StacLayerControlPatcher;
   stacPatcher._patchCOGLayer?.(COGLayerClass);
   cogPatcher._patchCOGLayerForFloat?.(COGLayerClass);
   cogPatcher._patchCOGLayerForOpacity?.(COGLayerClass);
@@ -4819,38 +6002,22 @@ async function patchStacSearchCOGLayerClass(
 }
 
 function removeStacSearchControlLayer(id: string): void {
-  const mutableControl =
-    stacSearchControl as unknown as MutableStacSearchControl | null;
+  const mutableControl = stacSearchControl as unknown as MutableStacSearchControl | null;
   mutableControl?._removeLayer?.(id);
 }
 
-function setStacSearchControlLayerState(
-  id: string,
-  visible: boolean,
-  opacity: number
-): void {
-  const mutableControl =
-    stacSearchControl as unknown as MutableStacSearchControl | null;
+function setStacSearchControlLayerState(id: string, visible: boolean, opacity: number): void {
+  const mutableControl = stacSearchControl as unknown as MutableStacSearchControl | null;
   const layer = mutableControl?._cogLayers?.get(id);
   if (!layer) return;
 
   const appliedOpacity = visible ? opacity : 0;
   const rasterLayerInfo = getStacSearchRasterLayerInfo(layer);
   if (rasterLayerInfo) {
-    const map = (
-      stacSearchControl as unknown as MutableStacSearchControl | null
-    )?._map;
+    const map = (stacSearchControl as unknown as MutableStacSearchControl | null)?._map;
     try {
-      map?.setLayoutProperty(
-        rasterLayerInfo.layerId,
-        "visibility",
-        visible ? "visible" : "none"
-      );
-      map?.setPaintProperty(
-        rasterLayerInfo.layerId,
-        "raster-opacity",
-        appliedOpacity
-      );
+      map?.setLayoutProperty(rasterLayerInfo.layerId, "visibility", visible ? "visible" : "none");
+      map?.setPaintProperty(rasterLayerInfo.layerId, "raster-opacity", appliedOpacity);
     } catch {
       // The layer may have been removed by the upstream control.
     }
@@ -4861,31 +6028,70 @@ function setStacSearchControlLayerState(
 
   mutableControl?._cogLayers?.set(
     id,
-    layer.clone({ opacity: appliedOpacity }) as StacSearchRenderableLayer
+    layer.clone({ opacity: appliedOpacity }) as StacSearchRenderableLayer,
   );
-  mutableControl?._deckOverlay?.setProps({
-    layers: getStacSearchDeckLayers(mutableControl),
-  });
+  renderStacSearchDeckLayers();
 }
 
 function getStacSearchDeckLayers(control: MutableStacSearchControl): Layer[] {
   return Array.from(control._cogLayers?.values() ?? []).filter(
-    (layer): layer is Layer => !getStacSearchRasterLayerInfo(layer)
+    (layer): layer is Layer => !getStacSearchRasterLayerInfo(layer),
   );
 }
 
+/**
+ * Pushes the STAC Search control's deck.gl COG layers into GeoLibre's shared
+ * interleaved overlay, each carrying the `beforeId` derived from the store's
+ * layer order.
+ *
+ * Upstream renders them through the control's own non-interleaved
+ * `MapboxOverlay`, which owns a separate canvas stacked above the entire
+ * MapLibre style — so STAC imagery covered every vector layer no matter where
+ * the user placed it in the Layers panel (opengeos/GeoLibre#1718). Interleaved
+ * layers are drawn inside the style instead, at the depth their `beforeId`
+ * selects, which is what makes panel order mean anything for them.
+ */
+function renderStacSearchDeckLayers(): void {
+  const control = stacSearchControl as unknown as MutableStacSearchControl | null;
+  if (!control) return;
+  const layers = getStacSearchDeckLayers(control).map((layer) => {
+    const beforeId = stacSearchBeforeIds.get(layer.id);
+    if ((layer.props as { beforeId?: string }).beforeId === beforeId) return layer;
+    return layer.clone({ beforeId } as unknown as Partial<Layer["props"]>);
+  });
+  setSharedDeckLayers("stac-search", layers);
+}
+
+/**
+ * Applies a store-derived draw order to a STAC Search deck.gl COG layer.
+ *
+ * Registered by the app shell as part of the external deck-layer order handler:
+ * such a layer is not a real MapLibre style layer, so `moveLayer` cannot reorder
+ * it and layer-sync forwards the computed `beforeId` here instead.
+ *
+ * @param layerId - The store layer id, which doubles as the deck layer id.
+ * @param beforeId - The style layer to draw beneath, or undefined for the top.
+ * @returns True when the id belongs to the STAC Search control.
+ */
+export function applyStacSearchLayerOrder(layerId: string, beforeId: string | undefined): boolean {
+  const control = stacSearchControl as unknown as MutableStacSearchControl | null;
+  const layer = control?._cogLayers?.get(layerId);
+  if (!layer || getStacSearchRasterLayerInfo(layer)) return false;
+  if (stacSearchBeforeIds.get(layerId) === beforeId) return true;
+  stacSearchBeforeIds.set(layerId, beforeId);
+  renderStacSearchDeckLayers();
+  return true;
+}
+
 function getStacSearchRasterLayerInfo(
-  layer: StacSearchRenderableLayer
+  layer: StacSearchRenderableLayer,
 ): { layerId: string; sourceId: string; tileUrl?: string } | null {
   if (!("type" in layer) || layer.type !== "raster") return null;
   if (typeof layer.layerId !== "string" || typeof layer.sourceId !== "string") {
     return null;
   }
-  const map = (stacSearchControl as unknown as MutableStacSearchControl | null)
-    ?._map;
-  const source = map?.getSource(layer.sourceId) as
-    | { tiles?: string[] }
-    | undefined;
+  const map = (stacSearchControl as unknown as MutableStacSearchControl | null)?._map;
+  const source = map?.getSource(layer.sourceId) as { tiles?: string[] } | undefined;
   return {
     layerId: layer.layerId,
     sourceId: layer.sourceId,
@@ -4905,7 +6111,7 @@ function getDeckLayerSourceUrl(layer: StacSearchRenderableLayer): string {
 function normalizeStacRasterUrl(url: string): string {
   return url.replace(
     "copernicus-dem-30m.s3.us-east-1.amazonaws.com",
-    "copernicus-dem-30m.s3.eu-central-1.amazonaws.com"
+    "copernicus-dem-30m.s3.eu-central-1.amazonaws.com",
   );
 }
 
@@ -4946,7 +6152,7 @@ function registerStacCommonProjections(): void {
     "EPSG:3857",
     "+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 " +
       "+x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext " +
-      "+no_defs +type=crs"
+      "+no_defs +type=crs",
   );
 }
 
@@ -4974,13 +6180,9 @@ function getStacSearchLayerOpacity(layer: StacSearchRenderableLayer): number {
 function stacSearchLayerName(
   id: string,
   item?: StacSearchItem | null,
-  collectionId?: string
+  collectionId?: string,
 ): string {
-  return (
-    [collectionId, item?.id, stacAssetFromLayerId(id)]
-      .filter(Boolean)
-      .join(" - ") || id
-  );
+  return [collectionId, item?.id, stacAssetFromLayerId(id)].filter(Boolean).join(" - ") || id;
 }
 
 function stacAssetFromLayerId(id: string): string | undefined {
@@ -4993,7 +6195,15 @@ function stacAssetFromLayerId(id: string): string | undefined {
 function layerNameFromUrl(url: string, fallback: string): string {
   try {
     const fileName = new URL(url).pathname.split("/").pop() ?? fallback;
-    return fileName.replace(/\.[^.]+$/, "") || fallback;
+    const base = fileName.replace(/\.[^.]+$/, "") || fallback;
+    // Decode percent-encoding for display, so a name like `air%20temperature`
+    // (e.g. a `local:` URL built from a file name with spaces/reserved chars)
+    // shows as `air temperature`. Guard against malformed escapes.
+    try {
+      return decodeURIComponent(base);
+    } catch {
+      return base;
+    }
   } catch {
     return fallback;
   }
@@ -5038,17 +6248,10 @@ function showSplattingControl(control: GaussianSplatControl | null): void {
   if (container) container.style.display = "";
 }
 
-function getSplattingControlContainer(
-  control: GaussianSplatControl | null
-): HTMLElement | null {
-  return (
-    (control as SplattingControlVisibilityState | null)?._container ?? null
-  );
+function getSplattingControlContainer(control: GaussianSplatControl | null): HTMLElement | null {
+  return (control as SplattingControlVisibilityState | null)?._container ?? null;
 }
 
 function hasLidarPointCloud(id: string): boolean {
-  return (
-    lidarControl?.getPointClouds().some((pointCloud) => pointCloud.id === id) ??
-    false
-  );
+  return lidarControl?.getPointClouds().some((pointCloud) => pointCloud.id === id) ?? false;
 }
