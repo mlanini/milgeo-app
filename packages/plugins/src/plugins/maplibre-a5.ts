@@ -1,6 +1,5 @@
 import type { Feature, FeatureCollection, Polygon } from "geojson";
 import {
-  MAX_RESOLUTION,
   cellArea,
   cellToBoundary,
   cellToChildren,
@@ -18,6 +17,8 @@ import {
 } from "a5-js";
 import type { GeoJSONSource, Map as MapLibreMap, MapMouseEvent } from "maplibre-gl";
 import type { GeoLibreAppAPI, GeoLibrePlugin } from "../types";
+
+const MAX_A5_RESOLUTION = 30;
 
 export const A5_PLUGIN_ID = "maplibre-a5-grid";
 
@@ -201,7 +202,7 @@ function color(value: unknown, fallback: string): string {
  * level, clamped to the valid range.
  */
 export function a5ResolutionForZoom(zoom: number): number {
-  return Math.min(MAX_RESOLUTION, Math.max(0, Math.floor(zoom)));
+  return Math.min(MAX_A5_RESOLUTION, Math.max(0, Math.floor(zoom)));
 }
 
 /** The resolution actually rendered: zoom-derived when automatic, else manual. */
@@ -217,7 +218,7 @@ export function normalizeA5GridSettings(value: unknown): A5GridSettings {
         ? candidate.autoResolution
         : DEFAULT_A5_GRID_SETTINGS.autoResolution,
     resolution: Math.round(
-      clampNumber(candidate.resolution, 0, MAX_RESOLUTION, DEFAULT_A5_GRID_SETTINGS.resolution),
+      clampNumber(candidate.resolution, 0, MAX_A5_RESOLUTION, DEFAULT_A5_GRID_SETTINGS.resolution),
     ),
     fillColor: color(candidate.fillColor, DEFAULT_A5_GRID_SETTINGS.fillColor),
     fillOpacity: clampNumber(candidate.fillOpacity, 0, 1, DEFAULT_A5_GRID_SETTINGS.fillOpacity),
@@ -646,7 +647,7 @@ function renderPanel(container: HTMLElement): void {
   const resolution = document.createElement("input");
   resolution.type = "range";
   resolution.min = "0";
-  resolution.max = String(MAX_RESOLUTION);
+  resolution.max = String(MAX_A5_RESOLUTION);
   resolution.value = String(shownResolution);
   resolution.title = String(shownResolution);
   resolution.disabled = settings.autoResolution;
@@ -750,7 +751,7 @@ function renderPanel(container: HTMLElement): void {
       // the dashed parent outlines on the map.
       addDetail(labels.parent, parentCells(selectedCell).join("\n"));
     }
-    if (cellResolution < MAX_RESOLUTION) {
+    if (cellResolution < MAX_A5_RESOLUTION) {
       addDetail(labels.children, String(cellToChildren(id).length));
     }
     addDetail(labels.neighbors, String(neighborCells(selectedCell).length - 1));

@@ -31,7 +31,7 @@ export interface ScriptingDeps {
 }
 
 /** Combined client-side algorithm registry, matching the in-app dialogs. */
-function allAlgorithms(): ProcessingAlgorithm[] {
+export function allAlgorithms(): ProcessingAlgorithm[] {
   return [...ALGORITHMS, ...VECTOR_TOOLS, ...H3_TOOLS, ...STATISTICS_TOOLS];
 }
 

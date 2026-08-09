@@ -20,6 +20,8 @@ import { GDAL_AUTO_FID_COLUMN, stripAutoFidColumn } from "./duckdb-geometry";
 // the user sees in the results grid. This is a reserved name: a user column of
 // the same name is filtered out of both the grid and the GeoJSON properties.
 export const GEOMETRY_JSON_COLUMN = "__geolibre_sql_geometry_geojson";
+const DEFAULT_LAYER_GEOMETRY_COLUMN = "geom";
+const COLUMN_SCAN_FEATURE_LIMIT = 50;
 
 // Reserved alias wrapping the user's statement when geometry is detected; kept
 // deliberately obscure so it does not collide with a user's own CTE/subquery.
@@ -145,6 +147,13 @@ export interface SqlWorkspaceTable {
   layerName: string;
 }
 
+export interface SqlWorkspaceTableColumns {
+  /** SQL identifier the user references in queries. */
+  tableName: string;
+  /** Column names available on the table (attributes plus the geometry). */
+  columns: string[];
+}
+
 /** Result of running a single SQL statement in the workspace. */
 export interface SqlQueryResult {
   /** Column names in select order (the hidden geometry column is excluded). */
@@ -221,6 +230,35 @@ export function previewLayerTables(
     tableName,
     layerName: layer.name,
   }));
+}
+
+export function previewLayerColumns(
+  layers: GeoLibreLayer[],
+  geometryColumn: string = DEFAULT_LAYER_GEOMETRY_COLUMN,
+): SqlWorkspaceTableColumns[] {
+  return assignTableNames(layers).map(({ layer, tableName }) => {
+    const seen = new Set<string>();
+    const seenLower = new Set<string>();
+    const columns: string[] = [];
+    const features = layer.geojson?.features ?? [];
+
+    for (const feature of features.slice(0, COLUMN_SCAN_FEATURE_LIMIT)) {
+      const properties = feature.properties;
+      if (!properties) continue;
+      for (const key of Object.keys(properties)) {
+        if (key === GDAL_AUTO_FID_COLUMN || seen.has(key)) continue;
+        seen.add(key);
+        seenLower.add(key.toLowerCase());
+        columns.push(key);
+      }
+    }
+
+    if (!seenLower.has(geometryColumn.toLowerCase())) {
+      columns.push(geometryColumn);
+    }
+
+    return { tableName, columns };
+  });
 }
 
 /**
