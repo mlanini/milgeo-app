@@ -31,15 +31,18 @@ import {
   highlightLineLayerId,
   highlightSourceId,
   lineLayerId,
+  markerLayerId,
   sourceId,
 } from "./geojson-loader";
 import {
   mbtilesStyleLayerIds,
   removeLayerFromMap,
+  styleValuesEqual,
   syncLayer,
   vectorTileStyleLayerIds,
 } from "./layer-sync";
 import { globeSafeMaxZoom } from "./globe-fit-bounds";
+import { ensureGeneratedImageHandler } from "./generated-images";
 import { installGlobePopupOcclusion } from "./globe-popup-occlusion";
 import { isMapboxStyleUrl, loadMapboxStyle, redactMapboxStyleUrl } from "./mapbox-style";
 import { PlanetaryScaleControl } from "./planetary-scale-control";
@@ -458,6 +461,7 @@ export class MapController {
       // Trade-off: adds one extra framebuffer copy per frame on tiled renderers.
       canvasContextAttributes: { preserveDrawingBuffer: true },
     });
+    ensureGeneratedImageHandler(this.map);
     installGlobePopupOcclusion(maplibregl);
     // The constructor options above already apply the static constraints.
     // The transform constraint is installed by the MapCanvas effect that
@@ -1072,13 +1076,11 @@ export class MapController {
     const map = this.map;
 
     const nextIds = layers.map((l) => l.id);
+    const nextIdSet = new Set(nextIds);
+    const previousLayers = new Map(this.syncedLayers.map((layer) => [layer.id, layer]));
     for (const id of this.layerIds) {
-      if (!nextIds.includes(id)) {
-        removeLayerFromMap(
-          map,
-          id,
-          this.syncedLayers.find((layer) => layer.id === id),
-        );
+      if (!nextIdSet.has(id)) {
+        removeLayerFromMap(map, id, previousLayers.get(id));
       }
     }
 
@@ -1106,9 +1108,17 @@ export class MapController {
   }
 
   private styleLoadHandler: (() => void) | null = null;
+  private styleReloadHandler: (() => void) | null = null;
 
   waitAndSyncLayers(layers: GeoLibreLayer[]): void {
     if (!this.map) return;
+
+    if (!this.styleReloadHandler) {
+      this.styleReloadHandler = () => {
+        if (!this.styleLoadHandler) this.syncLayers(this.syncedLayers);
+      };
+      this.map.on("style.load", this.styleReloadHandler);
+    }
 
     if (this.styleLoadHandler) {
       this.map.off("style.load", this.styleLoadHandler);
@@ -1117,6 +1127,9 @@ export class MapController {
 
     const run = () => {
       if (this.styleLoadHandler !== run) return;
+      this.map?.off("load", run);
+      this.map?.off("style.load", run);
+      this.styleLoadHandler = null;
       this.syncLayers(layers);
     };
     this.styleLoadHandler = run;
@@ -1125,17 +1138,21 @@ export class MapController {
       run();
     } else {
       this.map.once("load", run);
+      this.map.once("style.load", run);
     }
-    this.map.on("style.load", run);
   }
 
   private applyBasemapVisibility(): void {
     if (!this.isStyleReady() || !this.map) return;
     const map = this.map;
+    const visibility = this.basemapVisible ? "visible" : "none";
 
     for (const layer of this.getBasemapStyleLayers()) {
       try {
-        map.setLayoutProperty(layer.id, "visibility", this.basemapVisible ? "visible" : "none");
+        const current = map.getLayoutProperty(layer.id, "visibility");
+        if (current !== visibility && !(current === undefined && visibility === "visible")) {
+          map.setLayoutProperty(layer.id, "visibility", visibility);
+        }
       } catch {
         // Some third-party custom style layers may not expose layout properties.
       }
@@ -1191,6 +1208,8 @@ export class MapController {
           ? original * this.basemapOpacity
           : this.basemapOpacity;
     try {
+      const current = this.map.getPaintProperty(layerId, property);
+      if (styleValuesEqual(current, opacity)) return;
       this.map.setPaintProperty(layerId, property, opacity);
     } catch {
       // Some third-party custom style layers may not expose paint properties.
@@ -2122,11 +2141,17 @@ export class MapController {
   private getBeforeStyleLayerId(layers: GeoLibreLayer[], layerIndex: number): string | undefined {
     if (!this.map) return undefined;
 
+    const styleLayerIds =
+      this.map.getLayersOrder?.() ?? (this.map.getStyle().layers ?? []).map(({ id }) => id);
     for (const layer of layers.slice(layerIndex + 1)) {
-      const beforeLayer = this.getCandidateStyleLayers(layer).find(({ id }) =>
-        this.map?.getLayer(id),
-      );
-      if (beforeLayer) return beforeLayer.id;
+      const candidateIds = new Set(this.getCandidateStyleLayers(layer).map(({ id }) => id));
+      // A logical layer can render through several MapLibre style layers. KML
+      // icon points, for example, use a symbol companion plus a fallback
+      // circle for features without icons. Anchor beneath whichever companion
+      // is currently lowest in the real style order so the inserted layer
+      // cannot split that logical layer in two.
+      const bottommostId = styleLayerIds.find((id) => candidateIds.has(id));
+      if (bottommostId) return bottommostId;
     }
 
     if (layerIndex >= 0) {
@@ -2150,9 +2175,17 @@ export class MapController {
   }> {
     const nativeLayerIds = layer.metadata.nativeLayerIds;
     if (Array.isArray(nativeLayerIds) && nativeLayerIds.length > 0) {
-      return nativeLayerIds
+      const candidates = nativeLayerIds
         .filter((id): id is string => typeof id === "string")
         .map((id) => ({ id, suffix: nativeLayerSuffix(id) }));
+      // KML/KMZ icons loaded through the Vector Layer control render in a
+      // GeoLibre-owned companion symbol layer, not one of the control's native
+      // layer ids. Include it here so Background visibility/opacity does not
+      // mistake the icons for basemap symbols.
+      if (layer.metadata.sourceKind === "maplibre-gl-vector") {
+        candidates.push({ id: markerLayerId(layer.id), suffix: "Markers" });
+      }
+      return candidates;
     }
 
     if (layer.type === "geojson") {
@@ -2161,6 +2194,7 @@ export class MapController {
         { id: fillLayerId(layer.id), suffix: "Polygons" },
         { id: lineLayerId(layer.id), suffix: "Lines" },
         { id: circleLayerId(layer.id), suffix: "Points" },
+        { id: markerLayerId(layer.id), suffix: "Markers" },
       ];
     }
 

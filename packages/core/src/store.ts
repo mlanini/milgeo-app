@@ -17,7 +17,11 @@ import {
   DEFAULT_PROJECT_NAME,
 } from "./project";
 import { initialLayerStyle } from "./layer-defaults";
-import { DEFAULT_LAYER_GROUP_OPACITY, normalizeGroupContiguity } from "./layer-groups";
+import {
+  DEFAULT_LAYER_GROUP_OPACITY,
+  normalizeGroupContiguity,
+  reorderLayerGroupInPanel,
+} from "./layer-groups";
 import {
   DEFAULT_BASEMAP,
   DEFAULT_DASHBOARD_COLUMNS,
@@ -611,6 +615,14 @@ export interface AppState {
       /** Epoch-ms time bounds of a KML `<TimeSpan>`/`<TimeStamp>` frame; the
        * Time Slider toggles this frame's visibility by the current date. */
       timeSpan?: { begin: number | null; end: number | null };
+      /**
+       * What produced the overlay, e.g. a NetCDF grid baked to pixels. Defaults
+       * to the KML ground overlay this was first written for; panels gate their
+       * per-source controls on it.
+       */
+      sourceKind?: string;
+      /** Extra metadata merged onto the layer (e.g. a symbology record). */
+      metadata?: Record<string, unknown>;
     },
     beforeLayerId?: string | null,
   ) => string;
@@ -1840,9 +1852,10 @@ export const useAppStore = create<AppState>()(
           opacity: options?.opacity ?? 1,
           style: { ...DEFAULT_LAYER_STYLE },
           metadata: {
-            sourceKind: "kml-ground-overlay",
+            sourceKind: options?.sourceKind ?? "kml-ground-overlay",
             ...(options?.bounds ? { bounds: options.bounds } : {}),
             ...(options?.timeSpan ? { timeSpan: options.timeSpan } : {}),
+            ...(options?.metadata ?? {}),
           },
           ...(options?.sourcePath ? { sourcePath: options.sourcePath } : {}),
         };
@@ -2110,45 +2123,14 @@ export const useAppStore = create<AppState>()(
           };
         }),
 
+      // A folder that owns no layers has no position in `layers` to move, so
+      // the panel order it takes part in lives across both arrays and the move
+      // writes both (GeoLibre#1739).
       reorderLayerGroup: (id, direction) =>
         set((s) => {
-          const groupIds = new Set([id]);
-          let foundDescendant = true;
-          while (foundDescendant) {
-            foundDescendant = false;
-            for (const group of s.layerGroups) {
-              if (group.parentId && groupIds.has(group.parentId) && !groupIds.has(group.id)) {
-                groupIds.add(group.id);
-                foundDescendant = true;
-              }
-            }
-          }
-          // Build the top-level units in store (render) order: each ungrouped
-          // layer is its own unit, and a group's contiguous members form one
-          // unit. A nested organizer group may have no direct layers, so its
-          // block includes every unit belonging to a descendant group.
-          const units: { key: string; layers: GeoLibreLayer[] }[] = [];
-          for (const layer of s.layers) {
-            const key = layer.groupId ?? `layer:${layer.id}`;
-            const last = units[units.length - 1];
-            if (last && last.key === key) last.layers.push(layer);
-            else units.push({ key, layers: [layer] });
-          }
-          const matching = units
-            .map((unit, index) => (groupIds.has(unit.key) ? index : -1))
-            .filter((index) => index >= 0);
-          if (matching.length === 0) return s;
-          const first = matching[0];
-          const last = matching[matching.length - 1];
-          const neighbor = direction === "up" ? last + 1 : first - 1;
-          if (neighbor < 0 || neighbor >= units.length) return s;
-          const block = units.filter((unit) => groupIds.has(unit.key));
-          const remaining = units.filter((unit) => !groupIds.has(unit.key));
-          const neighborKey = units[neighbor].key;
-          const neighborIndex = remaining.findIndex((unit) => unit.key === neighborKey);
-          const insertAt = direction === "up" ? neighborIndex + 1 : neighborIndex;
-          remaining.splice(insertAt, 0, ...block);
-          return { layers: remaining.flatMap((u) => u.layers), isDirty: true };
+          const moved = reorderLayerGroupInPanel(s.layers, s.layerGroups, id, direction);
+          if (!moved) return s;
+          return { layers: moved.layers, layerGroups: moved.groups, isDirty: true };
         }),
 
       newProject: (options = {}) => {

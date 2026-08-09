@@ -5,15 +5,8 @@ import {
   type MapProjection,
   useAppStore,
 } from "@geolibre/core";
-import type {
-  UsgsLidarControl,
-  UsgsLidarControlOptions,
-} from "maplibre-gl-usgs-lidar";
-import type {
-  GeoLibreAppAPI,
-  GeoLibreMapControlPosition,
-  GeoLibrePlugin,
-} from "../types";
+import type { UsgsLidarControl, UsgsLidarControlOptions } from "maplibre-gl-usgs-lidar";
+import type { GeoLibreAppAPI, GeoLibreMapControlPosition, GeoLibrePlugin } from "../types";
 
 let usgsLidarPosition: GeoLibreMapControlPosition = "top-left";
 
@@ -138,7 +131,7 @@ const mountUsgsLidarControl = (app: GeoLibreAppAPI): boolean => {
 export const maplibreUsgsLidarPlugin: GeoLibrePlugin = {
   id: "maplibre-gl-usgs-lidar",
   name: "USGS LiDAR",
-  version: "0.11.0",
+  version: "0.11.1",
   activate: (app: GeoLibreAppAPI) => {
     pluginActive = true;
 
@@ -196,10 +189,7 @@ export const maplibreUsgsLidarPlugin: GeoLibrePlugin = {
     usgsLidarControl = null;
   },
   getMapControlPosition: () => usgsLidarPosition,
-  setMapControlPosition: (
-    app: GeoLibreAppAPI,
-    position: GeoLibreMapControlPosition,
-  ) => {
+  setMapControlPosition: (app: GeoLibreAppAPI, position: GeoLibreMapControlPosition) => {
     usgsLidarPosition = position;
     if (!usgsLidarControl) return;
     app.removeMapControl(usgsLidarControl);

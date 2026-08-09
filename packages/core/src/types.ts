@@ -54,36 +54,39 @@ export const BLANK_BASEMAP = "";
 
 export const PROJECT_VERSION = "0.2.0";
 
-export type LayerType =
-  | "geojson"
-  | "raster"
-  | "wms"
-  | "wmts"
-  | "xyz"
-  | "vector-tiles"
-  | "arcgis"
-  | "pmtiles"
-  | "mbtiles"
-  | "zarr"
-  | "lidar"
-  | "gaussian-splat"
-  | "3d-tiles"
-  | "cog"
-  | "flatgeobuf"
-  | "geoparquet"
-  | "duckdb-query"
-  | "deckgl-viz"
-  | "video"
-  | "image"
-  | "mil-symbol"
-  | "mil-graphic";
+/**
+ * Every layer type, as a runtime list so untrusted input (an imported Layer
+ * Library bundle, a hand-edited project) can be validated against it.
+ * {@link LayerType} is derived from this array, so the two cannot drift.
+ */
+export const LAYER_TYPES = [
+  "geojson",
+  "raster",
+  "wms",
+  "wmts",
+  "xyz",
+  "vector-tiles",
+  "arcgis",
+  "pmtiles",
+  "mbtiles",
+  "zarr",
+  "lidar",
+  "gaussian-splat",
+  "3d-tiles",
+  "cog",
+  "flatgeobuf",
+  "geoparquet",
+  "duckdb-query",
+  "deckgl-viz",
+  "video",
+  "image",
+  "mil-symbol",
+  "mil-graphic",
+] as const;
 
-export type VectorStyleMode =
-  | "single"
-  | "graduated"
-  | "categorized"
-  | "rule-based"
-  | "expression";
+export type LayerType = (typeof LAYER_TYPES)[number];
+
+export type VectorStyleMode = "single" | "graduated" | "categorized" | "rule-based" | "expression";
 
 /**
  * One entry in a {@link LayerStyle.vectorRules} rule-based renderer. Each rule
@@ -105,8 +108,61 @@ export interface VectorRule {
   filter: string;
   /** The symbol fill/circle color for features this rule matches (6-digit hex). */
   color: string;
-  /** When true this is the catch-all "else" rule and {@link filter} is unused. */
+  /**
+   * When true this is the catch-all "else" rule: {@link filter} is unused and
+   * the rule is an unconditional fallback for features no other rule matched,
+   * so the {@link minZoom}/{@link maxZoom} and {@link parentId} fields are
+   * ignored on it. Its symbol overrides and {@link enabled} toggle do apply.
+   */
   isElse: boolean;
+  /**
+   * Whether the rule participates in rendering. `false` temporarily disables
+   * the rule (and, for a group, its whole subtree) without deleting it,
+   * mirroring the QGIS rule checkbox. Absent means enabled.
+   */
+  enabled?: boolean;
+  /**
+   * Lowest zoom (inclusive) the rule applies at, mirroring MapLibre's layer
+   * `minzoom` convention. Absent means no lower bound.
+   */
+  minZoom?: number;
+  /**
+   * Zoom the rule stops applying at (exclusive, like MapLibre's layer
+   * `maxzoom`). Absent means no upper bound. Together with {@link minZoom}
+   * this is the QGIS per-rule "scale range".
+   */
+  maxZoom?: number;
+  /**
+   * The id of the parent rule when this rule is nested inside a group (QGIS
+   * rule tree). A child rule matches only features that also match every
+   * ancestor's filter, and inherits the intersection of the ancestors' zoom
+   * ranges and enabled state. A rule that has children acts as a group: its
+   * own symbol is not rendered; only leaf rules draw. Absent or dangling
+   * means a top-level rule.
+   */
+  parentId?: string;
+  /**
+   * Per-rule stroke/outline color override (6-digit hex): the polygon outline
+   * and circle stroke color for matching features. Absent inherits the layer
+   * {@link LayerStyle.strokeColor}.
+   */
+  strokeColor?: string;
+  /**
+   * Per-rule stroke width override in pixels: the line width (lines and
+   * polygon outlines) and circle stroke width for matching features. Absent
+   * inherits the layer {@link LayerStyle.strokeWidth}.
+   */
+  strokeWidth?: number;
+  /**
+   * Per-rule fill/circle opacity override (0..1) for matching features.
+   * Absent inherits the layer {@link LayerStyle.fillOpacity}.
+   */
+  fillOpacity?: number;
+  /**
+   * Per-rule circle radius override in pixels for matching point features.
+   * Absent inherits the layer {@link LayerStyle.circleRadius}.
+   */
+  circleRadius?: number;
 }
 
 /**
@@ -145,11 +201,57 @@ export type MarkerShape =
 export type PointRenderer = "single" | "heatmap" | "cluster";
 
 /**
+ * The repeated decoration symbol drawn along line features (and polygon
+ * outlines), or `"none"` when decorations are off. Mirrors the QGIS
+ * marker-line / arrow symbol layers: `"arrow"` renders directional arrowheads
+ * that follow the line, the other shapes render as repeated markers.
+ */
+export type LineDecoration = "none" | "arrow" | "triangle" | "circle" | "square";
+
+/**
+ * The per-feature derived geometry rendered by the geometry generator, or
+ * `"none"` when the generator is off. Mirrors QGIS geometry-generator symbol
+ * layers: each feature's derived geometry (its centroid, bounding box, convex
+ * hull, or a buffer) is drawn as an extra symbol over the layer's normal
+ * symbology. `"centroid"` derives points; the rest derive polygons.
+ */
+export type GeometryGeneratorType = "none" | "centroid" | "bounding-box" | "convex-hull" | "buffer";
+
+/**
  * Unit a stroke/line width is measured in. `"pixels"` is constant screen space;
  * `"meters"` is ground distance, so the rendered width scales with the map
  * scale (zoom). See {@link LayerStyle.strokeWidthUnit}.
  */
 export type StrokeWidthUnit = "pixels" | "meters";
+
+/**
+ * The chart drawn on top of each feature by the diagram renderer (QGIS-style
+ * diagram symbology), or `"none"` when diagrams are off. Diagrams visualize
+ * several numeric attributes per feature at once — e.g. election results by
+ * party per county — and render through the shared deck.gl overlay on the
+ * feature's point location or polygon centroid.
+ */
+export type DiagramType = "none" | "pie" | "donut" | "bar" | "stacked-bar";
+
+/**
+ * How the overall diagram size is determined.
+ *
+ * - `"fixed"`: every diagram renders at {@link LayerStyle.diagramSize} pixels.
+ * - `"sum"`: scaled by the sum of the mapped attribute values, so the largest
+ *   total renders at {@link LayerStyle.diagramSize} pixels (area-true square
+ *   root scaling).
+ * - `"attribute"`: scaled the same way by the single numeric attribute in
+ *   {@link LayerStyle.diagramSizeProperty}.
+ */
+export type DiagramSizeMode = "fixed" | "sum" | "attribute";
+
+/** One attribute rendered as a slice/bar of a feature diagram. */
+export interface DiagramField {
+  /** Numeric feature property visualized by this slice/bar. */
+  property: string;
+  /** Slice/bar color (6-digit hex). */
+  color: string;
+}
 
 export interface VectorStyleStop {
   value: string | number;
@@ -212,6 +314,39 @@ export interface LabelStyle {
    * {@link field} (not {@link expression}) as the label value.
    */
   dedupe: LabelDedupe;
+  /**
+   * Data-defined override for {@link size}: a MapLibre expression (JSON
+   * string) producing a number, e.g. sizing labels by population. Empty means
+   * "use the literal {@link size}". Like the other data-defined overrides
+   * below, it reads source feature attributes, so it is skipped while
+   * {@link dedupe} collapsing is active (the aggregated features carry only
+   * the label value).
+   */
+  sizeExpression: string;
+  /**
+   * Data-defined override for {@link color}: a MapLibre expression (JSON
+   * string) producing a color, e.g. coloring labels by category.
+   */
+  colorExpression: string;
+  /**
+   * Data-defined label opacity: a MapLibre expression (JSON string) producing
+   * a number in 0..1. When set it replaces the layer-wide opacity for labels
+   * (wrapping it would invalidate top-level `["zoom"]` interpolations).
+   */
+  opacityExpression: string;
+  /**
+   * Per-feature label visibility: a MapLibre expression (JSON string)
+   * producing a boolean. Features evaluating false get no label (e.g. hide
+   * labels below an attribute threshold). Combined with the layer's other
+   * feature filters.
+   */
+  visibilityExpression: string;
+  /**
+   * Per-feature placement priority: a MapLibre expression (JSON string)
+   * producing a number, applied as `symbol-sort-key`. Labels with lower
+   * values are placed first, so they win when space is tight.
+   */
+  priorityExpression: string;
 }
 
 /** MapLibre `text-anchor` positions offered for {@link LabelStyle.anchor}. */
@@ -265,6 +400,18 @@ export interface LayerStyle {
   extrusionAdvancedStyleEnabled: boolean;
   extrusionColorExpression: string;
   extrusionHeightExpression: string;
+  /**
+   * When true, a vector layer whose coordinates carry Z values (e.g. a GPX
+   * track with elevations) renders in true 3D through the shared deck.gl
+   * overlay instead of MapLibre's flat 2D layers, so features sit at their
+   * own altitude. Orthogonal to {@link extrusionEnabled}, which extrudes flat
+   * polygons by an attribute; only one of the two should be on at a time.
+   */
+  elevation3dEnabled: boolean;
+  /** Multiplier applied to each coordinate's Z value (vertical exaggeration). */
+  elevation3dVerticalScale: number;
+  /** Constant altitude offset in meters added after the vertical scale. */
+  elevation3dOffset: number;
   vectorStyleMode: VectorStyleMode;
   vectorStyleProperty: string;
   vectorStyleClassCount: number;
@@ -320,11 +467,78 @@ export interface LayerStyle {
    * symbology renders without manual configuration.
    */
   simpleStyleEnabled: boolean;
+  /**
+   * Per-feature chart symbology (QGIS-style diagrams). `"none"` disables it;
+   * any other value renders one {@link DiagramType} chart per feature over the
+   * layer's normal symbology, built from the numeric attributes in
+   * {@link diagramFields}. See `@geolibre/core`'s `diagram.ts` helpers.
+   */
+  diagramType: DiagramType;
+  /** Attributes (and their colors) charted by the diagram renderer, in order. */
+  diagramFields: DiagramField[];
+  /** How the per-feature diagram size is determined. */
+  diagramSizeMode: DiagramSizeMode;
+  /**
+   * Diagram size in pixels: the rendered diameter/height for `"fixed"` sizing,
+   * or the diameter/height of the largest feature for scaled sizing.
+   */
+  diagramSize: number;
+  /** Numeric attribute driving `"attribute"` sizing (see {@link DiagramSizeMode}). */
+  diagramSizeProperty: string;
+  /** Minimum zoom at which diagrams are drawn, to avoid clutter when zoomed out. */
+  diagramMinZoom: number;
+  /**
+   * When true, diagrams that would overlap an already-placed diagram on screen
+   * are skipped (largest first), decluttering dense areas. Recomputed as the
+   * view changes.
+   */
+  diagramDeclutter: boolean;
   pointRenderer: PointRenderer;
   heatmapRadius: number;
   heatmapIntensity: number;
   clusterRadius: number;
   clusterMaxZoom: number;
+  /**
+   * When true, the polygon fill renders *inverted*: the area outside the
+   * features is filled (with {@link fillColor}/{@link fillOpacity}) and the
+   * features themselves become holes, mirroring the QGIS "Inverted polygons"
+   * renderer. Feature outlines still render normally. Only applies to layers
+   * with polygon geometry; ignored while {@link extrusionEnabled} is on.
+   */
+  invertedFillEnabled: boolean;
+  /**
+   * Repeated decoration symbol drawn along line features and polygon outlines
+   * (QGIS marker-line / arrow lines). `"none"` disables it. See
+   * {@link LineDecoration}.
+   */
+  lineDecoration: LineDecoration;
+  /**
+   * Decoration symbol color (6-digit hex). An empty string inherits
+   * {@link strokeColor} so decorations follow the stroke by default.
+   */
+  lineDecorationColor: string;
+  /** Decoration symbol size in pixels. */
+  lineDecorationSize: number;
+  /** Distance between consecutive decoration symbols in pixels. */
+  lineDecorationSpacing: number;
+  /**
+   * Per-feature derived geometry drawn over the layer's normal symbology
+   * (QGIS geometry generator). `"none"` disables it. See
+   * {@link GeometryGeneratorType}.
+   */
+  geometryGenerator: GeometryGeneratorType;
+  /** Buffer distance in meters for the `"buffer"` generator. */
+  geometryGeneratorBufferDistance: number;
+  /** Fill color (6-digit hex) for generated polygons and centroid points. */
+  geometryGeneratorFillColor: string;
+  /** Outline color (6-digit hex) for generated geometry. */
+  geometryGeneratorStrokeColor: string;
+  /** Outline width in pixels for generated geometry. */
+  geometryGeneratorStrokeWidth: number;
+  /** Fill opacity (0..1) for generated polygons and centroid points. */
+  geometryGeneratorOpacity: number;
+  /** Circle radius in pixels for generated centroid points. */
+  geometryGeneratorCircleRadius: number;
   rasterBrightnessMin: number;
   rasterBrightnessMax: number;
   rasterSaturation: number;
@@ -364,6 +578,11 @@ export const DEFAULT_LAYER_STYLE: LayerStyle = {
     maxWidth: 10,
     transform: "none",
     dedupe: "off",
+    sizeExpression: "",
+    colorExpression: "",
+    opacityExpression: "",
+    visibilityExpression: "",
+    priorityExpression: "",
   },
   extrusionEnabled: false,
   extrusionColor: "#3b82f6",
@@ -374,6 +593,9 @@ export const DEFAULT_LAYER_STYLE: LayerStyle = {
   extrusionAdvancedStyleEnabled: false,
   extrusionColorExpression: "",
   extrusionHeightExpression: "",
+  elevation3dEnabled: false,
+  elevation3dVerticalScale: 1,
+  elevation3dOffset: 0,
   vectorStyleMode: "single",
   vectorStyleProperty: "",
   vectorStyleClassCount: 5,
@@ -400,11 +622,30 @@ export const DEFAULT_LAYER_STYLE: LayerStyle = {
   markerSize: 18,
   markerSvg: "",
   simpleStyleEnabled: false,
+  diagramType: "none",
+  diagramFields: [],
+  diagramSizeMode: "fixed",
+  diagramSize: 30,
+  diagramSizeProperty: "",
+  diagramMinZoom: 0,
+  diagramDeclutter: false,
   pointRenderer: "single",
   heatmapRadius: 30,
   heatmapIntensity: 1,
   clusterRadius: 50,
   clusterMaxZoom: 14,
+  invertedFillEnabled: false,
+  lineDecoration: "none",
+  lineDecorationColor: "",
+  lineDecorationSize: 12,
+  lineDecorationSpacing: 80,
+  geometryGenerator: "none",
+  geometryGeneratorBufferDistance: 1000,
+  geometryGeneratorFillColor: "#f59e0b",
+  geometryGeneratorStrokeColor: "#b45309",
+  geometryGeneratorStrokeWidth: 2,
+  geometryGeneratorOpacity: 0.4,
+  geometryGeneratorCircleRadius: 5,
   rasterBrightnessMin: 0,
   rasterBrightnessMax: 1,
   rasterSaturation: 0,
@@ -417,10 +658,7 @@ export const DEFAULT_LAYER_STYLE: LayerStyle = {
  * layer does not define it. Shared by `@geolibre/map` and the desktop app so
  * the two consumers cannot drift.
  */
-export function styleValue<K extends keyof LayerStyle>(
-  style: LayerStyle,
-  key: K,
-): LayerStyle[K] {
+export function styleValue<K extends keyof LayerStyle>(style: LayerStyle, key: K): LayerStyle[K] {
   return style[key] ?? DEFAULT_LAYER_STYLE[key];
 }
 
@@ -441,13 +679,187 @@ export const LARGE_VECTOR_FEATURE_THRESHOLD = 50_000;
  * @returns `true` when the collection exceeds
  *   {@link LARGE_VECTOR_FEATURE_THRESHOLD} features.
  */
-export function shouldUseTiledRendering(
-  geojson: GeoJSON.FeatureCollection | undefined,
-): boolean {
-  return (
-    (geojson?.features.length ?? 0) > LARGE_VECTOR_FEATURE_THRESHOLD
-  );
+export function shouldUseTiledRendering(geojson: GeoJSON.FeatureCollection | undefined): boolean {
+  return (geojson?.features.length ?? 0) > LARGE_VECTOR_FEATURE_THRESHOLD;
 }
+
+/**
+ * Match statistics from the last time a {@link LayerJoin} was applied, shown in
+ * the Joins UI so silent key mismatches are visible (mirrors QGIS's join
+ * feedback). Recomputed on every apply; persisted harmlessly with the join.
+ */
+export interface LayerJoinStats {
+  /** Target features whose key matched a join-table row. */
+  matchedCount: number;
+  /** Target features with no matching join-table row (their joined columns are null). */
+  unmatchedTargetCount: number;
+  /** Join-table rows (with a non-empty key) that matched no target feature. */
+  unmatchedJoinCount: number;
+}
+
+/**
+ * A persistent attribute join attached to a layer (QGIS Layer Properties →
+ * Joins): a live left join that augments the layer's attribute table with
+ * columns from another layer (typically a geometry-less table added via
+ * Delimited Text with no coordinate fields) matched on a key field. Unlike the
+ * Processing → Vector attribute join, the layer keeps its identity — styles,
+ * labels, and position — and the joined columns refresh whenever the join
+ * table's data changes. Definitions persist in `.geolibre.json` and re-resolve
+ * on project load. See `joins.ts` for the engine.
+ */
+export interface LayerJoin {
+  /** Stable id for list edits. */
+  id: string;
+  /** Id of the layer providing the joined columns (its geometry is ignored). */
+  joinLayerId: string;
+  /** Key field on the layer that owns this join. */
+  targetField: string;
+  /** Key field on the join layer. */
+  joinField: string;
+  /**
+   * Join-layer fields to bring over; `undefined` brings every field except the
+   * key. Names are the join layer's own (pre-prefix) field names.
+   */
+  fields?: string[];
+  /** Optional prefix prepended to every joined column name (as in QGIS). */
+  prefix?: string;
+  /** `false` detaches the joined columns without deleting the definition. */
+  enabled?: boolean;
+  /**
+   * Bookkeeping written by the engine: the output column names this join added
+   * to the layer's features. Applying joins strips these first, which makes
+   * re-application idempotent without keeping a duplicate copy of the base
+   * data (base columns always win a name collision, so a joined column never
+   * shadows one). Not user-editable.
+   */
+  addedFields?: string[];
+  /** Last-run match statistics; see {@link LayerJoinStats}. */
+  stats?: LayerJoinStats;
+}
+
+/** Edit-widget kinds the Attribute Form designer can assign to a field. */
+export type AttributeFormWidget = "text" | "number" | "range" | "checkbox" | "date" | "valueMap";
+
+/** One selectable entry of a `valueMap` widget (stored value + display label). */
+export interface AttributeFormValueMapEntry {
+  /** The value written to the feature property (compared as a string). */
+  value: string;
+  /** Human-readable label shown in the dropdown; defaults to {@link value}. */
+  label?: string;
+}
+
+/**
+ * Per-field configuration authored in the Attribute Form designer (layer
+ * properties → Attributes Form, QGIS-style): which edit widget the attribute
+ * editing surfaces render for the field, plus optional expression-based
+ * constraints and conditional visibility. Consumed by the attribute table's
+ * inline editor and the Field Collection capture form; helpers live in
+ * `attribute-form.ts`.
+ */
+export interface AttributeFormFieldConfig {
+  /** Feature property key this configuration applies to. */
+  field: string;
+  widget: AttributeFormWidget;
+  /** Display label override shown in forms instead of the raw field name. */
+  alias?: string;
+  /**
+   * When true, a null/empty value fails validation. Checkbox widgets are
+   * exempt: unchecked is a valid state, not a missing value.
+   */
+  required?: boolean;
+  /** Dropdown entries for the `valueMap` widget. */
+  valueMap?: AttributeFormValueMapEntry[];
+  /** Lower bound for `number`/`range` widgets (inclusive). */
+  min?: number;
+  /** Upper bound for `number`/`range` widgets (inclusive). */
+  max?: number;
+  /** Step for the `range` widget's input. */
+  step?: number;
+  /**
+   * Boolean MapLibre expression that must evaluate to `true` against the
+   * feature's (candidate) properties for the value to be accepted, e.g.
+   * `[">", ["get", "population"], 0]`. Stored as the expression source string
+   * the Expression Builder edits.
+   */
+  constraintExpression?: string;
+  /** Human-readable message shown when the constraint fails. */
+  constraintDescription?: string;
+  /**
+   * Boolean MapLibre expression controlling whether the field is shown in
+   * attribute forms; `false` hides the field (and skips its validation).
+   * Empty/invalid expressions fail open so a typo cannot hide data entry.
+   */
+  visibilityExpression?: string;
+}
+
+/** The Attribute Form designer's whole per-layer configuration. */
+export interface AttributeFormConfig {
+  fields: AttributeFormFieldConfig[];
+}
+
+/**
+ * A virtual field attached to a vector layer (QGIS Field Calculator → "Create
+ * virtual field", issue #1321): a column defined by a MapLibre expression that
+ * recomputes live instead of being written once as static values. The engine
+ * (`virtual-fields.ts`) materializes the computed values into the layer's
+ * feature properties — so the attribute table, Expression Builder,
+ * data-driven styling, labels, and selection all see the column with no
+ * further wiring — and re-derives them whenever the layer's data (or its
+ * joins) change. Definitions persist in `.geolibre.json` and re-resolve on
+ * project load; the expression is a declarative MapLibre expression (never
+ * arbitrary code), so re-evaluating it from a shared project file is safe.
+ */
+export interface LayerVirtualField {
+  /** Stable id for list edits. */
+  id: string;
+  /** The output column name. A name already taken by a base column is skipped. */
+  name: string;
+  /**
+   * MapLibre expression source (JSON text, e.g. `["/", ["get", "pop"],
+   * ["get", "area_km2"]]`) evaluated against each feature.
+   */
+  expression: string;
+  /** `false` detaches the computed column without deleting the definition. */
+  enabled?: boolean;
+  /**
+   * Bookkeeping written by the engine: the column name actually materialized
+   * on the last apply, absent when the field was disabled, failed to compile,
+   * or was skipped because the name collided with an existing column.
+   * Applying virtual fields strips these first, which makes re-application
+   * idempotent (an existing column is never shadowed, so stripping exactly
+   * restores the pre-apply properties). Not user-editable.
+   */
+  addedField?: string;
+  /** Compile error from the last apply, when the expression failed to parse. */
+  error?: string;
+  /**
+   * Features whose evaluation threw at runtime on the last apply (their cell
+   * is null). Surfaced so the UI can warn without one bad feature aborting
+   * the whole column.
+   */
+  errorCount?: number;
+}
+
+/** Persisted refresh policy and most recent synchronization result for a layer. */
+export interface LayerConnection {
+  /** Owning layer id. Repeated here so records remain self-describing when exported. */
+  layerId: string;
+  /** Automatic refresh cadence in seconds, or null for manual synchronization only. */
+  interval: number | null;
+  /** ISO timestamp of the most recent successful synchronization. */
+  lastSyncedAt: string | null;
+  /** Most recent synchronization error. Cleared by a successful synchronization. */
+  lastError: string | null;
+  /** Whether a failed synchronization retains the last good data or clears it. */
+  onFailure: "keep-last" | "clear";
+}
+
+/**
+ * Visibility of a layer's attribute field.
+ * - "hidden": Not shown in the attribute table, identify popup, tooltips, or field pickers, but remains in the data.
+ * - "excluded": Removed entirely from the data when the project is shared or exported.
+ */
+export type FieldVisibility = "hidden" | "excluded";
 
 export interface GeoLibreLayer {
   id: string;
@@ -461,6 +873,32 @@ export interface GeoLibreLayer {
   beforeId?: string;
   geojson?: FeatureCollection;
   /**
+   * Field-level visibility overrides. Fields marked as "excluded" are physically
+   * removed from the data during export and sharing.
+   */
+  fieldVisibility?: Record<string, FieldVisibility>;
+  /**
+   * Per-field edit-widget, constraint, and visibility configuration authored
+   * in the Attribute Form designer. Applied by the attribute editing surfaces
+   * (attribute table inline editor, Field Collection capture form); persists
+   * with the project like {@link joins}.
+   */
+  attributeForm?: AttributeFormConfig;
+  /**
+   * Persistent attribute joins applied to this layer's features, in order.
+   * The joined columns are materialized into `geojson` feature properties (so
+   * the attribute table, Expression Builder, styling, and labels all see them)
+   * and re-derived whenever the layer's or a join table's data changes.
+   */
+  joins?: LayerJoin[];
+  /**
+   * Expression-backed virtual fields computed for this layer's features, in
+   * order. Applied after joins (so an expression can read joined columns) and
+   * materialized into `geojson` feature properties; re-derived whenever the
+   * layer's data changes. See {@link LayerVirtualField}.
+   */
+  virtualFields?: LayerVirtualField[];
+  /**
    * Transient MapLibre filter expression applied on top of every rendered
    * sub-layer's geometry filter. The Time Slider plugin sets this on a bound
    * vector layer so scrubbing the timeline narrows the visible features to the
@@ -471,6 +909,8 @@ export interface GeoLibreLayer {
    * activation. `undefined` means no time filter is applied.
    */
   timeFilter?: unknown[];
+  /** Transient MapLibre expression applied by the iframe embed API. */
+  embedFilter?: unknown[];
   sourcePath?: string;
   /**
    * Id of the {@link LayerGroup} this layer belongs to, or `undefined` when the
@@ -479,11 +919,63 @@ export interface GeoLibreLayer {
    * as one block; see `@geolibre/core`'s `layer-groups` helpers.
    */
   groupId?: string;
+  /**
+   * Project-persisted connection policy for reloadable layers. Runtime timers
+   * are reconstructed from this record when a project opens.
+   */
+  connection?: LayerConnection;
+}
+
+/**
+ * Options for {@link AppState.addTileLayer}: a native raster tile layer (XYZ,
+ * WMS, or WMTS) that appears in the Layers panel and persists with the project,
+ * just like a layer added through the Add Data dialog. Mirrors the raster
+ * `source` fields MapLibre understands so an external plugin can register tile
+ * layers without touching the map directly.
+ */
+export interface AddTileLayerOptions {
+  /**
+   * One or more XYZ tile URL templates (with `{x}`/`{y}`/`{z}` placeholders).
+   * At least one non-empty template is required, or the layer renders nothing.
+   */
+  tiles: string[];
+  /**
+   * Layer discriminator, controlling how the layer is labelled and (for WMS)
+   * dev-server proxied. Defaults to `"xyz"`.
+   */
+  type?: "xyz" | "wms" | "wmts" | "raster";
+  /** Service or base URL recorded on the source for display and restore. */
+  url?: string;
+  /** Tile size in pixels (default 256). */
+  tileSize?: number;
+  /** Attribution string shown in the map's attribution control. */
+  attribution?: string;
+  /** Visible extent as `[west, south, east, north]` in WGS84 degrees. */
+  bounds?: [number, number, number, number];
+  /** Minimum zoom at which tiles are requested. */
+  minzoom?: number;
+  /** Maximum zoom at which tiles are requested. */
+  maxzoom?: number;
+  /** Tile y-axis scheme; `"tms"` flips the y origin. Defaults to `"xyz"`. */
+  scheme?: "xyz" | "tms";
+  /** Initial visibility (default true). */
+  visible?: boolean;
+  /** Initial opacity in [0, 1] (default 1). */
+  opacity?: number;
+  /**
+   * Extra source fields merged onto the layer's `source` (e.g. the WMS
+   * `layers`/`styles`/`format` recorded for restore). The required `type`,
+   * `tiles`, and `tileSize` always win over keys supplied here.
+   */
+  source?: Record<string, unknown>;
+  /** Extra metadata merged onto the layer record. */
+  metadata?: Record<string, unknown>;
 }
 
 /**
  * A named, collapsible folder in the layer panel that organizes a contiguous
- * run of layers (single-level nesting; groups never contain other groups).
+ * run of layers. Groups may be nested by referencing another group as their
+ * parent; the root groups omit `parentId`.
  *
  * The group's `visible` flag and `opacity` multiplier are folded into each
  * child layer's effective render state by `applyGroupEffects` before the map
@@ -492,6 +984,8 @@ export interface GeoLibreLayer {
 export interface LayerGroup {
   id: string;
   name: string;
+  /** Parent folder id, or undefined when this folder is at the panel root. */
+  parentId?: string;
   /** When true, the group's children are hidden in the panel (not on the map). */
   collapsed: boolean;
   /** Group-level visibility; ANDed with each child layer's own visibility. */
@@ -499,6 +993,25 @@ export interface LayerGroup {
   /** Group-level opacity in [0, 1]; multiplied into each child's opacity. */
   opacity: number;
 }
+
+/**
+ * Metadata `sourceKind` marking a live SQL query layer: a GeoJSON-backed layer
+ * created from a SQL Workspace result whose DuckDB statement is stored on the
+ * layer metadata and re-executed on refresh. Defined here so the desktop app
+ * (which owns the query/refresh logic) and `@geolibre/plugins` (which excludes
+ * these layers from in-place geometry editing) share one value.
+ */
+export const SQL_QUERY_SOURCE_KIND = "sql-query";
+
+/**
+ * Metadata `sourceKind` marking a NetCDF/HDF grid baked into an `image` overlay,
+ * as opposed to the KML ground overlays that otherwise use that layer type.
+ *
+ * Defined here so `@geolibre/map` (which must not run its feature-query identify
+ * on these) and the desktop app (which owns the symbology panel, the pixel
+ * readout, and the spectral profile) share one value.
+ */
+export const NETCDF_IMAGE_SOURCE_KIND = "netcdf-image";
 
 /**
  * Detect a DuckDB query layer rendered through the plugin's external deck.gl
@@ -588,6 +1101,12 @@ export interface SecondaryMapView {
   view: MapViewState;
   /** Optional user-entered label shown on the pane (e.g. a date or scenario). */
   label?: string;
+  /**
+   * Which rendering engine draws this pane. Defaults to `"maplibre"` (the 2D
+   * map) when absent, so existing projects and panes are unchanged. `"cesium"`
+   * renders a 3D globe (see {@link CesiumCanvas}) over the same shared layers.
+   */
+  viewKind?: "maplibre" | "cesium";
   /**
    * Per-layer visibility overrides keyed by layer id. A layer absent from this
    * map inherits the primary map's visibility (`layer.visible`); an entry forces
@@ -679,6 +1198,12 @@ export interface CollaborationState {
 /** Map projection the renderer uses. Mirrors the GlobeControl toggle. */
 export type MapProjection = "globe" | "mercator";
 
+/**
+ * Unit system the scale bar reports distances in. `"metric"` uses m/km,
+ * `"imperial"` uses ft/mi, and `"nautical"` uses nautical miles.
+ */
+export type MapScaleUnit = "metric" | "imperial" | "nautical";
+
 export interface MapPreferences {
   restrictBounds: boolean;
   bounds: [number, number, number, number];
@@ -687,6 +1212,17 @@ export interface MapPreferences {
   maxPitch: number;
   renderWorldCopies: boolean;
   projection: MapProjection;
+  /**
+   * Celestial body / ellipsoid the project's coordinates describe (keys into the
+   * ellipsoid registry in `@geolibre/core`). Drives measurement radii and pairs
+   * with planetary basemaps. Defaults to `"earth"` (WGS 84).
+   */
+  ellipsoidId: string;
+  /**
+   * Unit system the scale bar displays. Defaults to `"metric"`; switch to
+   * `"imperial"` for feet/miles or `"nautical"` for nautical miles.
+   */
+  scaleUnit: MapScaleUnit;
 }
 
 export interface RuntimeEnvironmentVariable {
@@ -749,6 +1285,8 @@ export const DEFAULT_PROJECT_PREFERENCES: ProjectPreferences = {
     maxPitch: 85,
     renderWorldCopies: true,
     projection: "globe",
+    ellipsoidId: "earth",
+    scaleUnit: "metric",
   },
   environmentVariables: [],
   geocoding: {
@@ -769,11 +1307,47 @@ export interface LegendItemOverride {
   hidden?: boolean;
 }
 
+/** Swatch shape for a hand-authored legend item. */
+export type LegendCustomShape = "square" | "circle" | "line";
+
+/** One hand-authored legend item: a color swatch plus its label. */
+export interface LegendCustomItem {
+  /** Display label (e.g. an NLCD class name). */
+  label: string;
+  /** Swatch color as a CSS color (typically `#rrggbb`). */
+  color: string;
+  /** Swatch shape; defaults to `"square"`. */
+  shape?: LegendCustomShape;
+  /**
+   * Symbol size in map pixels (circle radius / line width). Carried so that
+   * customizing a proportional-symbol entry keeps the graduated sizes it was
+   * seeded from instead of flattening every symbol to one size.
+   */
+  size?: number;
+}
+
 /**
- * User customizations for the Print Layout legend. The legend itself is always
- * derived from the visible layers' symbology; this record only stores the edits
- * layered on top (title, ordering, per-item rename/hide), so it survives layer
- * additions and removals and is persisted in the `.geolibre.json` project.
+ * A hand-authored legend entry. Keyed by layer id it REPLACES that layer's
+ * auto-derived classes (the fallback when automatic derivation is wrong or
+ * impossible, e.g. a paletted land-cover raster like NLCD); keyed by a
+ * `custom:` id it renders as a standalone section not tied to any layer.
+ */
+export interface LegendCustomEntry {
+  /** Optional heading; a layer-keyed entry falls back to the layer name. */
+  title?: string;
+  /** The items to render, top to bottom. */
+  items: LegendCustomItem[];
+}
+
+/** Map corner the on-map legend panel docks to. */
+export type LegendPanelPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+/**
+ * User customizations for the legend (the on-map Legend panel and the Print
+ * Layout legend). The legend itself is always derived from the visible layers'
+ * symbology; this record only stores the edits layered on top (title, ordering,
+ * per-item rename/hide, hand-authored entries), so it survives layer additions
+ * and removals and is persisted in the `.geolibre.json` project.
  */
 export interface LegendConfig {
   /** Heading drawn above the legend entries. */
@@ -787,6 +1361,25 @@ export interface LegendConfig {
   order: string[];
   /** Per-item overrides keyed by stable item key. */
   overrides: Record<string, LegendItemOverride>;
+  /**
+   * Hand-authored entries keyed by layer id (replacing that layer's
+   * auto-derived classes) or by a standalone `custom:` id. See
+   * {@link LegendCustomEntry}.
+   */
+  customEntries?: Record<string, LegendCustomEntry>;
+  /** Whether the on-map Legend panel is open (persisted with the project). */
+  panelVisible?: boolean;
+  /** Whether the open panel is collapsed to just its header bar. */
+  panelCollapsed?: boolean;
+  /** Map corner the on-map Legend panel docks to; defaults to `"top-left"`. */
+  panelPosition?: LegendPanelPosition;
+  /**
+   * User-resized panel width in px (via the corner drag handles). Absent means
+   * the default width; height absent means auto-fit to content within the map.
+   */
+  panelWidth?: number;
+  /** User-resized panel height in px. See {@link LegendConfig.panelWidth}. */
+  panelHeight?: number;
 }
 
 // Frozen so the shared singleton can be safely spread (`{ ...DEFAULT_LEGEND_CONFIG }`)
@@ -845,11 +1438,22 @@ export interface StoryChapter {
   onChapterExit: StoryLayerOpacityChange[];
 }
 
-export type StoryInsetPosition =
-  | "top-left"
-  | "top-right"
-  | "bottom-left"
-  | "bottom-right";
+export type StoryInsetPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+/**
+ * A non-chapter intro/outro slide shown before the first or after the last
+ * chapter (#998). `"none"` disables it. The remaining modes are:
+ * - `"blank"` a solid screen in the panel theme color,
+ * - `"black"` a solid black screen,
+ * - `"global"` a zoomed-out global view of the map with no text,
+ * - `"adjacent"` the camera of the neighboring chapter (the first chapter for
+ *   the start slide, the last chapter for the closing slide) with all text and
+ *   media hidden, so the presenter can zoom into the full content next.
+ */
+export type StorySlideMode = "none" | "blank" | "black" | "global" | "adjacent";
+
+/** A start/closing slide that is actually shown (every mode except `"none"`). */
+export type StoryActiveSlideMode = Exclude<StorySlideMode, "none">;
 
 /** Scroll-driven story map authored on top of a GeoLibre project. */
 export interface StoryMap {
@@ -862,6 +1466,16 @@ export interface StoryMap {
   markerColor: string;
   inset: boolean;
   insetPosition: StoryInsetPosition;
+  /**
+   * Start the presentation with the chapter itinerary/navigation panel hidden,
+   * revealing chapters one at a time instead of listing every upcoming location
+   * up front (#995). The presenter still offers a toggle to open the list.
+   */
+  hideChapterNav: boolean;
+  /** Optional intro slide shown before the first chapter (#998). */
+  startSlide: StorySlideMode;
+  /** Optional closing slide shown after the last chapter (#998). */
+  endSlide: StorySlideMode;
   chapters: StoryChapter[];
 }
 
@@ -875,6 +1489,9 @@ export const DEFAULT_STORY_MAP: StoryMap = {
   markerColor: "#3fb1ce",
   inset: false,
   insetPosition: "bottom-left",
+  hideChapterNav: false,
+  startSlide: "none",
+  endSlide: "none",
   chapters: [],
 };
 
@@ -910,8 +1527,75 @@ export interface ProcessingModel {
   steps: ProcessingModelStep[];
 }
 
+/**
+ * Which dialog family executed a {@link ProcessingRun}. Drives the History
+ * panel's re-run routing: each kind maps to the dialog (and store open-flag)
+ * that can be reopened pre-filled with the run's parameters.
+ */
+export type ProcessingRunKind =
+  | "vector"
+  | "statistics"
+  | "network"
+  | "whitebox"
+  | "raster"
+  | "conversion"
+  | "algorithm";
+
+export type ProcessingRunStatus = "success" | "error";
+
 /** Upper bound on persisted processing-history entries (oldest are dropped). */
 export const MAX_PROCESSING_HISTORY = 100;
+
+/**
+ * One recorded processing tool run (issue #1292). Appended by every processing
+ * dialog when a run finishes and persisted in the project file, so a saved
+ * project documents how its derived layers were produced. Parameter values are
+ * stored exactly as the dialog dispatched them (layer parameters hold layer
+ * ids), which is what re-run pre-fills and "Copy as Python" emit.
+ */
+export interface ProcessingRun {
+  /** Stable id, unique within the project (React key and update key). */
+  id: string;
+  kind: ProcessingRunKind;
+  /** The tool's registry id (e.g. `"buffer"`, `"slope"`). */
+  toolId: string;
+  /** Human-readable tool name captured at run time. */
+  toolName: string;
+  /** Engine that executed the run: `client`, `wasm`, `sidecar`, `pyodide`, `browser`. */
+  engine: string;
+  /** Parameter values keyed by the tool's parameter ids. */
+  parameters: Record<string, unknown>;
+  /** Names of input layers referenced by layer parameters, keyed by layer id. */
+  inputLayerNames?: Record<string, string>;
+  /** Names of layers the run added to the map. */
+  outputLayerNames?: string[];
+  /** Input file path/name, for file-based tools (raster/conversion). */
+  inputPath?: string;
+  /** Output file path/name, for file-based tools (raster/conversion). */
+  outputPath?: string;
+  /** ISO timestamp of when the run started. */
+  startedAt: string;
+  /** Wall-clock duration of the run in milliseconds. */
+  durationMs?: number;
+  status: ProcessingRunStatus;
+  /** Error message when `status` is `"error"`. */
+  error?: string;
+}
+
+/**
+ * A pending "re-run from History" request. The History panel writes it to the
+ * store and opens the target dialog; the dialog consumes it (pre-filling its
+ * parameter form) and clears it. `autoRun` asks the dialog to start the run
+ * immediately after pre-filling (plain Re-run vs Edit & re-run).
+ */
+export interface ProcessingRerunRequest {
+  kind: ProcessingRunKind;
+  toolId: string;
+  parameters: Record<string, unknown>;
+  /** Engine to preselect, when the dialog offers a choice. */
+  engine?: string;
+  autoRun?: boolean;
+}
 
 /** Column-count bounds for the Dashboard panel's widget grid. */
 export const MIN_DASHBOARD_COLUMNS = 1;
@@ -919,14 +1603,18 @@ export const MAX_DASHBOARD_COLUMNS = 6;
 export const DEFAULT_DASHBOARD_COLUMNS = 2;
 
 /** The chart a {@link DashboardWidget} draws. Mirrors the attribute Charts
- * panel's types so a widget reuses the same rendering. */
+ * panel's types so a widget reuses the same rendering. The `"indicator"` type
+ * is a non-chart KPI tile (issue #1381). */
 export type DashboardWidgetType =
   | "histogram"
   | "scatter"
   | "bar"
   | "line"
   | "box"
-  | "pie";
+  | "pie"
+  | "indicator"
+  | "selector"
+  | "list";
 
 /** How a bar widget reduces its category groups. */
 export type DashboardWidgetAggregation = "count" | "sum" | "mean";
@@ -966,9 +1654,127 @@ export interface DashboardWidget {
   aggregation?: DashboardWidgetAggregation;
   /** Value field a bar chart's sum/mean reduces (ignored for `count`). */
   valueField?: string;
+  /** Indicator widget: aggregation function for the KPI value (issue #1381).
+   * Extends bar aggregation with min, max, and median. */
+  indicatorAggregation?: IndicatorAggregation;
+  /** Indicator widget: optional prefix (e.g. "€", "$"). */
+  prefix?: string;
+  /** Indicator widget: optional suffix (e.g. " kg", " ha"). */
+  suffix?: string;
+  /** Selector widget: whether multiple values can be picked (default false). */
+  multiple?: boolean;
+  /** List widget: columns to display. */
+  listFields?: string[];
+  /** List widget: field to sort by. */
+  sortBy?: string;
+  /** List widget: sort direction (default "desc"). */
+  sortDir?: "asc" | "desc";
+  /** List widget: max rows to show (default 20). */
+  limit?: number;
+}
+
+/** Aggregation functions for indicator widgets (issue #1381). Extends the bar
+ * widget aggregation with min, max, and median. */
+export type IndicatorAggregation = "count" | "sum" | "mean" | "min" | "max" | "median";
+
+/**
+ * What slice of a layer's styling a Style Manager entry captures (issue #1294).
+ *
+ * - `"style"`: the layer's complete {@link LayerStyle} snapshot.
+ * - `"symbol"`: fill/stroke/marker/pattern symbology only, so it can restyle a
+ *   layer without touching its labels or renderer configuration.
+ * - `"labels"`: the {@link LabelStyle} block only.
+ * - `"ramp"`: the color ramp + classification settings only (ramp name, class
+ *   count, classification scheme), independent of the attribute the target
+ *   layer classifies on.
+ */
+export type StyleLibraryEntryKind = "style" | "symbol" | "labels" | "ramp";
+
+/**
+ * One saved, reusable style in the Style Manager library (issue #1294). The
+ * payload is a {@link LayerStyle} subset chosen by {@link kind}; applying an
+ * entry merges that subset onto the target layer's style. Entries live either
+ * in the app-level library (persisted across projects) or embedded in a
+ * project file's `styleLibrary` array.
+ */
+export interface StyleLibraryEntry {
+  /** Stable id, used as the IndexedDB/store key; upserts overwrite by id. */
+  id: string;
+  /** Display name shown in the Style Manager. */
+  name: string;
+  /** Which style subset {@link style} carries. */
+  kind: StyleLibraryEntryKind;
+  /** Free-form tags for filtering the library. */
+  tags: string[];
+  /** The saved {@link LayerStyle} subset (see {@link kind}). */
+  style: Partial<LayerStyle>;
+  /** ISO timestamp of the last save; empty for built-in presets. */
+  updatedAt: string;
+}
+
+/**
+ * One saved, re-addable layer in the Layer Library (issue #1520) — the "My
+ * Data" section of the Browser panel. Stores the layer's **source
+ * specification** plus its full presentation state (style, labels, filters,
+ * joins, virtual fields, attribute form), deliberately *not* the data, so the
+ * library stays small and an entry always reflects the current contents of its
+ * source.
+ *
+ * The exception is a layer whose features exist only in memory (drawn features,
+ * processing output) or in a local file: those have no re-fetchable source, so
+ * their features are embedded in {@link geojson} behind a size cap. See
+ * `layer-library.ts` for how an entry is captured and re-added.
+ */
+export interface LayerLibraryEntry {
+  /** Stable id, used as the IndexedDB/store key; upserts overwrite by id. */
+  id: string;
+  /** Display name shown in the Browser panel's My Data section. */
+  name: string;
+  /** ISO timestamp of the last save. */
+  addedAt: string;
+  /** The layer type to recreate ({@link GeoLibreLayer.type}). */
+  layerType: LayerType;
+  /** The MapLibre/plugin source spec to recreate the layer from. */
+  source: Record<string, unknown>;
+  /** The saved layer's complete {@link LayerStyle} (labels included). */
+  style: LayerStyle;
+  /** Layer opacity in [0, 1]. */
+  opacity: number;
+  /** The layer metadata the renderers and plugin sync modules key off. */
+  metadata: Record<string, unknown>;
+  /** Absolute local path, for a layer read from a file on disk. */
+  sourcePath?: string;
+  /** Persistent attribute joins to reapply. */
+  joins?: LayerJoin[];
+  /** Expression-backed virtual fields to reapply. */
+  virtualFields?: LayerVirtualField[];
+  /** Per-field edit-widget/constraint configuration to reapply. */
+  attributeForm?: AttributeFormConfig;
+  /**
+   * Embedded features, present only for a layer whose source cannot be
+   * re-read (in-memory features) or whose local file may be unavailable.
+   */
+  geojson?: FeatureCollection;
+  /**
+   * True when the entry can only be re-added by a host that can read
+   * {@link sourcePath} — i.e. its features were too large to embed, so the
+   * desktop app must re-read the file and the browser build cannot.
+   */
+  needsLocalFile?: boolean;
+}
+
+/** One saved template in the Template Library. */
+export interface ProjectTemplateEntry {
+  id: string;
+  name: string;
+  description?: string;
+  project: GeoLibreProject;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface GeoLibreProject {
+  id?: string;
   version: string;
   name: string;
   mapView: MapViewState;
@@ -976,6 +1782,11 @@ export interface GeoLibreProject {
   basemapVisible: boolean;
   basemapOpacity: number;
   layers: GeoLibreLayer[];
+  /**
+   * Layer selected in the Layers panel when the project was saved. Omitted by
+   * legacy projects; `null` deliberately restores no active layer.
+   */
+  selectedLayerId?: string | null;
   /** Named folders that organize the flat `layers` list in the layer panel. */
   layerGroups?: LayerGroup[];
   styles: Record<string, LayerStyle>;
@@ -986,6 +1797,8 @@ export interface GeoLibreProject {
   storymap?: StoryMap;
   /** Saved processing pipelines (batch/model chaining; issue #344). */
   models?: ProcessingModel[];
+  /** Recorded processing tool runs (Processing History; issue #1292). */
+  processingHistory?: ProcessingRun[];
   /** Saved Dashboard panel chart widgets (issue #401). */
   widgets?: DashboardWidget[];
   /** Number of columns in the Dashboard widget grid; omitted when default. */
@@ -1003,11 +1816,146 @@ export interface GeoLibreProject {
   secondaryMapViews?: SecondaryMapView[];
   /** User-entered label for the primary pane; omitted when empty. */
   primaryMapLabel?: string;
+  /**
+   * Project-scoped Style Manager entries (issue #1294), so a project can carry
+   * its reusable styles to teammates. Omitted when empty; the app-level
+   * library is persisted outside the project file and never serialized here.
+   */
+  styleLibrary?: StyleLibraryEntry[];
+  /** Anchored review comments on map points or features (issue #1518). */
+  comments?: ProjectComment[];
   metadata: Record<string, unknown>;
+}
+
+export type CommentAnchor =
+  | { type: "point"; lngLat: [number, number] }
+  | { type: "feature"; layerId: string; featureId: string | number; lngLat?: [number, number] };
+
+export interface CommentAuthor {
+  name: string;
+  color: string;
+}
+
+export interface CommentReply {
+  id: string;
+  author: CommentAuthor;
+  body: string;
+  createdAt: string;
+}
+
+export interface ProjectComment {
+  id: string;
+  anchor: CommentAnchor;
+  author: CommentAuthor;
+  body: string;
+  createdAt: string;
+  resolved: boolean;
+  replies: CommentReply[];
 }
 
 export interface RecentProjectEntry {
   path: string;
   name: string;
   openedAt: string;
+}
+
+/**
+ * Size at or above which a local vector file is read through DuckDB instead of
+ * the in-memory JavaScript readers, and the feature count above which the user
+ * is asked before every feature is materialized as GeoJSON.
+ *
+ * These live in core so the desktop loaders (`duckdb-vector-guard.ts`) and the
+ * Add Vector Layer panel (`@geolibre/plugins`, which configures the
+ * `maplibre-gl-vector` control's `autoThreshold`) switch strategy at the *same*
+ * numbers. Before they were unified the two entry points disagreed — the panel
+ * tiled at 25 MB / 50k while drag-and-drop stayed in memory to 100 MB — so the
+ * same file behaved differently depending on how it was added, and no single
+ * number could be documented.
+ */
+export const DUCKDB_VECTOR_ROUTE_BYTES = 100 * 1024 * 1024; // 100 MB
+export const DUCKDB_VECTOR_FEATURE_WARN_COUNT = 100_000;
+
+/** A collection whose coordinates cannot be WGS84 longitude/latitude. */
+export interface NonGeographicCoordinates {
+  /** How many coordinates were inspected. */
+  sampled: number;
+  /** The largest |x| seen — a longitude may not exceed 180. */
+  maxAbsX: number;
+  /** The largest |y| seen — a latitude may not exceed 90. */
+  maxAbsY: number;
+}
+
+const MAX_WGS84_LON = 180;
+const MAX_WGS84_LAT = 90;
+
+/**
+ * Detect a collection that declares (or is assumed to be) WGS84 but carries
+ * projected coordinates — the failure mode where a layer loads cleanly, appears
+ * in the Layers panel, and renders nowhere because its "longitude" is a easting
+ * in metres or feet.
+ *
+ * GeoLibre honours whatever CRS a file declares, so a file that declares
+ * `CRS84`/`GCS_WGS_1984` while holding State Plane or Albers coordinates is
+ * passed through untouched and lands off the map with no error. Callers use
+ * this to warn instead of failing silently; it does not guess the true CRS,
+ * which only the user knows.
+ *
+ * Sampling stops at `sampleLimit` coordinates: out-of-range values are a
+ * property of the whole file, so a prefix is enough and a 3-million-coordinate
+ * collection is not walked twice.
+ *
+ * @returns Details when a coordinate is out of geographic range, else null.
+ */
+export function detectNonGeographicCoordinates(
+  geojson: GeoJSON.FeatureCollection | undefined,
+  sampleLimit = 1000,
+): NonGeographicCoordinates | null {
+  if (!geojson?.features?.length) return null;
+  let sampled = 0;
+  let maxAbsX = 0;
+  let maxAbsY = 0;
+  let offending = false;
+
+  const visit = (coords: unknown): void => {
+    if (sampled >= sampleLimit || !Array.isArray(coords)) return;
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+      const x = Math.abs(coords[0]);
+      const y = Math.abs(coords[1]);
+      sampled += 1;
+      // Gated on finiteness for the same reason as `offending` below: an
+      // Infinity would otherwise be reported as the offending magnitude in the
+      // warning, hiding the real out-of-range value.
+      if (Number.isFinite(x) && x > maxAbsX) maxAbsX = x;
+      if (Number.isFinite(y) && y > maxAbsY) maxAbsY = y;
+      // NaN/Infinity are a different defect (a broken file, not a CRS mismatch),
+      // so only finite out-of-range values count.
+      if (Number.isFinite(x) && Number.isFinite(y) && (x > MAX_WGS84_LON || y > MAX_WGS84_LAT)) {
+        offending = true;
+      }
+      return;
+    }
+    for (const part of coords) {
+      if (sampled >= sampleLimit) return;
+      visit(part);
+    }
+  };
+
+  for (const feature of geojson.features) {
+    if (sampled >= sampleLimit) break;
+    const geometry = feature?.geometry as {
+      coordinates?: unknown;
+      geometries?: { coordinates?: unknown }[];
+    } | null;
+    // A GeometryCollection holds its coordinates one level down, under
+    // `geometries[]`, so it has no `coordinates` of its own to visit.
+    if (geometry?.coordinates !== undefined) visit(geometry.coordinates);
+    else if (Array.isArray(geometry?.geometries)) {
+      for (const member of geometry.geometries) {
+        if (sampled >= sampleLimit) break;
+        if (member?.coordinates !== undefined) visit(member.coordinates);
+      }
+    }
+  }
+
+  return offending ? { sampled, maxAbsX, maxAbsY } : null;
 }

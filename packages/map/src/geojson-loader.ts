@@ -10,9 +10,7 @@ export interface GeometryProfile {
   hasPolygon: boolean;
 }
 
-export function detectGeometryProfile(
-  fc: FeatureCollection,
-): GeometryProfile {
+export function detectGeometryProfile(fc: FeatureCollection): GeometryProfile {
   const profile: GeometryProfile = {
     hasPoint: false,
     hasLine: false,
@@ -22,10 +20,7 @@ export function detectGeometryProfile(
     const type = feature.geometry?.type;
     if (!type) continue;
     if (type === "Point" || type === "MultiPoint") profile.hasPoint = true;
-    if (
-      type === "LineString" ||
-      type === "MultiLineString"
-    ) {
+    if (type === "LineString" || type === "MultiLineString") {
       profile.hasLine = true;
     }
     if (type === "Polygon" || type === "MultiPolygon") {
@@ -33,23 +28,24 @@ export function detectGeometryProfile(
     }
     if (type === "GeometryCollection") {
       for (const g of feature.geometry.geometries) {
-        if (g.type === "Point" || g.type === "MultiPoint")
-          profile.hasPoint = true;
-        if (g.type === "LineString" || g.type === "MultiLineString")
-          profile.hasLine = true;
-        if (g.type === "Polygon" || g.type === "MultiPolygon")
-          profile.hasPolygon = true;
+        if (g.type === "Point" || g.type === "MultiPoint") profile.hasPoint = true;
+        if (g.type === "LineString" || g.type === "MultiLineString") profile.hasLine = true;
+        if (g.type === "Polygon" || g.type === "MultiPolygon") profile.hasPolygon = true;
       }
     }
   }
   return profile;
 }
 
-export function getLayerBounds(
-  layer: GeoLibreLayer,
-): [number, number, number, number] | null {
+export function getLayerBounds(layer: GeoLibreLayer): [number, number, number, number] | null {
   if (!layer.geojson?.features?.length) return null;
   const box = bbox(layer.geojson);
+  // A collection whose features all carry a null geometry (e.g. a delimited
+  // text file imported as an attribute table, or a non-spatial SQL result)
+  // yields a degenerate ±Infinity box. Report "no bounds" so callers such as
+  // fitLayer/"Zoom to layer" fall back or no-op instead of flying to an
+  // invalid extent.
+  if (!box.every((value) => Number.isFinite(value))) return null;
   return box as [number, number, number, number];
 }
 
@@ -105,6 +101,44 @@ export function labelLayerId(layerId: string): string {
  */
 export function labelSourceId(layerId: string): string {
   return `source-${layerId}-label`;
+}
+
+/**
+ * Source id for the inverted-fill mask (see
+ * {@link LayerStyle.invertedFillEnabled}). The mask is a derived polygon, so
+ * it lives in its own GeoJSON source beside the layer's main source.
+ */
+export function invertedSourceId(layerId: string): string {
+  return `source-${layerId}-inverted`;
+}
+
+export function invertedFillLayerId(layerId: string): string {
+  return `layer-${layerId}-inverted-fill`;
+}
+
+/** Symbol layer that repeats decoration icons along line features. */
+export function lineDecorationLayerId(layerId: string): string {
+  return `layer-${layerId}-line-decoration`;
+}
+
+/**
+ * Source id for the geometry generator's derived features (see
+ * {@link LayerStyle.geometryGenerator}).
+ */
+export function generatorSourceId(layerId: string): string {
+  return `source-${layerId}-generator`;
+}
+
+export function generatorFillLayerId(layerId: string): string {
+  return `layer-${layerId}-generator-fill`;
+}
+
+export function generatorLineLayerId(layerId: string): string {
+  return `layer-${layerId}-generator-line`;
+}
+
+export function generatorCircleLayerId(layerId: string): string {
+  return `layer-${layerId}-generator-circle`;
 }
 
 export function highlightSourceId(): string {

@@ -1,12 +1,21 @@
-import type { GeoLibreLayer, LayerStyle } from "@geolibre/core";
-import type { FeatureCollection } from "geojson";
+import type {
+  ExternalNativePaintBridge,
+  ExternalNativePaintMode,
+  GeoLibreLayer,
+  LayerStyle,
+} from "@geolibre/core";
+import type {
+  QueryGeometry as ZarrQueryGeometry,
+  QueryOptions as ZarrQueryOptions,
+  QueryResult as ZarrQueryResult,
+  Selector as ZarrSelector,
+} from "@carbonplan/zarr-layer";
+import type { FeatureCollection, Geometry } from "geojson";
 import type { IControl, Map as MapLibreMap } from "maplibre-gl";
+import type { OvertureTheme } from "maplibre-gl-overture-maps";
+import type { TemporalLayerAdapter } from "./plugins/temporal-layers";
 
-export type GeoLibreMapControlPosition =
-  | "top-left"
-  | "top-right"
-  | "bottom-left"
-  | "bottom-right";
+export type GeoLibreMapControlPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
 export type GeoLibreBuiltInMapControl =
   | "navigation"
@@ -17,11 +26,14 @@ export type GeoLibreBuiltInMapControl =
   | "scale"
   | "attribution"
   | "logo"
+  | "maptoolkit-logo"
   | "layer-control";
 
 export interface GeoLibreExternalNativeLayerRegistration {
   id: string;
   name: string;
+  /** Optional host layer-group id that should contain this layer. */
+  groupId?: string;
   type?: GeoLibreLayer["type"];
   source?: Record<string, unknown>;
   geojson?: FeatureCollection;
@@ -33,7 +45,222 @@ export interface GeoLibreExternalNativeLayerRegistration {
   style?: Partial<LayerStyle>;
   metadata?: Record<string, unknown>;
   sourcePath?: string;
+  /**
+   * Who paints the registered native layer(s). Default `"geolibre"`: the layer
+   * is an ordinary MapLibre layer, so the Style panel's paint editors apply to
+   * it through `setPaintProperty`.
+   *
+   * Pass `"plugin"` for a MapLibre `CustomLayerInterface` (WebGL) layer, or any
+   * layer whose pixels the plugin draws itself. Such a layer has no MapLibre
+   * paint properties, so GeoLibre hides the paint editors it cannot apply
+   * (raster brightness/saturation/contrast/hue, the vector paint controls)
+   * instead of offering inert sliders, and keeps only the generic operations:
+   * insert-below, zoom range, visibility, reorder, remove. Supply
+   * {@link paintBridge} to keep opacity live as well.
+   */
+  paintMode?: ExternalNativePaintMode;
+  /**
+   * Setters that forward GeoLibre's generic controls to a `paintMode: "plugin"`
+   * layer's own API (e.g. `zarrLayer.setOpacity`). Supplying `setOpacity` keeps
+   * the Style and Layers panel Opacity sliders live for the layer; without it
+   * they are hidden. Implies `paintMode: "plugin"`.
+   *
+   * The setters are called on change only, not on every layer sync. They are
+   * held outside the layer record (functions cannot be serialized into a
+   * project file), so re-register the layer after a project is reloaded to
+   * restore the bridge, and call `unregisterExternalNativeLayer` on
+   * `deactivate` to drop it.
+   */
+  paintBridge?: ExternalNativePaintBridge;
 }
+
+/**
+ * Options shared by the raster/tile registration helpers
+ * ({@link GeoLibreAppAPI.addTileLayer}, {@link GeoLibreAppAPI.addWmtsLayer},
+ * {@link GeoLibreAppAPI.addWmsLayer}). They mirror the MapLibre raster `source`
+ * fields a tile service typically advertises, so the layer renders with the
+ * right extent, zoom range, and attribution without the plugin touching the
+ * map.
+ */
+export interface GeoLibreTileLayerOptions {
+  /** Tile size in pixels (default 256). */
+  tileSize?: number;
+  /** Attribution string shown in the map's attribution control. */
+  attribution?: string;
+  /** Visible extent as `[west, south, east, north]` in WGS84 degrees. */
+  bounds?: [number, number, number, number];
+  /** Minimum zoom at which tiles are requested. */
+  minzoom?: number;
+  /** Maximum zoom at which tiles are requested. */
+  maxzoom?: number;
+  /** Tile y-axis scheme; `"tms"` flips the y origin. Defaults to `"xyz"`. */
+  scheme?: "xyz" | "tms";
+  /** Initial visibility (default true). */
+  visible?: boolean;
+  /** Initial opacity in [0, 1] (default 1). */
+  opacity?: number;
+  /** Insert the new layer directly beneath the layer with this id. */
+  beforeLayerId?: string;
+}
+
+/**
+ * Options for {@link GeoLibreAppAPI.addWmsLayer}. The GetMap tile URL is built
+ * from the service `url` plus `layers`, so the plugin passes the WMS request
+ * parameters instead of a tile URL template.
+ */
+export interface GeoLibreWmsLayerOptions extends GeoLibreTileLayerOptions {
+  /** WMS service endpoint (the GetMap base URL). */
+  url: string;
+  /** Comma-separated WMS layer name(s) to request. */
+  layers: string;
+  /** Comma-separated style name(s) (default empty: the server default). */
+  styles?: string;
+  /** Image format, e.g. `"image/png"` (default) or `"image/jpeg"`. */
+  format?: string;
+  /** Request transparent tiles (default true). */
+  transparent?: boolean;
+  /**
+   * WMS protocol version: `"1.1.1"` (default) or `"1.3.0"`. Version 1.3.0
+   * sends `CRS` instead of `SRS`; some servers accept only one version.
+   */
+  version?: string;
+}
+
+/** Overture Maps themes available through the host's official PMTiles source. */
+export type GeoLibreOvertureTheme = OvertureTheme;
+
+/** Parameters for a bounded Overture Maps feature query. */
+export interface GeoLibreOvertureQuery {
+  /** Overture theme archive to query. */
+  theme: GeoLibreOvertureTheme;
+  /** MVT source layer inside the theme, e.g. `building` or `segment`. */
+  sourceLayer: string;
+  /** Query bounds as `[west, south, east, north]` in WGS84 degrees. */
+  bbox: [number, number, number, number];
+  /** Preferred MVT zoom. Defaults to 12 and decreases when the tile cap requires it. */
+  zoom?: number;
+  /** Maximum PMTiles tiles to inspect. Defaults to 512. */
+  maxTiles?: number;
+  /** Maximum matching features returned. Defaults to 50,000. */
+  maxFeatures?: number;
+  /** Optional polygon filter applied before features are returned. */
+  filterGeometry?: Geometry | FeatureCollection;
+  /**
+   * Spatial predicate for `filterGeometry`. Defaults to `intersects`.
+   * `centroid-within` uses the arithmetic mean of geometry vertices.
+   */
+  filterMode?: "centroid-within" | "intersects";
+  /** Optional request cancellation signal. */
+  signal?: AbortSignal;
+}
+
+/** Result of a bounded Overture Maps PMTiles feature query. */
+export interface GeoLibreOvertureQueryResult {
+  data: FeatureCollection;
+  release: string;
+  theme: GeoLibreOvertureTheme;
+  sourceLayer: string;
+  zoom: number;
+  /** Number of PMTiles tile lookups completed before the query stopped. */
+  tilesRead: number;
+  /** Number of matching features included in `data`. */
+  matchedFeatureCount: number;
+  /** Whether at least one additional match was excluded by `maxFeatures`. */
+  truncated: boolean;
+}
+
+/**
+ * Options for {@link GeoLibreAppAPI.addCogLayer}: a native Cloud-Optimized
+ * GeoTIFF layer read directly from a URL and rendered client-side, with band
+ * selection, rescale, colormap, and nodata handling exposed in the Style/raster
+ * panel. All fields are optional; the renderer infers sensible defaults from
+ * the GeoTIFF when they are omitted.
+ */
+export interface GeoLibreCogLayerOptions {
+  /** Band selection, e.g. `"1"` (single band) or `"1,2,3"` (RGB). */
+  bands?: string;
+  /**
+   * Named colormap applied to a single-band COG (e.g. `"terrain"`,
+   * `"viridis"`). Deliberately typed as a loose `string` so external JS
+   * plugins are not forced to import the renderer's internal colormap union;
+   * an unrecognized name falls back to the renderer default rather than
+   * erroring.
+   */
+  colormap?: string;
+  /** Lower bound of the value range mapped to the colormap/contrast stretch. */
+  rescaleMin?: number;
+  /** Upper bound of the value range mapped to the colormap/contrast stretch. */
+  rescaleMax?: number;
+  /** Pixel value rendered as transparent (overrides the file's NoData tag). */
+  nodata?: number;
+  /** Initial opacity in [0, 1] (default 1). */
+  opacity?: number;
+  /** Insert the new layer directly beneath the layer with this id. */
+  beforeLayerId?: string;
+}
+
+/**
+ * Options for {@link GeoLibreAppAPI.addZarrLayer}: a Zarr store rendered by the
+ * host's own `@carbonplan/zarr-layer` instance, mirrored into the Layers panel.
+ *
+ * Symmetric to {@link GeoLibreCogLayerOptions}, with the addition of
+ * `crs`/`proj4`: the renderer reprojects on the GPU, so a store on a projected
+ * national grid lands in the right place instead of being read as WGS84.
+ */
+export interface GeoLibreZarrLayerOptions {
+  /**
+   * Array/variable to render (e.g. `"tmax"`). Required: neither GeoLibre nor
+   * the renderer guesses which array of a store to draw.
+   */
+  variable: string;
+  /** Dimension selector for the non-spatial dims, e.g. `{ time: 0 }`. */
+  selector?: Record<string, number | string>;
+  /** Color limits `[min, max]` mapped to the colormap. */
+  clim?: [number, number];
+  /**
+   * A named GeoLibre ramp (e.g. `"viridis"`) or an explicit list of hex colors.
+   * Typed loosely like {@link GeoLibreCogLayerOptions.colormap}: an
+   * unrecognized name falls back to the default ramp rather than erroring.
+   */
+  colormap?: string | string[];
+  /** Initial opacity in [0, 1] (default: the renderer's default). */
+  opacity?: number;
+  /** Zarr metadata version. Omit to let the renderer detect it. */
+  zarrVersion?: 2 | 3;
+  /** CRS of the store, e.g. `"EPSG:32633"`. */
+  crs?: string;
+  /** proj4 definition string, for a CRS the renderer has no built-in for. */
+  proj4?: string;
+  /** Explicit spatial bounds `[xMin, yMin, xMax, yMax]` in the store's CRS. */
+  bounds?: [number, number, number, number];
+  /** Override the spatial dimension names when they are not lat/lon. */
+  spatialDimensions?: { lat?: string; lon?: string };
+  /** Request headers for an authenticated store. */
+  headers?: Record<string, string>;
+  /** Insert the new layer directly beneath the layer with this id. */
+  beforeLayerId?: string;
+}
+
+// The query surface of `GeoLibreAppAPI.queryZarrLayer`, aliased from the
+// renderer's own types so a plugin can annotate its calls without adding
+// @carbonplan/zarr-layer as a dependency of its own — and so a change to the
+// renderer's contract fails the host build rather than drifting silently.
+
+/** A WGS84 `Point` (click-to-value) or `Polygon`/`MultiPolygon` (region stats). */
+export type GeoLibreZarrQueryGeometry = ZarrQueryGeometry;
+/**
+ * Dimensions to read instead of the layer's current selector. Accepts a list per
+ * dimension (e.g. `{ month: [1, 7] }`), which nests the returned values by that
+ * dimension's values.
+ */
+export type GeoLibreZarrQuerySelector = ZarrSelector;
+/** `signal` to cancel the read; `includeSpatialCoordinates` (default true). */
+export type GeoLibreZarrQueryOptions = ZarrQueryOptions;
+/**
+ * `{ [variable]: values, dimensions, coordinates }`, where `coordinates` are in
+ * the store's **source** CRS, not WGS84.
+ */
+export type GeoLibreZarrQueryResult = ZarrQueryResult;
 
 /**
  * Describes the file-type filter shown by the host's save/open dialog so
@@ -96,55 +323,140 @@ export interface GeoLibrePickedVectorFile {
    * file when a saved project reopens.
    */
   sourcePath?: string;
-}
-
-/**
- * Host-normalized layer input for external plugins. The host fills any missing
- * id, visibility, opacity, and style defaults before inserting it into the
- * shared store, so plugins do not need to replicate GeoLibre's internal layer
- * scaffolding helpers.
- */
-export interface GeoLibreLayerDraft {
-  id?: string;
-  name: string;
-  type: GeoLibreLayer["type"];
-  source: Record<string, unknown>;
-  visible?: boolean;
-  opacity?: number;
-  style?: Partial<LayerStyle>;
-  metadata?: Record<string, unknown>;
-  sourcePath?: string;
+  /**
+   * FeatureCollection materialized by a desktop host's native vector reader.
+   * When present, the Add Vector Layer bridge can load it as GeoJSON while
+   * still persisting {@link sourcePath} for project restore.
+   */
+  nativeData?: FeatureCollection;
 }
 
 export interface GeoLibreAppAPI {
   setBasemap: (styleUrl: string) => void;
+  addGeoJsonLayer: (name: string, data: FeatureCollection, sourcePath?: string) => string;
   /**
-   * Insert a layer into GeoLibre's shared layer store. The host fills default
-   * id, visibility, opacity, and style values and returns the inserted id.
+   * Add a native XYZ raster tile layer from a tile URL template (with
+   * `{x}`/`{y}`/`{z}` placeholders) and return its layer id. Unlike calling
+   * `getMap().addSource()/addLayer()` directly, the layer appears in the Layers
+   * panel with full opacity/reorder/styling support and persists with the
+   * project, matching {@link addGeoJsonLayer} for vector data. Typed optional
+   * for forward-compatibility with host variants, so call it with optional
+   * chaining.
    */
-  addLayer?: (
-    layer: GeoLibreLayerDraft,
-    beforeLayerId?: string | null,
-  ) => string;
-  /** Remove a layer from GeoLibre's shared layer store. */
-  removeLayer?: (id: string) => void;
-  /** Update one layer in GeoLibre's shared layer store. */
-  updateLayer?: (id: string, patch: Partial<GeoLibreLayer>) => void;
-  /** Snapshot of the current shared layer list. */
-  getLayers?: () => GeoLibreLayer[];
-  /** Subscribe to layer-list changes. */
-  onLayersChange?: (callback: (layers: GeoLibreLayer[]) => void) => () => void;
-  /** Current WMS identify target layer id, or null when identify is off. */
-  getIdentifyLayerId?: () => string | null;
-  /** Subscribe to WMS identify target changes. */
-  onIdentifyLayerChange?: (callback: (id: string | null) => void) => () => void;
-  /** Set the WMS identify target layer id, or null to stop identify mode. */
-  setIdentifyLayer?: (id: string | null) => void;
-  addGeoJsonLayer: (
-    name: string,
-    data: FeatureCollection,
-    sourcePath?: string,
-  ) => void;
+  addTileLayer?: (name: string, url: string, options?: GeoLibreTileLayerOptions) => string;
+  /**
+   * Add a native WMTS raster tile layer from a WMTS tile URL template and return
+   * its layer id. Behaves like {@link addTileLayer} (the layer is a first-class
+   * panel entry that persists with the project); the separate name keeps WMTS
+   * layers labelled distinctly. Typed optional for forward-compatibility, so
+   * call it with optional chaining.
+   */
+  addWmtsLayer?: (name: string, url: string, options?: GeoLibreTileLayerOptions) => string;
+  /**
+   * Add a native WMS raster layer and return its layer id. The host builds the
+   * GetMap tile URL from {@link GeoLibreWmsLayerOptions.url} and
+   * {@link GeoLibreWmsLayerOptions.layers}, so the plugin supplies the request
+   * parameters rather than a tile URL template. The layer persists with the
+   * project like {@link addTileLayer}. Typed optional for
+   * forward-compatibility, so call it with optional chaining.
+   */
+  addWmsLayer?: (name: string, options: GeoLibreWmsLayerOptions) => string;
+  /**
+   * Add a native Cloud-Optimized GeoTIFF (COG) layer read directly from a URL
+   * and rendered client-side, returning a promise for the new layer's id.
+   * Unlike {@link addTileLayer} (which expects pre-rendered XYZ tiles), this
+   * loads the GeoTIFF itself and exposes band/rescale/colormap/nodata controls,
+   * matching the host's own COG raster layers. The layer appears in the Layers
+   * panel and persists with the project. Resolves once the layer is registered;
+   * rejects if the COG cannot be loaded. Typed optional for
+   * forward-compatibility, so call it with optional chaining.
+   */
+  addCogLayer?: (name: string, url: string, options?: GeoLibreCogLayerOptions) => Promise<string>;
+  /**
+   * Add a Zarr layer rendered by the **host's own** `@carbonplan/zarr-layer`
+   * instance, returning a promise for the new layer's id. The Zarr counterpart
+   * of {@link addCogLayer}: it reads the store directly (Zarr v2/v3, Icechunk
+   * over HTTP), reprojects on the GPU when `crs`/`proj4` is given, and mirrors
+   * the layer into the Layers panel with working visibility, opacity, ordering,
+   * and removal.
+   *
+   * Prefer this over bundling `@carbonplan/zarr-layer` in the plugin and adding
+   * a raw MapLibre custom layer: a second copy ships a duplicate numcodecs WASM
+   * payload, and a custom layer added that way has no MapLibre paint properties
+   * for the Style panel to drive.
+   *
+   * Resolves once the layer is registered; rejects if `variable` is missing or
+   * the store cannot be read. Typed optional for forward-compatibility, so call
+   * it with optional chaining.
+   */
+  addZarrLayer?: (name: string, url: string, options: GeoLibreZarrLayerOptions) => Promise<string>;
+  /**
+   * Re-select the non-spatial dimensions of a layer added by
+   * {@link addZarrLayer}, e.g. to drive a plugin's own time slider with
+   * `{ time: n }`. The renderer keeps its fetched chunks, so this is much
+   * cheaper than removing and re-adding the layer. Resolves to false when there
+   * is no live Zarr layer with that id.
+   */
+  setZarrLayerSelector?: (
+    layerId: string,
+    selector: Record<string, number | string>,
+  ) => Promise<boolean>;
+  /**
+   * Read the values of a layer added by {@link addZarrLayer} under a GeoJSON
+   * geometry: a `Point` for click-to-value (Identify), a `Polygon` /
+   * `MultiPolygon` for region statistics. The read counterpart of
+   * {@link setZarrLayerSelector}.
+   *
+   * The host's renderer already holds the store's grid, so it does the CRS
+   * reprojection and fill-value masking: pass a WGS84 `[lng, lat]` straight from
+   * a map click rather than reading the store again with your own zarrita
+   * point-read. Note the returned `coordinates` are in the store's **source**
+   * CRS, not WGS84.
+   *
+   * Pass `selector` to read a slice other than the one on screen (e.g. another
+   * `time`) — the layer keeps rendering the slice it is on, so a readout does not
+   * disturb the map — and `options.signal` to cancel a query the user has moved
+   * past. Values come back empty — not an error — for a geometry outside the
+   * store's grid, or for a layer whose first chunks have not loaded yet; an
+   * aborted query rejects. Resolves to null when there is no live Zarr layer
+   * with that id.
+   *
+   * Typed optional for forward-compatibility, so call it with optional chaining.
+   */
+  queryZarrLayer?: (
+    layerId: string,
+    geometry: GeoLibreZarrQueryGeometry,
+    selector?: GeoLibreZarrQuerySelector,
+    options?: GeoLibreZarrQueryOptions,
+  ) => Promise<GeoLibreZarrQueryResult | null>;
+  /**
+   * Declare that a layer's time is an **internal dimension** the Time Slider can
+   * drive, by registering a {@link TemporalLayerAdapter} for it. This is the
+   * third kind of temporal layer, alongside a vector layer filtered by a
+   * timestamp property and a raster time series of dated sources: the layer is
+   * one store and the timeline picks a slice inside it.
+   *
+   * Use it for a plugin's **own** custom layer (a data cube it renders itself, a
+   * frame animation). A Zarr layer added through {@link addZarrLayer} already
+   * registers one for its `time` axis, so it needs no call here.
+   *
+   * Registering makes the layer *bindable* — the Layers panel's "Bind to Time
+   * Slider" action appears for it. Pass `{ bind: true }` to bind it right away
+   * and open the dock, which is usually what a plugin that just loaded a cube
+   * wants. Call the returned function (or remove the layer) to unregister.
+   *
+   * Typed optional for forward-compatibility, so call it with optional chaining.
+   */
+  registerTemporalLayer?: (
+    layerId: string,
+    adapter: TemporalLayerAdapter,
+    options?: { bind?: boolean },
+  ) => () => void;
+  /**
+   * Drop a layer's temporal adapter registered with
+   * {@link registerTemporalLayer}. Removing the layer does this too.
+   */
+  unregisterTemporalLayer?: (layerId: string) => void;
   getActiveBasemap: () => string;
   onBasemapChange: (callback: (styleUrl: string) => void) => () => void;
   fetchArrayBuffer?: (url: string) => Promise<ArrayBuffer>;
@@ -160,12 +472,50 @@ export interface GeoLibreAppAPI {
    * boundary: the resolved URL grants no access a plugin does not already have,
    * since any plugin can fetch any same-origin URL directly.
    */
-  resolvePluginAssetUrl?: (
-    pluginId: string,
-    relativePath: string,
-  ) => string | null;
+  resolvePluginAssetUrl?: (pluginId: string, relativePath: string) => string | null;
+  /**
+   * Activate an installed plugin and optionally apply a partial project-state
+   * patch after activation. Returns false when the plugin is unavailable,
+   * refuses activation, or rejects the state.
+   */
+  activatePlugin?: (pluginId: string, state?: unknown) => Promise<boolean>;
+  /**
+   * Deactivate an installed plugin, the counterpart of {@link activatePlugin}.
+   * Lets a plugin that opened another plugin's panel close it again when the
+   * reason for opening it is gone — for example a plugin that bound its layer to
+   * the Time Slider and has since unbound the last one.
+   *
+   * A plugin may not deactivate **itself**: tearing a plugin down from inside
+   * its own callback would unmount the code that is still running. Such a call
+   * returns false, mirroring how `activatePlugin` refuses to reactivate the
+   * caller.
+   *
+   * Returns true when the plugin ended up inactive, false when it is unknown,
+   * was not active, is the caller, or threw while unmounting.
+   */
+  deactivatePlugin?: (pluginId: string) => boolean;
+  /**
+   * Query a bounded set of features from GeoLibre's official Overture Maps
+   * PMTiles integration. The host enforces tile and feature limits.
+   */
+  queryOvertureFeatures?: (query: GeoLibreOvertureQuery) => Promise<GeoLibreOvertureQueryResult>;
+  /**
+   * Create a named Layers-panel group, optionally assigning existing layer ids
+   * to it, and return the new group id.
+   */
+  addLayerGroup?: (name?: string, layerIds?: string[]) => string;
+  /** Remove a Layers-panel group without removing its child layers. */
+  removeLayerGroup?: (id: string) => void;
   fitBounds?: (bounds: [number, number, number, number]) => void;
   getMap?: () => MapLibreMap | null;
+  /**
+   * Open an http(s) URL in the system browser. Needed because the Tauri
+   * desktop webview ignores `window.open`/`target="_blank"` and would open the
+   * link inside the app instead; the host routes through the opener plugin
+   * there and falls back to `window.open` on the web build. Non-http(s) URLs
+   * are ignored. Plugins should call this rather than `window.open` directly.
+   */
+  openExternalUrl?: (url: string) => void;
   pickLocalDirectoryFiles?: () => Promise<File[] | null>;
   /**
    * Prompt the user (desktop only) to pick one or more vector files via the
@@ -180,6 +530,20 @@ export interface GeoLibreAppAPI {
    * dialog is cancelled.
    */
   pickVectorFilesWithSidecars?: () => Promise<GeoLibrePickedVectorFile[]>;
+
+  /**
+   * Desktop-native downloader for Add Vector Layer URL sources. The web app
+   * leaves this unset so the control uses ordinary browser networking.
+   *
+   * Must resolve to a `File` rather than a bare `Blob`, and to the *same* object
+   * for concurrent callers asking for one URL. The vector control keys its
+   * per-source caches (a KMZ's unzipped KML, a GeoPackage's bytes) on the source
+   * object and wraps a plain `Blob` in a fresh `File` per call, so returning a
+   * `Blob` would make every sibling layer of a multi-layer container re-unzip
+   * and re-register the same archive. The type says `File` so that contract is
+   * enforced rather than only documented.
+   */
+  fetchVectorUrl?: (url: string) => Promise<File | null>;
   /**
    * Read a local vector file back into a File (with any shapefile sidecars) from
    * the absolute path persisted on a layer's `sourcePath`, so the Add Vector
@@ -187,9 +551,11 @@ export interface GeoLibreAppAPI {
    * Resolves to null off the desktop host, or when the file can no longer be
    * read (moved or deleted).
    */
-  readLocalVectorFile?: (
-    path: string,
-  ) => Promise<{ file: File; companionFiles: File[] } | null>;
+  readLocalVectorFile?: (path: string) => Promise<{
+    file: File;
+    companionFiles: File[];
+    nativeData?: FeatureCollection;
+  } | null>;
   /**
    * Save text content to a file chosen by the user. The host handles the
    * platform specifics (a native save dialog under Tauri, a browser download
@@ -197,11 +563,7 @@ export interface GeoLibreAppAPI {
    * Pass `options` to control the file-type label/extensions (defaults to
    * GeoJSON).
    */
-  exportTextFile?: (
-    filename: string,
-    content: string,
-    options?: GeoLibreFileDialogOptions,
-  ) => void;
+  exportTextFile?: (filename: string, content: string, options?: GeoLibreFileDialogOptions) => void;
   /**
    * Prompt the user to pick a text file and return its contents (a native open
    * dialog under Tauri, a file input on the web). Resolves to null when the
@@ -212,29 +574,21 @@ export interface GeoLibreAppAPI {
    * user dismisses the dialog without choosing a file. Under Tauri (the
    * primary desktop target) cancel resolves to null as expected.
    */
-  importTextFile?: (
-    options?: GeoLibreFileDialogOptions,
-  ) => Promise<string | null>;
-  registerExternalNativeLayer?: (
-    layer: GeoLibreExternalNativeLayerRegistration,
-  ) => void;
+  importTextFile?: (options?: GeoLibreFileDialogOptions) => Promise<string | null>;
+  registerExternalNativeLayer?: (layer: GeoLibreExternalNativeLayerRegistration) => void;
   unregisterExternalNativeLayer?: (id: string) => void;
-  addMapControl: (
-    control: IControl,
-    position?: GeoLibreMapControlPosition,
-  ) => boolean;
+  addMapControl: (control: IControl, position?: GeoLibreMapControlPosition) => boolean;
   removeMapControl: (control: IControl) => void;
-  setBuiltInMapControlVisible: (
-    control: GeoLibreBuiltInMapControl,
-    visible: boolean,
-  ) => boolean;
-  getBuiltInMapControlPosition: (
-    control: GeoLibreBuiltInMapControl,
-  ) => GeoLibreMapControlPosition;
+  setBuiltInMapControlVisible: (control: GeoLibreBuiltInMapControl, visible: boolean) => boolean;
+  getBuiltInMapControlPosition: (control: GeoLibreBuiltInMapControl) => GeoLibreMapControlPosition;
   setBuiltInMapControlPosition: (
     control: GeoLibreBuiltInMapControl,
     position: GeoLibreMapControlPosition,
   ) => boolean;
+  /** Enable or disable GeoLibre's built-in DEM terrain without changing control visibility. */
+  setTerrainEnabled?: (enabled: boolean) => boolean;
+  /** Whether GeoLibre's built-in DEM terrain is currently active. */
+  isTerrainEnabled?: () => boolean;
   /**
    * Resolve GeoLibre's own deck.gl modules so an external plugin can render
    * deck.gl layers (e.g. an `ArcLayer`) on the host's single deck.gl instance.
@@ -245,6 +599,40 @@ export interface GeoLibreAppAPI {
    * deck.gl, so plugins should still call it with optional chaining.
    */
   getDeckGL?: () => Promise<GeoLibreDeckGL>;
+  /**
+   * Resolve GeoLibre's own `maplibre-gl-raster` module so an external plugin can
+   * render Cloud-Optimized GeoTIFFs through the host's instance instead of
+   * bundling its own. maplibre-gl-raster pulls in deck.gl and luma.gl, which
+   * throw on a second copy (luma.gl: "already initialized"); a bundled plugin
+   * copy therefore fails to activate. GeoLibre already ships maplibre-gl-raster
+   * (the built-in raster layer uses it), so it hands plugins the same instance.
+   * Always present on the GeoLibre desktop and web hosts; typed optional for
+   * forward-compatibility, so plugins should call it with optional chaining.
+   */
+  getMaplibreGlRaster?: () => Promise<typeof import("maplibre-gl-raster")>;
+  /**
+   * Set the map projection preference (persisted in app state, so the host's
+   * projection enforcement keeps it). deck.gl-backed plugins call this with
+   * `"mercator"` because deck.gl's tiled rendering does not support globe view;
+   * a raw `map.setProjection` is reverted on the next idle by the host.
+   *
+   * There is no automatic rollback: a plugin that forces a projection on
+   * activate should save the user's choice with {@link getMapProjection} first
+   * and restore it on `deactivate`, otherwise the user is left in the forced
+   * projection after the plugin is turned off. Fall back when the getter is
+   * absent on an older host so `deactivate` never passes `undefined` (the
+   * runtime guard ignores it, stranding the user in the forced projection):
+   *
+   * ```ts
+   * const saved = app.getMapProjection?.() ?? "globe";
+   * app.setMapProjection?.("mercator");
+   * // on deactivate:
+   * app.setMapProjection?.(saved);
+   * ```
+   */
+  setMapProjection?: (projection: "globe" | "mercator") => void;
+  /** Current map projection preference. */
+  getMapProjection?: () => "globe" | "mercator";
   /**
    * Register a plugin-owned right-sidebar panel that docks beside the built-in
    * Style panel and behaves like a first-class part of the workspace. Returns
@@ -301,9 +689,7 @@ export interface GeoLibreAppAPI {
    * {@link openFloatingPanel} is called. Unlike a right panel, several floating
    * panels can be open at once and they do not shrink the map.
    */
-  registerFloatingPanel?: (
-    panel: GeoLibreFloatingPanelRegistration,
-  ) => () => void;
+  registerFloatingPanel?: (panel: GeoLibreFloatingPanelRegistration) => () => void;
   /** Remove a registered floating panel (closing it if open). */
   unregisterFloatingPanel?: (id: string) => void;
   /** Open a floating panel (or bring an already-open one to the front). */
@@ -384,12 +770,37 @@ export interface GeoLibreToolbarMenu {
 export interface GeoLibreFloatingPanelRegistration {
   /** Stable unique id used to open/close the panel. */
   id: string;
-  /** Title shown in the card's title bar. */
-  title: string;
+  /**
+   * Title shown in the card's title bar. Pass a getter function to make the
+   * title reactive: it is re-evaluated on every `getFloatingPanel` call, so it
+   * picks up a new language without re-registering the panel. Caveat: the
+   * registry itself does not subscribe to i18n events, so the getter is only
+   * re-run when a consumer re-reads the panel. Today every host component that
+   * displays a title also calls `useTranslation()`, whose `languageChanged`
+   * re-render re-reads the panel as a side effect; a host that reads a panel
+   * without that subscription would show a stale title after a language switch
+   * until the next registry mutation, and should re-read the panel itself on
+   * language change. A plain string is frozen at registration time.
+   */
+  title: string | (() => string);
   /** Optional icon: a URL or `data:` URI rendered in the title bar. */
   icon?: string;
   /** Preferred card width in px (the host clamps it to a sensible range). */
   defaultWidth?: number;
+  /**
+   * Preferred card height in px. When set, the card opens at this height and its
+   * body fills it (so a `height:100%` plugin element grows with the card);
+   * omitted, the card sizes to its content. The host clamps it and lets the user
+   * resize from the corner handle.
+   */
+  defaultHeight?: number;
+  /**
+   * Which corner of the map the card first opens at (default `top-left`). The
+   * card stays freely draggable/resizable afterwards; a plugin can move it
+   * between corners by re-registering with a new position (used to back the
+   * Plugins-menu position submenu).
+   */
+  position?: GeoLibreMapControlPosition;
   /**
    * Populate the card body. Called once with an empty container the plugin
    * fills with its own DOM. The container stays mounted while the card is open,
@@ -440,12 +851,24 @@ export type GeoLibreRightPanelDock =
 export interface GeoLibreRightPanelRegistration {
   /** Stable unique id used to open/collapse/close the panel. */
   id: string;
-  /** Human-readable title shown in the panel header and collapsed rail. */
-  title: string;
+  /**
+   * Human-readable title shown in the panel header and collapsed rail.
+   * Pass a getter function to make the title reactive: it is re-evaluated on
+   * every `getRightPanel` call, so it picks up a new language without
+   * re-registering the panel. Caveat: the registry itself does not subscribe
+   * to i18n events, so the getter is only re-run when a consumer re-reads the
+   * panel. Today every host component that displays a title also calls
+   * `useTranslation()`, whose `languageChanged` re-render re-reads the panel
+   * as a side effect; a host that reads a panel without that subscription
+   * would show a stale title after a language switch until the next registry
+   * mutation, and should re-read the panel itself on language change. A plain
+   * string is frozen at registration time.
+   */
+  title: string | (() => string);
   /**
    * Where the panel docks initially: one of the four positional docks
-   * (`left-of-layers`, `right-of-layers`, `left-of-style`, or `right-of-style`,
-   * the default), or a shared-rail mode (`replace-style` / `replace-layers`).
+   * (`left-of-layers`, `right-of-layers`, `left-of-style`, or `right-of-style`),
+   * or a shared-rail mode (`replace-style`, the default, or `replace-layers`).
    * With a positional dock the built-in panel on the docked side (Layers on the
    * left, Style on the right) collapses to its rail while the plugin panel is
    * expanded next to it, and the user can move the panel between positions at
@@ -494,6 +917,13 @@ export interface GeoLibrePlugin {
    * that resolves to `false` (or rejects) when the mount ultimately fails; the
    * host then rolls back the optimistic active state so the Plugins menu does
    * not show a plugin that never came up.
+   *
+   * If a plugin auto-opens its control panel on activation, expand it with a
+   * `setTimeout(() => control.expand(), 0)` (the convention every built-in
+   * control follows). On a project restore the host re-collapses panels one
+   * tick after that expand so a loaded project does not bury the map (#952);
+   * deferring the expand by more than one tick would defeat that and leave the
+   * panel open after restore.
    */
   activate: (app: GeoLibreAppAPI) => boolean | void | Promise<boolean | void>;
   deactivate: (app: GeoLibreAppAPI) => void;
@@ -503,10 +933,7 @@ export interface GeoLibrePlugin {
    * invoked. A handler that throws is not counted as handled, so a later
    * dispatch for the same context retries it.
    */
-  handleUrlParameters?: (
-    app: GeoLibreAppAPI,
-    params: URLSearchParams,
-  ) => void | Promise<void>;
+  handleUrlParameters?: (app: GeoLibreAppAPI, params: URLSearchParams) => void | Promise<void>;
   getMapControlPosition?: () => GeoLibreMapControlPosition;
   setMapControlPosition?: (
     app: GeoLibreAppAPI,
@@ -514,6 +941,21 @@ export interface GeoLibrePlugin {
   ) => boolean | void;
   getProjectState?: () => unknown;
   applyProjectState?: (app: GeoLibreAppAPI, state: unknown) => boolean | void;
+  /**
+   * Set when the plugin persists its own panel open/collapsed state through
+   * getProjectState/applyProjectState.
+   *
+   * The project-restore pass collapses every control it adds so a loaded
+   * project does not bury the map under expanded panels (#952). That heuristic
+   * is right for panels which auto-expand on activation and carry no saved
+   * state, but wrong for a plugin whose collapsed state is part of the project:
+   * the blanket collapse overrides the user's saved `collapsed: false` and,
+   * because collapsing mutates the control's live state, a later re-save writes
+   * the collapsed state back into the project file. Declaring this opts out of
+   * the sweep — the restored config is then the only thing deciding whether the
+   * panel opens.
+   */
+  restoresPanelCollapseState?: boolean;
 }
 
 export interface GeoLibreExternalPluginManifest {
@@ -523,4 +965,12 @@ export interface GeoLibreExternalPluginManifest {
   entry: string;
   description?: string;
   style?: string;
+  /**
+   * Activate the plugin on startup when no saved plugin state overrides it.
+   * Honored only for bundled drop-ins (public/plugins/<id>/), which are baked
+   * into the build by the deployer and therefore as trusted as built-ins.
+   * Ignored for plugins installed at runtime from zips or manifest URLs, so
+   * third-party plugins cannot force themselves active.
+   */
+  activeByDefault?: boolean;
 }

@@ -1,88 +1,64 @@
 import {
   DEFAULT_LAYER_STYLE,
   circleRadiusValue,
+  extrusionColorValue,
+  extrusionHeightValue,
   lineWidthValue,
-  parseJsonExpression,
+  mapZoomStepOutputs,
   simpleStyleNumberValue,
   vectorCircleColorValue,
-  vectorColorExpression,
   vectorFillColorValue,
+  vectorFillOpacityValue,
   vectorLineColorValue,
+  vectorOutlineColorValue,
+  vectorStrokeWidthValue,
   type LayerStyle,
 } from "@geolibre/core";
-import type {
-  ExpressionSpecification,
-  PropertyValueSpecification,
-} from "maplibre-gl";
+import type { ExpressionSpecification, PropertyValueSpecification } from "maplibre-gl";
 
-function styleValue<K extends keyof LayerStyle>(
-  style: LayerStyle,
-  key: K,
-): LayerStyle[K] {
+function styleValue<K extends keyof LayerStyle>(style: LayerStyle, key: K): LayerStyle[K] {
   return style[key] ?? DEFAULT_LAYER_STYLE[key];
 }
 
 // Fold the layer's opacity multiplier into a paint value that may itself be a
-// data-driven (simplestyle) expression rather than a plain number.
+// data-driven (simplestyle or per-rule) expression rather than a plain number.
+// A zoom-stepped value (per-rule scale ranges) keeps its step outermost: the
+// multiplication is applied inside each step output, since MapLibre only
+// allows ["zoom"] as the input of a top-level step/interpolate.
 function scaleByOpacity(
   value: number | unknown[],
   opacity: number,
 ): PropertyValueSpecification<number> {
-  if (typeof value === "number") return value * opacity;
-  return ["*", value, opacity] as unknown as PropertyValueSpecification<number>;
+  return mapZoomStepOutputs(value, (output) =>
+    typeof output === "number" ? output * opacity : ["*", output, opacity],
+  ) as PropertyValueSpecification<number>;
 }
 
 export function fillPaint(style: LayerStyle, opacity: number) {
   return {
-    "fill-color": vectorFillColorValue(
-      style,
-    ) as PropertyValueSpecification<string>,
+    "fill-color": vectorFillColorValue(style) as PropertyValueSpecification<string>,
     "fill-opacity": scaleByOpacity(
-      simpleStyleNumberValue(style, "fill-opacity", styleValue(style, "fillOpacity")),
+      vectorFillOpacityValue(
+        style,
+        simpleStyleNumberValue(style, "fill-opacity", styleValue(style, "fillOpacity")),
+      ),
       opacity,
     ),
     // vectorLineColorValue honors simpleStyle's per-feature stroke property; in
     // expression mode it also applies the user's expression to the hairline
     // outline (matching the separate line layer that draws the polygon stroke).
-    "fill-outline-color": vectorLineColorValue(
-      style,
-    ) as PropertyValueSpecification<string>,
+    "fill-outline-color": vectorLineColorValue(style) as PropertyValueSpecification<string>,
   };
 }
 
-function extrusionHeightPaintValue(
-  style: LayerStyle,
-): PropertyValueSpecification<number> {
-  const advancedExpression = parseJsonExpression(
-    styleValue(style, "extrusionAdvancedStyleEnabled")
-      ? styleValue(style, "extrusionHeightExpression")
-      : "",
-  ) as PropertyValueSpecification<number> | null;
-  if (advancedExpression) return advancedExpression;
-
-  const property = styleValue(style, "extrusionHeightProperty").trim();
-  const scale = styleValue(style, "extrusionHeightScale");
-  if (!property) return 0;
-  return ["*", ["to-number", ["get", property], 0], scale];
+function extrusionHeightPaintValue(style: LayerStyle): PropertyValueSpecification<number> {
+  // Shared with the Add Vector Layer control mapping (vector-layer-sync) so
+  // both render-paths extrude to the same height.
+  return extrusionHeightValue(style) as PropertyValueSpecification<number>;
 }
 
-function extrusionColorPaintValue(
-  style: LayerStyle,
-): PropertyValueSpecification<string> {
-  const vectorExpression = vectorColorExpression(
-    style,
-    styleValue(style, "extrusionColor"),
-  ) as PropertyValueSpecification<string>;
-  if (vectorExpression !== styleValue(style, "extrusionColor")) {
-    return vectorExpression;
-  }
-
-  const advancedExpression = parseJsonExpression(
-    styleValue(style, "extrusionAdvancedStyleEnabled")
-      ? styleValue(style, "extrusionColorExpression")
-      : "",
-  ) as PropertyValueSpecification<string> | null;
-  return advancedExpression ?? styleValue(style, "extrusionColor");
+function extrusionColorPaintValue(style: LayerStyle): PropertyValueSpecification<string> {
+  return extrusionColorValue(style) as PropertyValueSpecification<string>;
 }
 
 export function fillExtrusionPaint(style: LayerStyle, opacity: number) {
@@ -97,33 +73,35 @@ export function fillExtrusionPaint(style: LayerStyle, opacity: number) {
 
 export function linePaint(style: LayerStyle, opacity: number) {
   return {
-    "line-color": vectorLineColorValue(
-      style,
-    ) as PropertyValueSpecification<string>,
-    "line-width": lineWidthValue(
-      style,
-    ) as unknown as PropertyValueSpecification<number>,
-    "line-opacity": scaleByOpacity(
-      simpleStyleNumberValue(style, "stroke-opacity", 1),
-      opacity,
-    ),
+    "line-color": vectorLineColorValue(style) as PropertyValueSpecification<string>,
+    "line-width": lineWidthValue(style) as unknown as PropertyValueSpecification<number>,
+    "line-opacity": scaleByOpacity(simpleStyleNumberValue(style, "stroke-opacity", 1), opacity),
   };
 }
 
 export function circlePaint(style: LayerStyle, opacity: number) {
   return {
-    "circle-color": vectorCircleColorValue(
-      style,
-    ) as PropertyValueSpecification<string>,
-    "circle-radius": circleRadiusValue(
-      style,
-    ) as PropertyValueSpecification<number>,
+    "circle-color": vectorCircleColorValue(style) as PropertyValueSpecification<string>,
+    "circle-radius": circleRadiusValue(style) as PropertyValueSpecification<number>,
     "circle-opacity": scaleByOpacity(
-      simpleStyleNumberValue(style, "marker-opacity", styleValue(style, "fillOpacity")),
+      vectorFillOpacityValue(
+        style,
+        simpleStyleNumberValue(style, "marker-opacity", styleValue(style, "fillOpacity")),
+      ),
       opacity,
     ),
-    "circle-stroke-color": styleValue(style, "strokeColor"),
-    "circle-stroke-width": styleValue(style, "strokeWidth"),
+    "circle-stroke-color": vectorOutlineColorValue(style) as PropertyValueSpecification<string>,
+    "circle-stroke-width": vectorStrokeWidthValue(
+      style,
+      styleValue(style, "strokeWidth"),
+    ) as PropertyValueSpecification<number>,
+    // Fade the outline with the layer opacity (and let it be set explicitly)
+    // so story playback can fully hide a point instead of leaving a hollow
+    // ring, and so the stroke is restored when playback ends (#934).
+    "circle-stroke-opacity": scaleByOpacity(
+      simpleStyleNumberValue(style, "stroke-opacity", 1),
+      opacity,
+    ),
   };
 }
 
@@ -171,6 +149,12 @@ export function clusterCirclePaint(style: LayerStyle, opacity: number) {
     "circle-opacity": styleValue(style, "fillOpacity") * opacity,
     "circle-stroke-color": styleValue(style, "strokeColor"),
     "circle-stroke-width": styleValue(style, "strokeWidth"),
+    // Keep the cluster outline in step with its fill so the layer opacity (and
+    // story fades) hide the whole bubble, mirroring {@link circlePaint} (#934).
+    "circle-stroke-opacity": scaleByOpacity(
+      simpleStyleNumberValue(style, "stroke-opacity", 1),
+      opacity,
+    ),
   };
 }
 

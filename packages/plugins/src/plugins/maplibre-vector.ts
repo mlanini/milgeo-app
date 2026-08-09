@@ -1,13 +1,22 @@
 import {
+  DUCKDB_VECTOR_FEATURE_WARN_COUNT,
+  DUCKDB_VECTOR_ROUTE_BYTES,
+  effectiveLayerRenderState,
   getSpatialExtensionPath,
   hasPathTraversal,
   useAppStore,
 } from "@geolibre/core";
-import type { GeoLibreLayer } from "@geolibre/core";
+import type { GeoLibreLayer, LayerGroup } from "@geolibre/core";
+// Imported from the `/errors` subpath, a standalone entry point holding just
+// these helpers. The package root re-exports VectorControl, so importing from
+// there would statically pull the control's module graph in and undo the
+// deliberate lazy `import("maplibre-gl-vector")` in getVectorControlClass.
+import { isVectorLayerSelectionCancelled } from "maplibre-gl-vector/errors";
 import type {
   VectorControl,
   VectorControlEventHandler,
   VectorLayerInfo,
+  VectorLayerOptions,
   VectorSampleDataset,
 } from "maplibre-gl-vector";
 import type {
@@ -18,6 +27,7 @@ import type {
 import {
   isEmbeddableLocalVectorLayer,
   isVectorControlStoreLayer,
+  rememberControlVectorRenderState,
   resetVectorStoreSyncSuspension,
   resumeVectorStoreSync,
   savedVectorState,
@@ -68,6 +78,10 @@ const SAMPLE_VECTOR_DATASETS: VectorSampleDataset[] = [
     label: "Las Vegas buildings",
     url: "https://data.source.coop/giswqs/opengeos/las-vegas-buildings.geojson",
   },
+  {
+    label: "H3 building counts",
+    url: "https://data.source.coop/giswqs/opengeos/building_count_h3.parquet",
+  },
 ];
 
 // This type mirrors an undocumented private member of VectorControl from
@@ -86,6 +100,50 @@ let vectorControl: VectorControl | null = null;
 let vectorControlMounted = false;
 let openPanelTimeout: number | null = null;
 let restorePanelExpandTimeout: number | null = null;
+/**
+ * Layer ids with an `addData` replay in flight, from project restore or from
+ * replayVectorControlLayerById.
+ *
+ * `control.getLayer(id)` cannot serve as the guard on its own: the control only
+ * registers a layer once its data has loaded, so during that window an id looks
+ * absent to everyone. A refresh tick landing mid-restore would then re-add a
+ * layer restore is already loading, costing a redundant download and a
+ * duplicate-id throw. Claiming the id for the whole replay closes that window.
+ */
+const replayingLayerIds = new Set<string>();
+
+/**
+ * Layers whose replay failed (a download error, an unreadable source). They are
+ * kept in the project rather than pruned by the closing sync: a feed that was
+ * briefly unreachable must not cost the user their layers.
+ *
+ * Module-scoped for the same reason `replayingLayerIds` is. Overlapping restore
+ * passes divide the layers between them — the claim above makes each id the
+ * property of exactly one pass — but every pass ends with its own
+ * `syncVectorLayersToStore`, and the *last* one to run has the final say, since
+ * the suspension counter only clears once all of them have resumed. A call-local
+ * set would leave that final sync knowing only its own pass's failures and
+ * pruning its sibling's, which is precisely the loss this restore path exists to
+ * prevent.
+ */
+const failedLayerIds = new Set<string>();
+
+/**
+ * Claims `id` for the duration of a replay so nothing else re-adds the same
+ * layer while it loads.
+ *
+ * @param id - The layer id being replayed.
+ * @param replay - The in-flight replay promise.
+ * @returns The same promise, with the claim released once it settles.
+ */
+function trackReplay(id: string, replay: Promise<unknown>): Promise<unknown> {
+  replayingLayerIds.add(id);
+  // A fresh attempt supersedes any earlier verdict for this id, so a refresh
+  // that succeeds clears the mark a previous failure left behind. Only this
+  // replay's own onError can put it back.
+  failedLayerIds.delete(id);
+  return replay.finally(() => replayingLayerIds.delete(id));
+}
 /** One KML/KMZ file handed to the host importer. */
 export interface KmlFileImport {
   file: File;
@@ -145,10 +203,7 @@ export function openVectorLayerPanel(app: GeoLibreAppAPI): void {
         wireDesktopFilePicker(control, app);
         wireKmlFileImporter(control);
       } catch (error) {
-        console.error(
-          "[GeoLibre] Failed to open the vector layer panel",
-          error,
-        );
+        console.error("[GeoLibre] Failed to open the vector layer panel", error);
       }
     }, 0);
   })().catch((error) => {
@@ -186,11 +241,23 @@ export function closeVectorLayerPanel(app: GeoLibreAppAPI): void {
  * @param id - The store/control layer id.
  * @returns The refreshed layer info, or undefined.
  */
-export async function reloadVectorControlLayer(
-  id: string,
-): Promise<VectorLayerInfo | undefined> {
+export async function reloadVectorControlLayer(id: string): Promise<VectorLayerInfo | undefined> {
   if (!vectorControl) return undefined;
   return vectorControl.reloadLayer(id);
+}
+
+/**
+ * Reads one Add Vector Layer attribute without materializing tiled geometry.
+ *
+ * @param id The store/control layer id.
+ * @param property The attribute field name.
+ * @returns Non-null field values, or null when the control cannot read them.
+ */
+export async function getVectorLayerPropertyValues(
+  id: string,
+  property: string,
+): Promise<unknown[] | null> {
+  return vectorControl?.getLayerPropertyValues(id, property) ?? null;
 }
 
 /**
@@ -204,9 +271,7 @@ export async function reloadVectorControlLayer(
  * @param app - The GeoLibre app API.
  */
 export function restoreVectorLayers(app: GeoLibreAppAPI): void {
-  const hasVectorLayers = useAppStore
-    .getState()
-    .layers.some(isVectorControlStoreLayer);
+  const hasVectorLayers = useAppStore.getState().layers.some(isVectorControlStoreLayer);
   if (!hasVectorLayers && !vectorControl) return;
 
   void (async () => {
@@ -223,9 +288,7 @@ export function restoreVectorLayers(app: GeoLibreAppAPI): void {
     );
 
     const pending: Promise<unknown>[] = [];
-    const panelCollapsed = vectorPanelCollapsedFromLayers(
-      useAppStore.getState().layers,
-    );
+    const panelCollapsed = vectorPanelCollapsedFromLayers(useAppStore.getState().layers);
     // Unlike maplibre-gl-raster (whose addRaster registers the raster
     // synchronously before loading), VectorControl.addData only adds a
     // layer to its list after the data has loaded, so each layeradded
@@ -254,16 +317,30 @@ export function restoreVectorLayers(app: GeoLibreAppAPI): void {
         if (!storeLayerIds.has(info.id)) control.removeLayer(info.id);
       }
 
+      const restoredGroups = new Map(
+        useAppStore.getState().layerGroups.map((group) => [group.id, group] as const),
+      );
       for (const layer of useAppStore.getState().layers) {
         if (!isVectorControlStoreLayer(layer)) continue;
-        if (control.getLayer(layer.id)) continue;
+        // Project loading can invoke this restore pass more than once before
+        // the first pass finishes. addData does not expose the layer through
+        // getLayer until its async ingest completes, so getLayer alone lets the
+        // second pass replay the same id and race the first when adding its
+        // MapLibre source ("Source ... already exists"). The shared claim also
+        // blocks refresh replays for the same in-flight id.
+        if (control.getLayer(layer.id) || replayingLayerIds.has(layer.id)) continue;
 
         const url =
-          typeof layer.source.url === "string" && layer.source.url
-            ? layer.source.url
-            : undefined;
+          typeof layer.source.url === "string" && layer.source.url ? layer.source.url : undefined;
         if (url) {
-          pending.push(replayVectorLayer(control, layer, url));
+          pending.push(
+            trackReplay(
+              layer.id,
+              replayVectorLayer(control, layer, url, restoredGroups, {
+                onError: () => failedLayerIds.add(layer.id),
+              }),
+            ),
+          );
           continue;
         }
 
@@ -286,31 +363,40 @@ export function restoreVectorLayers(app: GeoLibreAppAPI): void {
             : undefined;
         if (localPath && app.readLocalVectorFile) {
           pending.push(
-            app
-              .readLocalVectorFile(localPath)
-              .then((file) => {
-                if (!file) {
-                  // The file moved or was deleted since the project was saved.
-                  console.info(
-                    `[GeoLibre] Vector layer "${layer.name}" could not be re-read from "${localPath}"; removing it.`,
-                  );
+            trackReplay(
+              layer.id,
+              app
+                .readLocalVectorFile(localPath)
+                .then((file) => {
+                  if (!file) {
+                    // The file moved or was deleted since the project was saved.
+                    console.info(
+                      `[GeoLibre] Vector layer "${layer.name}" could not be re-read from "${localPath}"; removing it.`,
+                    );
+                    useAppStore.getState().removeLayer(layer.id);
+                    return undefined;
+                  }
+                  const source = file.nativeData
+                    ? nativeGeoJsonFile(file.file, file.nativeData)
+                    : file.file;
+                  return replayVectorLayer(control, layer, source, restoredGroups, {
+                    companionFiles: file.nativeData ? undefined : file.companionFiles,
+                    localPath,
+                    // The file was read, so the layer's source still exists and
+                    // the failure was in the load. Preserve it like the URL and
+                    // embedded branches; reopening the project re-reads the same
+                    // path and can succeed.
+                    onError: () => failedLayerIds.add(layer.id),
+                  });
+                })
+                // Only a failed read reaches here: replayVectorLayer settles its
+                // own rejection. A file that cannot be read is genuinely gone,
+                // which is the one case that still drops the layer.
+                .catch((error) => {
+                  console.error(`[GeoLibre] Failed to read vector layer "${layer.name}"`, error);
                   useAppStore.getState().removeLayer(layer.id);
-                  return undefined;
-                }
-                return replayVectorLayer(control, layer, file.file, {
-                  companionFiles: file.companionFiles,
-                  localPath,
-                });
-              })
-              .catch((error) => {
-                console.error(
-                  `[GeoLibre] Failed to restore vector layer "${layer.name}"`,
-                  error,
-                );
-                // Consistent with the missing-file case above: drop the layer
-                // rather than leave a zombie panel entry with no map output.
-                useAppStore.getState().removeLayer(layer.id);
-              }),
+                }),
+            ),
           );
           continue;
         }
@@ -319,11 +405,16 @@ export function restoreVectorLayers(app: GeoLibreAppAPI): void {
         // Replay them directly (re-ingesting tiles when that was the render
         // mode); the restored layer becomes data-backed and re-embeds on the
         // next save.
-        const embedded = readEmbeddedVectorGeoJSON(
-          layer.metadata.embeddedGeoJSON,
-        );
+        const embedded = readEmbeddedVectorGeoJSON(layer.metadata.embeddedGeoJSON);
         if (embedded) {
-          pending.push(replayVectorLayer(control, layer, embedded));
+          pending.push(
+            trackReplay(
+              layer.id,
+              replayVectorLayer(control, layer, embedded, restoredGroups, {
+                onError: () => failedLayerIds.add(layer.id),
+              }),
+            ),
+          );
           continue;
         }
 
@@ -354,7 +445,14 @@ export function restoreVectorLayers(app: GeoLibreAppAPI): void {
         // A control torn down mid-restore (map reinitialisation) must not
         // let this stale callback rewrite layers owned by its successor.
         if (control !== vectorControl) return;
-        syncVectorLayersToStore(control);
+        syncVectorLayersToStore(control, { preserveLayerIds: failedLayerIds });
+        // The set outlives this call now, so drop ids the store no longer knows
+        // about (a project closed, a layer the user deleted). Preserving a
+        // stale id is harmless to the sync, but keeping it forever is a leak.
+        const liveIds = new Set(useAppStore.getState().layers.map((layer) => layer.id));
+        for (const id of failedLayerIds) {
+          if (!liveIds.has(id)) failedLayerIds.delete(id);
+        }
       }, 0);
     });
   })().catch((error) => {
@@ -375,34 +473,115 @@ export function restoreVectorLayers(app: GeoLibreAppAPI): void {
  * @param control - The vector control to add the layer to.
  * @param layer - The saved store layer being restored.
  * @param source - The URL, File, or FeatureCollection to load the data from.
- * @param options - The shapefile sidecars and/or absolute path of a File source.
+ * @param groups - Restored groups used to compute the layer's effective state.
+ * @param options - The shapefile sidecars and/or absolute path of a File source,
+ *   plus an optional `onError` hook so a caller can record which layers failed
+ *   without losing the "never rejects" contract this function's callers rely on.
  * @returns A promise that settles when the layer has loaded or failed.
  */
-function replayVectorLayer(
+export function replayVectorLayer(
   control: VectorControl,
   layer: GeoLibreLayer,
   source: string | File | FeatureCollection,
-  options: { companionFiles?: File[]; localPath?: string } = {},
+  groups: ReadonlyMap<string, LayerGroup>,
+  options: {
+    companionFiles?: File[];
+    localPath?: string;
+    onError?: (error: unknown) => void;
+  } = {},
 ): Promise<unknown> {
+  const effective = effectiveLayerRenderState(layer, groups);
+  // Record the folded values before addData so its first layer event is treated
+  // as a restore echo rather than as an edit to the child's own state.
+  rememberControlVectorRenderState(layer.id, effective);
   return control
     .addData(source, {
       ...savedVectorState(layer),
-      ...(options.companionFiles?.length
-        ? { companionFiles: options.companionFiles }
-        : {}),
+      ...(options.companionFiles?.length ? { companionFiles: options.companionFiles } : {}),
       ...(options.localPath ? { sourcePath: options.localPath } : {}),
       fitBounds: false,
       id: layer.id,
       name: layer.name,
-      opacity: layer.opacity,
-      visible: layer.visible,
+      opacity: effective.opacity,
+      visible: effective.visible,
     })
     .catch((error) => {
-      console.error(
-        `[GeoLibre] Failed to restore vector layer "${layer.name}"`,
-        error,
-      );
+      console.error(`[GeoLibre] Failed to restore vector layer "${layer.name}"`, error);
+      options.onError?.(error);
     });
+}
+
+/**
+ * Re-adds a saved vector layer the control does not currently hold, so a layer
+ * whose restore failed can be recovered without the user rebuilding it.
+ *
+ * Restore keeps such a layer in the project (see
+ * {@link syncVectorLayersToStore}'s `preserveLayerIds`) but the control has no
+ * record of it, which is why {@link reloadVectorControlLayer} returns undefined
+ * for it. The layer panel's refresh (the button and the auto-refresh tick)
+ * falls through to this, so the next successful fetch brings the layer back.
+ *
+ * URL-backed only. A local-file layer needs the host's filesystem reader, which
+ * lives with the restore path rather than in this module, and an embedded-source
+ * layer never reaches here: refresh is gated on `isVectorControlRefreshLayer`,
+ * which requires an HTTP URL. Such a layer is still preserved by restore, it
+ * just has nothing to re-fetch.
+ *
+ * @param id - The store layer id to replay.
+ * @returns The replayed layer info, or undefined when the control is
+ *   unavailable, the layer is unknown, already present, already being replayed,
+ *   or has no URL.
+ */
+export async function replayVectorControlLayerById(
+  id: string,
+): Promise<VectorLayerInfo | undefined> {
+  const control = vectorControl;
+  if (!control) return undefined;
+  // Already held by the control: reloadLayer is the right call, not a re-add
+  // (which would throw on the duplicate id).
+  if (control.getLayer(id)) return undefined;
+  // The getLayer check above cannot hold across the await below, because addData
+  // only registers the layer once its data has loaded. Two concurrent calls for
+  // one id would both pass it and the second would throw on the duplicate id, so
+  // the id is claimed for the whole replay.
+  if (replayingLayerIds.has(id)) return undefined;
+
+  const state = useAppStore.getState();
+  const layer = state.layers.find((candidate) => candidate.id === id);
+  if (!layer || !isVectorControlStoreLayer(layer)) return undefined;
+
+  const url = typeof layer.source.url === "string" && layer.source.url ? layer.source.url : null;
+  if (!url) return undefined;
+
+  const groups = new Map(state.layerGroups.map((group) => [group.id, group] as const));
+  // Held across the replay for the same reason restore holds it: addData only
+  // registers the layer once loaded, so an intermediate sync would diff a
+  // control that does not yet have it and prune it right back out.
+  replayingLayerIds.add(id);
+  suspendVectorStoreSync();
+  try {
+    await replayVectorLayer(control, layer, url, groups);
+  } finally {
+    resumeVectorStoreSync();
+    replayingLayerIds.delete(id);
+  }
+  // A control torn down mid-replay must not have its successor's layers
+  // rewritten from this stale callback.
+  if (control !== vectorControl) return undefined;
+  // Additive only. Recovering one layer says nothing about the others: the rest
+  // of a multi-layer container may still be waiting for their own replay, and
+  // the plain diff would read their absence from the control as a removal and
+  // delete them, which is the very loss this recovery path exists to undo.
+  const controlIds = new Set(control.getLayers().map((info) => info.id));
+  const stillMissing = new Set(
+    useAppStore
+      .getState()
+      .layers.filter((candidate) => isVectorControlStoreLayer(candidate))
+      .map((candidate) => candidate.id)
+      .filter((candidateId) => !controlIds.has(candidateId)),
+  );
+  syncVectorLayersToStore(control, { preserveLayerIds: stillMissing });
+  return control.getLayer(id);
 }
 
 /**
@@ -429,26 +608,21 @@ export async function materializeEmbeddableVectorLayers(
   // Materialize the layers concurrently: each getLayerGeoJSON may query DuckDB,
   // so serial awaits would add up for a project with several embeddable layers.
   const entries = await Promise.allSettled(
-    layers
-      .filter(isEmbeddableLocalVectorLayer)
-      .map(async (layer) => {
-        const collection = await control.getLayerGeoJSON(layer.id);
-        // Embed any readable collection, including an empty one: a layer loaded
-        // from an empty file is still valid project state that would otherwise
-        // be dropped on reopen. null means the data is not held locally.
-        return collection && Array.isArray(collection.features)
-          ? ([layer.id, collection] as const)
-          : null;
-      }),
+    layers.filter(isEmbeddableLocalVectorLayer).map(async (layer) => {
+      const collection = await control.getLayerGeoJSON(layer.id);
+      // Embed any readable collection, including an empty one: a layer loaded
+      // from an empty file is still valid project state that would otherwise
+      // be dropped on reopen. null means the data is not held locally.
+      return collection && Array.isArray(collection.features)
+        ? ([layer.id, collection] as const)
+        : null;
+    }),
   );
   for (const entry of entries) {
     if (entry.status === "fulfilled" && entry.value) {
       result.set(entry.value[0], entry.value[1]);
     } else if (entry.status === "rejected") {
-      console.error(
-        "[GeoLibre] Could not read data for a vector layer to embed it",
-        entry.reason,
-      );
+      console.error("[GeoLibre] Could not read data for a vector layer to embed it", entry.reason);
     }
   }
   return result;
@@ -485,12 +659,10 @@ function readEmbeddedVectorGeoJSON(value: unknown): FeatureCollection | null {
   return value as FeatureCollection;
 }
 
-async function ensureVectorControl(
-  app: GeoLibreAppAPI,
-): Promise<VectorControl | null> {
+async function ensureVectorControl(app: GeoLibreAppAPI): Promise<VectorControl | null> {
   const VectorControlClass = await getVectorControlClass();
 
-  vectorControl ??= createVectorControl(VectorControlClass);
+  vectorControl ??= createVectorControl(VectorControlClass, app);
 
   if (!vectorControlMounted) {
     const added = app.addMapControl(vectorControl, vectorControlPosition);
@@ -509,6 +681,37 @@ async function ensureVectorControl(
   }
 
   return vectorControl;
+}
+
+/**
+ * Loads a remote vector dataset through the Add Vector Layer control, without
+ * opening its panel.
+ *
+ * This is the programmatic door onto everything the panel can already read —
+ * GeoParquet, GeoJSON, FlatGeobuf, GeoPackage, CSV, and the other GDAL-readable
+ * formats — including the DuckDB-WASM conversion, the dynamic-tile render path
+ * for large datasets, and the existing store sync that puts the result in the
+ * Layers panel and the project file. Callers that discover a vector URL
+ * elsewhere in the UI (the Source Cooperative browser, say) should come through
+ * here rather than re-implementing any of that.
+ *
+ * The control mounts hidden (see {@link ensureVectorControl}), so this adds a
+ * layer without surfacing a map button the user did not ask for.
+ *
+ * @param app - The GeoLibre app API.
+ * @param url - An http(s) URL to a vector dataset.
+ * @param options - Display name, fitBounds, explicit format, ...
+ * @returns True when the layer was added.
+ */
+export async function addVectorLayerFromUrl(
+  app: GeoLibreAppAPI,
+  url: string,
+  options: VectorLayerOptions = {},
+): Promise<boolean> {
+  const control = await ensureVectorControl(app);
+  if (!control) return false;
+  await control.addData(url, options);
+  return true;
 }
 
 function getVectorControlClass(): Promise<VectorControlConstructor> {
@@ -530,6 +733,7 @@ function getVectorControlClass(): Promise<VectorControlConstructor> {
 
 function createVectorControl(
   VectorControlClass: VectorControlConstructor,
+  app: GeoLibreAppAPI,
 ): VectorControl {
   const control = new VectorControlClass({
     className: "geolibre-vector-control",
@@ -545,9 +749,21 @@ function createVectorControl(
     // The panel doubles as the Add Vector Layer dialog, so it stays open
     // until the user closes it; clicking the map must not collapse it.
     closeOnOutsideClick: false,
+    // Desktop routes arbitrary remote datasets through its guarded native
+    // downloader, bypassing WebView CORS. The browser build leaves this unset.
+    ...(app.fetchVectorUrl ? { urlLoader: app.fetchVectorUrl } : {}),
     // Skip the remote spatial-extension install in offline/sandboxed
     // environments when a local extension path is configured.
     spatialExtensionPath: getSpatialExtensionPath(),
+    // Switch to the tiled path at the same numbers the drag-and-drop loaders
+    // use to switch to DuckDB (`duckdb-vector-guard.ts`). The control's own
+    // defaults are 25 MB / 50k, so without this the same file behaves
+    // differently depending on whether it was dropped on the map or added
+    // through this panel, and no single limit could be documented.
+    autoThreshold: {
+      featureCount: DUCKDB_VECTOR_FEATURE_WARN_COUNT,
+      byteSize: DUCKDB_VECTOR_ROUTE_BYTES,
+    },
   });
 
   for (const event of ["layeradded", "layerremoved", "layerupdated"] as const) {
@@ -557,8 +773,7 @@ function createVectorControl(
   // Safe: expand()/collapse() delegate to toggle(), which flips
   // _state.collapsed BEFORE emitting the event (verified against v0.5.1) --
   // re-verify that ordering when bumping the dependency.
-  const panelStateSyncHandler: VectorControlEventHandler = () =>
-    syncVectorLayersToStore(control);
+  const panelStateSyncHandler: VectorControlEventHandler = () => syncVectorLayersToStore(control);
   control.on("expand", panelStateSyncHandler);
   control.on("collapse", panelStateSyncHandler);
   wireVectorStoreSync(control);
@@ -618,10 +833,7 @@ function hideVectorControl(control: VectorControl): void {
   if (container) container.style.display = "none";
 }
 
-function applyRestoredVectorPanelState(
-  control: VectorControl,
-  panelCollapsed: boolean,
-): void {
+function applyRestoredVectorPanelState(control: VectorControl, panelCollapsed: boolean): void {
   // A restore queued by an earlier project load must not fire after this
   // one has applied a different panel state to the same control, and a
   // pending openVectorLayerPanel defer must not re-show a panel the
@@ -664,8 +876,7 @@ function vectorPanelCollapsedFromLayers(
 ): boolean {
   const panelCollapsed = layers.find(
     (layer) =>
-      isVectorControlStoreLayer(layer) &&
-      typeof layer.metadata.panelCollapsed === "boolean",
+      isVectorControlStoreLayer(layer) && typeof layer.metadata.panelCollapsed === "boolean",
   )?.metadata.panelCollapsed;
   // Projects without this UI state stay collapsed so loading a vector
   // project does not unexpectedly open the Add Data panel.
@@ -687,9 +898,7 @@ function applyVectorPanelClass(control: VectorControl): void {
 // keep rendering; the layer panel still manages them.
 function wireVectorCloseButton(control: VectorControl): void {
   const panel = (control as unknown as VectorControlInternals)._panel;
-  const closeButton = panel?.querySelector<HTMLElement>(
-    ".vector-control-close",
-  );
+  const closeButton = panel?.querySelector<HTMLElement>(".vector-control-close");
   if (!closeButton || closeButton.dataset.geolibreCloseWired === "true") {
     return;
   }
@@ -706,16 +915,11 @@ function wireVectorCloseButton(control: VectorControl): void {
 // the web, where `pickVectorFilesWithSidecars` is absent and the native input is
 // the only way to read files. The selector mirrors the upstream panel's file
 // input (verified against v0.5.1) -- re-verify when bumping the dependency.
-function wireDesktopFilePicker(
-  control: VectorControl,
-  app: GeoLibreAppAPI,
-): void {
+function wireDesktopFilePicker(control: VectorControl, app: GeoLibreAppAPI): void {
   const pickFiles = app.pickVectorFilesWithSidecars;
   if (!pickFiles) return;
   const panel = (control as unknown as VectorControlInternals)._panel;
-  const fileInput = panel?.querySelector<HTMLInputElement>(
-    'input[type="file"]',
-  );
+  const fileInput = panel?.querySelector<HTMLInputElement>('input[type="file"]');
   if (!fileInput || fileInput.dataset.geolibreDesktopPickerWired === "true") {
     return;
   }
@@ -737,10 +941,7 @@ function wireDesktopFilePicker(
         }
         await addPickedVectorFiles(control, picked);
       } catch (error) {
-        console.error(
-          "[GeoLibre] Failed to load vector files from the desktop picker",
-          error,
-        );
+        console.error("[GeoLibre] Failed to load vector files from the desktop picker", error);
       }
     })();
   });
@@ -793,6 +994,11 @@ export type VectorDataSink = Pick<VectorControl, "addData">;
  * loose `.shp` loads as a single layer. Each file is added independently; an
  * empty list (e.g. a cancelled dialog) loads nothing.
  *
+ * A multi-layer container (a GeoPackage with several feature tables) opens the
+ * control's layer picker. Dismissing it rejects that file's load as a
+ * cancellation, which is skipped here rather than aborting the files behind it:
+ * declining one container must not silently drop the rest of the selection.
+ *
  * @param control - The vector control (or anything with `addData`).
  * @param picked - The picked files (empty when the dialog was cancelled).
  */
@@ -800,10 +1006,32 @@ export async function addPickedVectorFiles(
   control: VectorDataSink,
   picked: GeoLibrePickedVectorFile[],
 ): Promise<void> {
-  for (const { file, companionFiles, sourcePath } of picked) {
-    await control.addData(file, {
-      ...(companionFiles.length > 0 ? { companionFiles } : {}),
-      ...(sourcePath ? { sourcePath } : {}),
-    });
+  for (const { file, companionFiles, sourcePath, nativeData } of picked) {
+    const source = nativeData ? nativeGeoJsonFile(file, nativeData) : file;
+    try {
+      await control.addData(source, {
+        ...(nativeData ? { name: file.name } : {}),
+        ...(!nativeData && companionFiles.length > 0 ? { companionFiles } : {}),
+        ...(sourcePath ? { sourcePath } : {}),
+      });
+    } catch (error) {
+      // A real load failure still propagates (the caller logs it, and the
+      // control already surfaced it through its 'error' event).
+      if (!isVectorLayerSelectionCancelled(error)) throw error;
+    }
   }
+}
+
+function nativeGeoJsonFile(file: File, data: FeatureCollection): File {
+  return new File([JSON.stringify(data)], `${fileBaseName(file.name)}.geojson`, {
+    type: "application/geo+json",
+  });
+}
+
+function fileBaseName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "vector";
+  const lastSlash = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const fileName = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+  return fileName.replace(/\.[^.]+$/, "") || "vector";
 }

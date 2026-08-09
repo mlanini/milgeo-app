@@ -1,11 +1,33 @@
 export * from "./types";
+export * from "./diagram";
+export * from "./marker-shape";
+export * from "./hyperlink";
+export * from "./photo";
+export * from "./ellipsoids";
+export * from "./geojson-z";
 export * from "./color-ramp";
 export * from "./paths";
 export * from "./routing";
 export * from "./vector-color";
+export * from "./expressions";
+export * from "./external-native-paint";
+export * from "./attribute-form";
+export * from "./joins";
+export * from "./virtual-fields";
+export * from "./selection";
+export * from "./scale-units";
 export * from "./project";
+export * from "./style-library";
+export * from "./layer-library";
+export * from "./layer-defaults";
+export * from "./layer-style-clipboard";
 export * from "./layer-groups";
 export { createSampleStoryMap } from "./storymap-sample";
+export {
+  scrubWidgetsForRemovedLayers,
+  scrubCommentsForRemovedLayers,
+  scrubLegendForRemovedLayers,
+} from "./layer-ref-scrub";
 export {
   serializeStoryMapJson,
   parseStoryMapJson,
@@ -14,13 +36,18 @@ export {
 } from "./storymap-io";
 export {
   clearHistory,
+  canRedoProjectRestore,
+  canUndoProjectRestore,
   DEFAULT_COLLABORATION_STATE,
   projectPathLabel,
+  registerProjectRestoreHistory,
+  subscribeProjectRestoreHistory,
   redo,
   undo,
   useAppStore,
   type AppState,
   type ConversionToolKind,
+  type GpsStatusFix,
   type NetworkToolKind,
   type RasterToolKind,
   type StatisticsToolKind,
@@ -38,6 +65,8 @@ export {
   DEFAULT_REVERSE_GEOCODE_ENDPOINT,
   NOMINATIM_PUBLIC_HOST,
   NOMINATIM_MIN_INTERVAL_MS,
+  CARTOCIUDAD_PUBLIC_HOST,
+  CARTOCIUDAD_MIN_INTERVAL_MS,
   PUBLIC_GEOCODE_ROW_CAP,
   GEOCODE_LAT_KEY,
   GEOCODE_LON_KEY,
@@ -65,6 +94,7 @@ export {
   csvRowsToGeocodeRequests,
   geocodeForward,
   geocodeReverse,
+  setGeocodingFetch,
   type GeocoderConfig,
   type GeocodingProvider,
   type GeocodingProviderId,
@@ -77,9 +107,31 @@ export {
   type ReverseGeocodeDisplay,
 } from "./geocoding";
 export {
+  getCesiumIonToken,
+  getGoogleMapsApiKey,
+  getMapboxAccessToken,
   getProtomapsApiKey,
   getProtomapsStyleUrl,
   getRuntimeEnvironment,
   getSpatialExtensionPath,
 } from "./runtime-env";
+export { isIpadDesktopUserAgent } from "./platform";
+export {
+  GOOGLE_MAPS_API_KEY_HEADER,
+  googleMapsApiKeyHeaderValue,
+  isGooglePhotorealisticTilesetUrl,
+  nonEmptyRecord,
+  persistedThreeDTilesRequestHeaders,
+  resolveThreeDTilesRequestHeaders,
+  stripGoogleMapsApiKeyHeader,
+} from "./three-d-tiles";
+export {
+  PROJECT_CREDENTIAL_FIELDS,
+  PUBLISHABLE_PLUGIN_SETTINGS,
+  redactCredentials,
+  redactProjectCredentials,
+  redactUrlCredentials,
+  type CredentialRedactionResult,
+} from "./credentials";
+export { excludeHiddenFieldsFromGeojson, excludeHiddenFieldsFromProject } from "./visibility";
 export * from "./mil-types";

@@ -1,7 +1,5 @@
-import type {
-  GeoLibreRightPanelDock,
-  GeoLibreRightPanelRegistration,
-} from "./types";
+import type { GeoLibreRightPanelDock, GeoLibreRightPanelRegistration } from "./types";
+import { PanelTitleResolver } from "./panel-title";
 
 /**
  * Imperative registry for plugin-owned dockable side panels.
@@ -55,12 +53,10 @@ const ALL_DOCKS: readonly RightPanelDock[] = Object.freeze([
   "replace-layers",
 ] as const);
 
-const DEFAULT_DOCK: RightPanelDock = "right-of-style";
+const DEFAULT_DOCK: RightPanelDock = "replace-style";
 
 function normalizeDock(dock: unknown): RightPanelDock {
-  return ALL_DOCKS.includes(dock as RightPanelDock)
-    ? (dock as RightPanelDock)
-    : DEFAULT_DOCK;
+  return ALL_DOCKS.includes(dock as RightPanelDock) ? (dock as RightPanelDock) : DEFAULT_DOCK;
 }
 
 /**
@@ -74,16 +70,27 @@ export interface RightPanelSnapshot {
   /** Whether the active panel is collapsed to its rail. */
   collapsed: boolean;
   /**
-   * Where the active panel docks, or null when none is open. Defaults to the
-   * panel's declared `dock` ("far-right"); the user steps it with the panel's
-   * move buttons (or a plugin via {@link setActiveRightPanelDock}).
+   * Where the active panel docks, or null when none is open. A panel already
+   * enabled in a rail reopens at its remembered dock ({@link panelDocks});
+   * otherwise it starts from its declared `dock` (the shared Style rail by
+   * default). The user steps it with the panel's move buttons (or a plugin via
+   * {@link setActiveRightPanelDock}).
    */
   dock: RightPanelDock | null;
+  /** Panels enabled in their dock rails, including inactive displaced panels. */
+  visibleIds: readonly string[];
+  /** Last chosen dock for each visible panel. */
+  panelDocks: Readonly<Record<string, RightPanelDock>>;
   /** Monotonic counter bumped on every registry mutation. */
   version: number;
 }
 
 const registry = new Map<string, GeoLibreRightPanelRegistration>();
+// Title resolution (string/getter normalization, throw/empty fallback, and the
+// per-id warning dedup the accessors rely on because they are called unmemoized
+// on every render) is shared with the floating-panel registry via
+// PanelTitleResolver. Each registry owns its own instance.
+const titleResolver = new PanelTitleResolver<GeoLibreRightPanelRegistration>("Right panel");
 const listeners = new Set<() => void>();
 
 let activeId: string | null = null;
@@ -91,17 +98,28 @@ let collapsed = false;
 // Where the active panel currently docks; reset when the active panel changes
 // so each panel starts from its own declared `dock`.
 let activeDock: RightPanelDock | null = null;
+const visibleIds = new Set<string>();
+const panelDocks = new Map<string, RightPanelDock>();
 let version = 0;
 let snapshot: RightPanelSnapshot = {
   activeId: null,
   collapsed: false,
   dock: null,
+  visibleIds: [],
+  panelDocks: {},
   version: 0,
 };
 
 function emit(): void {
   version += 1;
-  snapshot = { activeId, collapsed, dock: activeDock, version };
+  snapshot = {
+    activeId,
+    collapsed,
+    dock: activeDock,
+    visibleIds: [...visibleIds],
+    panelDocks: Object.fromEntries(panelDocks),
+    version,
+  };
   for (const listener of listeners) {
     listener();
   }
@@ -126,20 +144,23 @@ function runHook(
  * closes the panel (if active) and removes it from the registry; a plugin
  * should call it from its `deactivate` hook.
  */
-export function registerRightPanel(
-  panel: GeoLibreRightPanelRegistration,
-): () => void {
+export function registerRightPanel(panel: GeoLibreRightPanelRegistration): () => void {
   if (!panel || typeof panel.id !== "string" || panel.id.length === 0) {
     throw new Error("registerRightPanel requires a panel with a non-empty id.");
   }
-  if (typeof panel.title !== "string" || panel.title.length === 0) {
+  if (typeof panel.title !== "string" && typeof panel.title !== "function") {
+    throw new Error(
+      `Right panel "${panel.id}" must have a non-empty title string or a title getter function.`,
+    );
+  }
+  if (typeof panel.title === "string" && panel.title.length === 0) {
     throw new Error(`Right panel "${panel.id}" must have a non-empty title.`);
   }
   if (typeof panel.render !== "function") {
-    throw new Error(
-      `Right panel "${panel.id}" must provide a render(container) function.`,
-    );
+    throw new Error(`Right panel "${panel.id}" must provide a render(container) function.`);
   }
+  // Normalize title to a resolver so both strings and getters update live.
+  titleResolver.set(panel);
   // Re-registering an id replaces it (a plugin may rebuild its panel). The
   // returned disposer only removes the panel while this exact registration is
   // still the current one, so a stale disposer cannot evict a newer panel that
@@ -147,7 +168,9 @@ export function registerRightPanel(
   registry.set(panel.id, panel);
   emit();
   return () => {
-    if (registry.get(panel.id) === panel) unregisterRightPanel(panel.id);
+    if (registry.get(panel.id) === panel) {
+      unregisterRightPanel(panel.id);
+    }
   };
 }
 
@@ -166,7 +189,10 @@ export function unregisterRightPanel(id: string): void {
     collapsed = false;
     activeDock = null;
   }
+  visibleIds.delete(id);
+  panelDocks.delete(id);
   registry.delete(id);
+  titleResolver.delete(id);
   emit();
   if (wasActive) runHook(id, "onClose", panel.onClose);
 }
@@ -183,6 +209,9 @@ export function openRightPanel(id: string): boolean {
     return false;
   }
   if (activeId === id && !collapsed) return true;
+  const wasVisible = visibleIds.has(id);
+  visibleIds.add(id);
+  if (!wasVisible) panelDocks.set(id, normalizeDock(panel.dock));
   const wasInactive = activeId !== id;
   // A different panel taking over displaces the current owner; release it
   // (onClose) so a plugin can free resources allocated for its panel.
@@ -192,8 +221,10 @@ export function openRightPanel(id: string): boolean {
   if (displacedId !== null) {
     runHook(displacedId, "onClose", registry.get(displacedId)?.onClose);
   }
-  // A new panel starts from its own declared dock, not the previous user move.
-  if (wasInactive) activeDock = normalizeDock(panel.dock);
+  // A panel taking over restores the dock it was last at (set just above from
+  // its declared `dock` the first time it becomes visible), not the dock the
+  // panel it displaced happened to be moved to.
+  if (wasInactive) activeDock = panelDocks.get(id) ?? normalizeDock(panel.dock);
   activeId = id;
   collapsed = false;
   emit();
@@ -219,7 +250,12 @@ export function collapseRightPanel(id: string): void {
  * Close the active panel. No-op unless `id` is active.
  */
 export function closeRightPanel(id: string): void {
-  if (activeId !== id) return;
+  if (!visibleIds.delete(id)) return;
+  panelDocks.delete(id);
+  if (activeId !== id) {
+    emit();
+    return;
+  }
   activeId = null;
   collapsed = false;
   activeDock = null;
@@ -235,14 +271,11 @@ export function closeRightPanel(id: string): void {
  * is unknown, or the panel is already there.
  */
 export function setActiveRightPanelDock(dock: RightPanelDock): void {
-  if (
-    activeId === null ||
-    !ALL_DOCKS.includes(dock) ||
-    activeDock === dock
-  ) {
+  if (activeId === null || !ALL_DOCKS.includes(dock) || activeDock === dock) {
     return;
   }
   activeDock = dock;
+  panelDocks.set(activeId, dock);
   emit();
 }
 
@@ -259,6 +292,7 @@ export function moveActiveRightPanelDock(direction: "left" | "right"): void {
   const nextIndex = direction === "left" ? index - 1 : index + 1;
   if (nextIndex < 0 || nextIndex >= RIGHT_PANEL_DOCKS.length) return;
   activeDock = RIGHT_PANEL_DOCKS[nextIndex];
+  panelDocks.set(activeId, activeDock);
   emit();
 }
 
@@ -277,16 +311,34 @@ export function isRightPanelCollapsed(): boolean {
   return collapsed;
 }
 
-/** Look up a registered right panel by id. */
-export function getRightPanel(
-  id: string,
-): GeoLibreRightPanelRegistration | undefined {
-  return registry.get(id);
+/** Whether a registered panel is enabled in a dock rail. */
+export function isRightPanelVisible(id: string): boolean {
+  return visibleIds.has(id);
 }
 
-/** All registered right panels, in registration order. */
-export function listRightPanels(): GeoLibreRightPanelRegistration[] {
-  return [...registry.values()];
+/**
+ * Look up a registered right panel by id. Title is always resolved to a string
+ * by re-running the panel's title resolver on every call. The registry does
+ * not itself subscribe to i18n language changes, so live title translation
+ * relies on the consumer re-rendering and re-reading on `languageChanged`;
+ * see the `title` field on {@link GeoLibreRightPanelRegistration} for the full
+ * contract a host must satisfy.
+ */
+export function getRightPanel(
+  id: string,
+): (GeoLibreRightPanelRegistration & { title: string }) | undefined {
+  const panel = registry.get(id);
+  if (!panel) return undefined;
+  return titleResolver.resolve(panel);
+}
+
+/**
+ * All registered right panels, in registration order. Each entry is a shallow
+ * clone with its title resolved to a string, mirroring {@link getRightPanel}
+ * so consumers can read `.title` directly without unwrapping a getter.
+ */
+export function listRightPanels(): (GeoLibreRightPanelRegistration & { title: string })[] {
+  return [...registry.values()].map((panel) => titleResolver.resolve(panel));
 }
 
 /** Current reactive snapshot for `useSyncExternalStore`. */
@@ -308,10 +360,20 @@ export function subscribeRightPanels(listener: () => void): () => void {
  */
 export function __resetRightPanelRegistryForTests(): void {
   registry.clear();
+  titleResolver.clear();
   listeners.clear();
   activeId = null;
   collapsed = false;
   activeDock = null;
+  visibleIds.clear();
+  panelDocks.clear();
   version = 0;
-  snapshot = { activeId: null, collapsed: false, dock: null, version: 0 };
+  snapshot = {
+    activeId: null,
+    collapsed: false,
+    dock: null,
+    visibleIds: [],
+    panelDocks: {},
+    version: 0,
+  };
 }
