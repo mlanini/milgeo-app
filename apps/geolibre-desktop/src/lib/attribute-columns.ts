@@ -130,6 +130,24 @@ export function hiddenColumns(
   return orderColumns(discovered, settings).filter((key) => hidden.has(key));
 }
 
+/**
+ * Infer a stable JS type for each discovered column from the first non-null
+ * value seen across the provided rows.
+ */
+export function inferColumnTypes(
+  rows: readonly (Record<string, unknown> | null | undefined)[],
+): Map<string, string> {
+  const types = new Map<string, string>();
+  for (const properties of rows) {
+    if (!properties) continue;
+    for (const [key, value] of Object.entries(properties)) {
+      if (value == null || types.has(key)) continue;
+      types.set(key, typeof value);
+    }
+  }
+  return types;
+}
+
 // NOTE: renameFieldInGeojson/deleteFieldInGeojson/addFieldInGeojson rewrite every
 // feature's property object synchronously on the main thread. This is fine for
 // typical in-browser GeoJSON sizes but will visibly jank on very large layers

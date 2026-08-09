@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import i18next from "i18next";
+import { IS_MAS_BUILD } from "./build-flags";
 import { isTauri } from "./is-tauri";
 
 /**
@@ -14,22 +16,51 @@ export interface JupyterServerInfo {
   token: string;
 }
 
+let liveServer: JupyterServerInfo | null = null;
+const serverListeners = new Set<(info: JupyterServerInfo | null) => void>();
+
+export function getJupyterServer(): JupyterServerInfo | null {
+  return liveServer;
+}
+
+export function subscribeJupyterServer(
+  listener: (info: JupyterServerInfo | null) => void,
+): () => void {
+  serverListeners.add(listener);
+  listener(liveServer);
+  return () => {
+    serverListeners.delete(listener);
+  };
+}
+
+function setJupyterServer(info: JupyterServerInfo | null): void {
+  liveServer = info;
+  for (const listener of serverListeners) listener(info);
+}
+
 /**
  * Start (or reuse) the desktop JupyterLab server. Desktop-only — the web build
  * embeds the self-hosted JupyterLite site instead.
  */
 export async function startJupyterServer(): Promise<JupyterServerInfo> {
-  assertTauri();
-  return invoke<JupyterServerInfo>("start_jupyter_server");
+  assertJupyterAllowed();
+  const info = await invoke<JupyterServerInfo>("start_jupyter_server");
+  setJupyterServer(info);
+  return info;
 }
 
 /** Stop the desktop JupyterLab server if it is running. */
 export async function stopJupyterServer(): Promise<void> {
-  assertTauri();
+  if (IS_MAS_BUILD) return;
+  assertJupyterAllowed();
   await invoke("stop_jupyter_server");
+  setJupyterServer(null);
 }
 
-function assertTauri(): void {
+function assertJupyterAllowed(): void {
+  if (IS_MAS_BUILD) {
+    throw new Error(i18next.t("masBuild.unavailable"));
+  }
   if (!isTauri()) {
     throw new Error("Running a Jupyter server requires GeoLibre Desktop.");
   }
