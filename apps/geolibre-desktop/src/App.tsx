@@ -1,7 +1,9 @@
-import { WebOnlyShell } from "./components/layout/WebOnlyShell";
+import { DesktopShell } from "./components/layout/DesktopShell";
 import { OnboardingDialog } from "./components/layout/OnboardingDialog";
 import { UpdateNotificationModal } from "./components/layout/UpdateNotificationModal";
 import { useDesktopSettingsPersistence } from "./hooks/useDesktopSettings";
+import { useLayoutOptions } from "./hooks/useLayoutOptions";
+import { useProjectUrlLoader } from "./hooks/useProjectUrlLoader";
 import { useBeforeUnloadGuard } from "./hooks/useBeforeUnloadGuard";
 import { useRecentProjectsPersistence } from "./hooks/useRecentProjectsPersistence";
 import { useRuntimeEnvironmentVariables } from "./hooks/useRuntimeEnvironmentVariables";
@@ -12,7 +14,9 @@ import { useUiProfileBootstrap } from "./hooks/useUiProfileBootstrap";
 import { useUndoRedoShortcuts } from "./hooks/useUndoRedoShortcuts";
 
 export default function App() {
+  const layoutOptions = useLayoutOptions();
   const { themeMode, toggleThemeMode } = useThemeMode();
+  const projectUrlLoadState = useProjectUrlLoader();
   const { showOnboarding, dismissOnboarding } = useUiProfileBootstrap();
   const {
     pending: pendingUpdate,
@@ -28,7 +32,12 @@ export default function App() {
   useBeforeUnloadGuard();
   return (
     <>
-      <WebOnlyShell themeMode={themeMode} onToggleThemeMode={toggleThemeMode} />
+      <DesktopShell
+        layoutOptions={layoutOptions}
+        projectUrlLoadState={projectUrlLoadState}
+        themeMode={themeMode}
+        onToggleThemeMode={toggleThemeMode}
+      />
       <OnboardingDialog open={showOnboarding} onClose={dismissOnboarding} />
       <UpdateNotificationModal
         pending={pendingUpdate}

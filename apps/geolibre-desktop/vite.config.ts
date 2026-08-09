@@ -12,6 +12,7 @@ import { defineConfig, type Plugin } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 import { bundledPlugins } from "./vite-plugins/bundled-plugins";
 import { copyRtlText } from "./vite-plugins/copy-rtl-text";
+import { copyVectorOps } from "./vite-plugins/copy-vector-ops";
 
 const GEOAGENT_BROWSER_BUNDLE = "maplibre-gl-geoagent/dist/browser-";
 const EARTH_ENGINE_CONTROL_BUNDLE = "maplibre-gl-earth-engine/dist/";
@@ -741,6 +742,10 @@ export default defineConfig({
     stripDuckDbWorkerSourcemapPlugin(),
     projectUrlQueryPlugin(),
     bundledPlugins(path.resolve(__dirname, "public/plugins")),
+    copyVectorOps(
+      path.resolve(__dirname, "../../backend/geolibre_server/geolibre_server/vector_ops.py"),
+      path.resolve(__dirname, "src/lib/pyodide/vector_ops.generated.py"),
+    ),
     copyRtlText(
       path.resolve(__dirname, "src/lib/vendor/mapbox-gl-rtl-text.generated.js"),
     ),
