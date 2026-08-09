@@ -685,7 +685,7 @@ function parseKadasMilxLayer(input: ParseKadasMilxInput): {
   const { element, id, name, visible, opacity, groupId, provider } = input;
   if (!isKadasMilxLayer(element, provider)) return { layers: [], hadItems: false };
 
-  const itemElements = Array.from(element.querySelectorAll(":scope > MapItem[name='KadasMilxItem']"));
+  const itemElements = kadasMilxItemElements(element);
   if (itemElements.length === 0) return { layers: [], hadItems: false };
 
   const symbolSize = optionalNumber(element.getAttribute("milx_symbol_size") ?? undefined) ?? 60;
@@ -817,11 +817,26 @@ function parseKadasMilxLayer(input: ParseKadasMilxInput): {
   return { layers: parsedLayers, hadItems: true };
 }
 
+function kadasMilxItemElements(element: Element): Element[] {
+  return Array.from(element.children).filter((child) => {
+    if (child.tagName.toLowerCase() !== "mapitem") return false;
+    const itemName = (child.getAttribute("name") ?? "").trim().toLowerCase();
+    return itemName.startsWith("kadasmilxitem");
+  });
+}
+
 function isKadasMilxLayer(element: Element, provider: string): boolean {
-  if (element.getAttribute("type")?.toLowerCase() !== "plugin") return false;
-  const layerClass = (element.getAttribute("name") ?? "").toLowerCase();
-  const hasMilxItems = element.querySelector(":scope > MapItem[name='KadasMilxItem']") != null;
-  return layerClass === "kadasmilxlayer" || hasMilxItems || provider === "kadasmilx";
+  const layerClass = firstString(
+    element.getAttribute("name"),
+    text(element.querySelector(":scope > layername")),
+  )?.toLowerCase() ?? "";
+  const normalizedProvider = provider.trim().toLowerCase();
+  const hasMilxItems = kadasMilxItemElements(element).length > 0;
+  return (
+    hasMilxItems ||
+    layerClass.startsWith("kadasmilx") ||
+    normalizedProvider.startsWith("kadasmilx")
+  );
 }
 
 function parseMilxMssString(mssString: string): ParsedMssSymbol | null {

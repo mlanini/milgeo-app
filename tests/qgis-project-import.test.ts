@@ -147,6 +147,23 @@ function kadasMilxProjectXml(): string {
   </qgis>`;
 }
 
+function kadasMilxWildcardProjectXml(): string {
+  return `<qgis version="3.40.0">
+    <title>MILX wildcard map</title>
+    <layer-tree-group name="" checked="Qt::Checked">
+      <layer-tree-layer id="BLUE_FORCE" checked="Qt::Checked"/>
+    </layer-tree-group>
+    <projectlayers>
+      <maplayer type="plugin" name="KadasMilxLayerBlueVariant" milx_symbol_size="54">
+        <id>BLUE_FORCE</id>
+        <layername>KadasMilx Blue Variant</layername>
+        <provider>kadasmilx-v2</provider>
+        <MapItem name="KadasMilxItemAlpha" editor="KadasMilxEditor" crs="EPSG:4326"><![CDATA[{"props":{"militaryName":"wildcard unit","mssString":"<Symbol ID=\"S*F*PUC-----A--G\"/>","symbolType":"Other"},"state":{"points":[[7.81,47.03]]}}]]></MapItem>
+      </maplayer>
+    </projectlayers>
+  </qgis>`;
+}
+
 describe("QGIS project import", () => {
   it("imports vector layers, styles, visibility, nested groups, extent, and relative paths", () => {
     const result = importQgisProject(projectXml(), "/work/projects/example.qgs");
@@ -267,6 +284,22 @@ describe("QGIS project import", () => {
     assert.equal(parsedBlueGraphics.graphics[1].SIDC, "GFGPOLAGM------");
     assert.equal(parsedBlueGraphics.graphics[1].tacticalDirectional, true);
     assert.equal(parsedBlueGraphics.graphics[2].tacticalDirectional, false);
+  });
+
+  it("imports KadasMilx* layer/provider/item variants", () => {
+    const result = importQgisProject(kadasMilxWildcardProjectXml(), "/work/mss-wildcard.qgs");
+
+    const milSymbols = result.project.layers.filter((layer) => layer.type === "mil-symbol");
+    const milGraphics = result.project.layers.filter((layer) => layer.type === "mil-graphic");
+
+    assert.equal(milSymbols.length, 1);
+    assert.equal(milGraphics.length, 0);
+    assert.deepEqual(result.warnings, []);
+
+    const parsedSymbols = parseMilSymbolLayerSource(milSymbols[0].source);
+    assert.equal(parsedSymbols.symbolSize, 54);
+    assert.equal(parsedSymbols.symbols.length, 1);
+    assert.equal(parsedSymbols.symbols[0].SIDC, "S-F-PUC-----A--G");
   });
 
   it("falls back to the default view for a missing or unsupported-CRS extent", () => {
