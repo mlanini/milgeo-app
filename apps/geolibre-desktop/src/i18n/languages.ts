@@ -9,6 +9,18 @@
 
 export const DEFAULT_LANGUAGE = "en";
 
+/** Languages written right-to-left. Checked by base subtag. */
+const RTL_LANGUAGES = new Set(["ar", "he", "fa", "ur"]);
+
+export type LanguageDirection = "ltr" | "rtl";
+
+/** Return the document direction for a language tag, defaulting to ltr. */
+export function languageDirection(code: string | null | undefined): LanguageDirection {
+  if (!code) return "ltr";
+  const base = code.trim().toLowerCase().split(/[-_]/)[0];
+  return RTL_LANGUAGES.has(base) ? "rtl" : "ltr";
+}
+
 /**
  * Friendly names for known language codes. The selector falls back to the raw
  * code for any catalog whose code is missing here, so this map is purely
