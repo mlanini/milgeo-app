@@ -2,26 +2,65 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
 import { DESKTOP_SETTINGS_STORAGE_KEY } from "../lib/storage-keys";
-import { DEFAULT_LANGUAGE, resolveLanguage } from "./languages";
+import { DEFAULT_LANGUAGE, languageDirection, resolveLanguage } from "./languages";
+import enTranslation from "./locales/en.json";
 
-/**
- * Catalogs are auto-discovered: every `locales/<code>.json` is bundled eagerly,
- * so adding a locale is a pure drop-in — no edits to this file. The web build
- * keeps them in the main chunk (catalogs are tiny); see `docs/i18n.md`.
- */
-const catalogModules = import.meta.glob<{ default: Record<string, unknown> }>(
+const localeLoaders = import.meta.glob<{ default: Record<string, unknown> }>([
   "./locales/*.json",
-  { eager: true },
-);
+  "!./locales/en.json",
+]);
 
-const resources: Record<string, { translation: Record<string, unknown> }> = {};
-for (const [path, mod] of Object.entries(catalogModules)) {
+const loaders: Record<string, () => Promise<{ default: Record<string, unknown> }>> = {};
+for (const [path, loader] of Object.entries(localeLoaders)) {
   const code = path.replace(/^\.\/locales\//, "").replace(/\.json$/, "");
-  resources[code] = { translation: mod.default };
+  loaders[code] = loader;
 }
 
 /** Catalog codes we actually ship, e.g. `["en", "zh"]`. */
-export const AVAILABLE_LANGUAGES: string[] = Object.keys(resources).sort();
+export const AVAILABLE_LANGUAGES: string[] = [DEFAULT_LANGUAGE, ...Object.keys(loaders)].sort();
+
+const resources: Record<string, { translation: Record<string, unknown> }> = {
+  [DEFAULT_LANGUAGE]: { translation: enTranslation as Record<string, unknown> },
+};
+
+/** Ensure a locale's catalog is registered with i18next before switching to it. */
+export async function loadCatalog(code: string): Promise<void> {
+  if (code === DEFAULT_LANGUAGE) return;
+  if (i18n.hasResourceBundle(code, "translation")) return;
+  const loader = loaders[code];
+  if (!loader) return;
+  const mod = await loader();
+  i18n.addResourceBundle(code, "translation", mod.default, true, true);
+}
+
+let languageRequestToken = 0;
+let languageSwitchQueue: Promise<void> = Promise.resolve();
+
+export async function setActiveLanguage(code: string): Promise<boolean> {
+  const token = ++languageRequestToken;
+  try {
+    await loadCatalog(code);
+  } catch (error) {
+    if (token === languageRequestToken) throw error;
+    return false;
+  }
+  if (token !== languageRequestToken) return false;
+
+  let failure: unknown;
+  const run = languageSwitchQueue.then(async () => {
+    if (token !== languageRequestToken) return;
+    try {
+      await i18n.changeLanguage(code);
+    } catch (error) {
+      if (token === languageRequestToken) failure = error;
+    }
+  });
+  languageSwitchQueue = run;
+  await run;
+
+  if (failure) throw failure;
+  return token === languageRequestToken;
+}
 
 const QUERY_PARAM_KEYS = ["locale", "lang"];
 
@@ -77,24 +116,39 @@ export function getInitialLanguage(): string {
   return DEFAULT_LANGUAGE;
 }
 
-i18n.use(initReactI18next).init({
-  resources,
-  lng: getInitialLanguage(),
-  fallbackLng: DEFAULT_LANGUAGE,
-  defaultNS: "translation",
-  interpolation: {
-    // React already escapes rendered values, so i18next double-escaping would
-    // mangle any text that legitimately contains `<`, `&`, etc.
-    escapeValue: false,
-  },
-  // Catalogs are bundled eagerly (synchronous), so there is nothing to wait on
-  // — skip Suspense and render immediately rather than requiring a boundary.
-  react: { useSuspense: false },
-  returnNull: false,
-  // Eager catalogs make init resolve synchronously today, but surface any error
-  // (e.g. if loading ever becomes async) instead of silently swallowing it.
-}).catch((error: unknown) => {
-  console.error("[MilGeo.app] i18n initialization failed", error);
-});
+function applyDocumentDirection(code: string) {
+  if (typeof document === "undefined") return;
+  document.documentElement.lang = code;
+  document.documentElement.dir = languageDirection(code);
+}
+
+i18n.on("languageChanged", applyDocumentDirection);
+
+const initialLanguage = getInitialLanguage();
+
+export const i18nReady: Promise<unknown> = (async () => {
+  let effectiveLanguage = initialLanguage;
+  if (initialLanguage !== DEFAULT_LANGUAGE && loaders[initialLanguage]) {
+    try {
+      const mod = await loaders[initialLanguage]();
+      resources[initialLanguage] = { translation: mod.default };
+    } catch (error) {
+      console.error("[MilGeo.app] Failed to load initial locale catalog; using English", error);
+      effectiveLanguage = DEFAULT_LANGUAGE;
+    }
+  }
+
+  return i18n.use(initReactI18next).init({
+    resources,
+    lng: effectiveLanguage,
+    fallbackLng: DEFAULT_LANGUAGE,
+    defaultNS: "translation",
+    interpolation: {
+      escapeValue: false,
+    },
+    react: { useSuspense: false },
+    returnNull: false,
+  });
+})();
 
 export default i18n;
