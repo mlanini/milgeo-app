@@ -10,6 +10,8 @@ import {
 import {
   Bug,
   CircleHelp,
+  FolderGit2,
+  Globe,
   Info,
   Keyboard,
   MessageSquare,
@@ -18,11 +20,25 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
+import { IS_STORE_BUILD } from "../../../lib/updates";
 import { isMenuItemVisible } from "../../../lib/ui-profile";
-import { FEEDBACK_URL, openExternalLink, type ToolbarChrome } from "./constants";
+import {
+  FEEDBACK_URL,
+  GITHUB_URL,
+  openExternalLink,
+  type ToolbarChrome,
+  WEBSITE_URL,
+} from "./constants";
 
 interface HelpMenuProps {
   chrome: ToolbarChrome;
+  /**
+   * The read-only viewer preset. Hides the command palette and keyboard
+   * shortcut entries, which reach the authoring commands whose own menus the
+   * preset already hides (the toolbar switches the palette and the global
+   * shortcuts off entirely in this mode).
+   */
+  viewer?: boolean;
   diagnosticsErrorCount: number;
   onOpenCommandPalette: () => void;
   onOpenShortcuts: () => void;
@@ -34,6 +50,7 @@ interface HelpMenuProps {
 /** The Help menu: command palette, shortcuts, diagnostics, feedback, updates, about. */
 export function HelpMenu({
   chrome,
+  viewer = false,
   diagnosticsErrorCount,
   onOpenCommandPalette,
   onOpenShortcuts,
@@ -43,7 +60,13 @@ export function HelpMenu({
 }: HelpMenuProps) {
   const { t } = useTranslation();
   const uiProfile = useDesktopSettingsStore((s) => s.desktopSettings.uiProfile);
-  const show = (id: string) => isMenuItemVisible(uiProfile, id);
+  // The Microsoft Store build strips the "Check for updates" item entirely so the
+  // app only updates through the Store (policy 10.2.5); other builds keep it.
+  const show = (id: string) => {
+    if (id === "help.checkForUpdates" && IS_STORE_BUILD) return false;
+    if (viewer && (id === "help.commandPalette" || id === "help.keyboardShortcuts")) return false;
+    return isMenuItemVisible(uiProfile, id);
+  };
 
   return (
     <DropdownMenu>
@@ -63,25 +86,42 @@ export function HelpMenu({
         <DropdownMenuSeparator />
         {show("help.commandPalette") && (
           <DropdownMenuItem onSelect={onOpenCommandPalette}>
-            <Search className="mr-2 h-3.5 w-3.5" />
+            <Search className="me-2 h-3.5 w-3.5" />
             {t("toolbar.item.commandPalette")}
           </DropdownMenuItem>
         )}
         {show("help.keyboardShortcuts") && (
           <DropdownMenuItem onSelect={onOpenShortcuts}>
-            <Keyboard className="mr-2 h-3.5 w-3.5" />
+            <Keyboard className="me-2 h-3.5 w-3.5" />
             {t("toolbar.command.keyboardShortcuts")}
           </DropdownMenuItem>
         )}
         {(show("help.commandPalette") || show("help.keyboardShortcuts")) && (
           <DropdownMenuSeparator />
         )}
+        {show("help.website") && (
+          <DropdownMenuItem onSelect={() => void openExternalLink(WEBSITE_URL)}>
+            <Globe className="me-2 h-3.5 w-3.5" />
+            {t("toolbar.command.website")}
+          </DropdownMenuItem>
+        )}
+        {show("help.github") && (
+          <DropdownMenuItem onSelect={() => void openExternalLink(GITHUB_URL)}>
+            <FolderGit2 className="me-2 h-3.5 w-3.5" />
+            {t("toolbar.command.githubRepository")}
+          </DropdownMenuItem>
+        )}
+        {(show("help.website") || show("help.github")) &&
+          (show("help.diagnostics") ||
+            show("help.feedback") ||
+            show("help.checkForUpdates") ||
+            show("help.about")) && <DropdownMenuSeparator />}
         {show("help.diagnostics") && (
           <DropdownMenuItem onSelect={onOpenDiagnostics}>
-            <Bug className="mr-2 h-3.5 w-3.5" />
+            <Bug className="me-2 h-3.5 w-3.5" />
             {t("toolbar.command.diagnostics")}
             {diagnosticsErrorCount > 0 ? (
-              <span className="ml-2 rounded bg-destructive px-1.5 py-0.5 text-[10px] leading-none text-destructive-foreground">
+              <span className="ms-2 rounded bg-destructive px-1.5 py-0.5 text-[10px] leading-none text-destructive-foreground">
                 {diagnosticsErrorCount}
               </span>
             ) : null}
@@ -89,19 +129,19 @@ export function HelpMenu({
         )}
         {show("help.feedback") && (
           <DropdownMenuItem onSelect={() => void openExternalLink(FEEDBACK_URL)}>
-            <MessageSquare className="mr-2 h-3.5 w-3.5" />
+            <MessageSquare className="me-2 h-3.5 w-3.5" />
             {t("toolbar.command.giveFeedback")}
           </DropdownMenuItem>
         )}
         {show("help.checkForUpdates") && (
           <DropdownMenuItem onSelect={onCheckForUpdates}>
-            <RefreshCw className="mr-2 h-3.5 w-3.5" />
+            <RefreshCw className="me-2 h-3.5 w-3.5" />
             {t("toolbar.command.checkForUpdates")}
           </DropdownMenuItem>
         )}
         {show("help.about") && (
           <DropdownMenuItem onSelect={onAbout}>
-            <Info className="mr-2 h-3.5 w-3.5" />
+            <Info className="me-2 h-3.5 w-3.5" />
             {t("toolbar.command.about")}
           </DropdownMenuItem>
         )}

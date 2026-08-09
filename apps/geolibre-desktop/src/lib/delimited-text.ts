@@ -1,15 +1,17 @@
-import type {
-  Feature,
-  FeatureCollection,
-  GeoJsonProperties,
-  Point,
-} from "geojson";
+import type { Feature, FeatureCollection, GeoJsonProperties, Geometry, Point } from "geojson";
+import { isGeographicCrs } from "./crs-utils";
 
 export interface DelimitedTextLayerResult {
   data: FeatureCollection;
   fields: string[];
   skippedRows: number;
   totalRows: number;
+  /**
+   * True when the layer was built as a non-spatial attribute table (both the
+   * latitude and longitude fields were left blank), so every feature carries a
+   * `null` geometry. Callers use this to skip fitting the map to empty bounds.
+   */
+  isTable: boolean;
 }
 
 /**
@@ -20,10 +22,16 @@ export interface DelimitedTextLayerResult {
 export const NO_VALID_COORDINATES_MESSAGE =
   "No rows contained valid longitude and latitude values.";
 
-export function parseDelimitedTextFields(
-  text: string,
-  delimiter: string,
-): string[] {
+/**
+ * Thrown by {@link parseDelimitedTextLayer} when exactly one coordinate field is
+ * left blank. Points need both a longitude and a latitude, and an attribute
+ * table needs neither, so a half-specified pair is always a mistake. Exported so
+ * callers can recognize this failure without matching a duplicated literal.
+ */
+export const MIXED_COORDINATE_FIELDS_MESSAGE =
+  "Select both a longitude and a latitude field, or leave both as None to add an attribute table.";
+
+export function parseDelimitedTextFields(text: string, delimiter: string): string[] {
   if (!delimiter) throw new Error("Enter a delimiter.");
 
   const rows = parseDelimitedRows(text, delimiter).filter((row) =>
@@ -42,10 +50,22 @@ export function parseDelimitedTextLayer(
     delimiter: string;
     latitudeField: string;
     longitudeField: string;
+    /**
+     * Source CRS of the coordinate columns as `AUTHORITY:CODE`, or blank for
+     * WGS84 longitude/latitude. When a projected CRS is given, coordinates are
+     * kept in their native units (skipping the lon/lat range check) so the
+     * caller can reproject them to WGS84; see {@link isGeographicCrs}.
+     */
+    sourceCrs?: string;
   },
 ): DelimitedTextLayerResult {
   const delimiter = options.delimiter;
   if (!delimiter) throw new Error("Enter a delimiter.");
+  // A projected source CRS carries coordinates in metres (or feet), which lie
+  // far outside the WGS84 +/-180 / +/-90 range, so the geographic bounds check
+  // below would reject every row. Skip it for projected CRSs and let the caller
+  // reproject the raw coordinates to WGS84.
+  const geographic = isGeographicCrs(options.sourceCrs);
 
   const rows = parseDelimitedRows(text, delimiter).filter((row) =>
     row.some((value) => value.trim()),
@@ -55,6 +75,43 @@ export function parseDelimitedTextLayer(
   }
 
   const fields = uniqueFieldNames(rows[0].map((field) => field.trim()));
+
+  // When both coordinate fields are left blank the file is imported as a
+  // non-spatial attribute table: every row becomes a feature with a null
+  // geometry, so it can back the attribute table and be used as the join layer
+  // in an attribute join without inventing coordinates.
+  const wantsLatitude = options.latitudeField.trim() !== "";
+  const wantsLongitude = options.longitudeField.trim() !== "";
+  // A half-specified coordinate pair (one field chosen, the other left as
+  // "None") can neither build points nor a table, so fail with a clear message
+  // instead of falling through to a raw `field "" was not found` error.
+  if (wantsLatitude !== wantsLongitude) {
+    throw new Error(MIXED_COORDINATE_FIELDS_MESSAGE);
+  }
+  if (!wantsLatitude && !wantsLongitude) {
+    const tableFeatures: Feature<Geometry | null, GeoJsonProperties>[] = rows
+      .slice(1)
+      .map((row) => ({
+        type: "Feature",
+        geometry: null,
+        properties: buildRowProperties(fields, row),
+      }));
+
+    return {
+      // GeoJSON Features may legally carry a null geometry; the app's layer
+      // model treats these as a regular FeatureCollection (the map ignores
+      // nulls), so the cast to FeatureCollection is safe here.
+      data: {
+        type: "FeatureCollection",
+        features: tableFeatures,
+      } as FeatureCollection,
+      fields,
+      skippedRows: 0,
+      totalRows: rows.length - 1,
+      isTable: true,
+    };
+  }
+
   const latitudeIndex = findFieldIndex(fields, options.latitudeField);
   const longitudeIndex = findFieldIndex(fields, options.longitudeField);
 
@@ -62,30 +119,25 @@ export function parseDelimitedTextLayer(
     throw new Error(`Latitude field "${options.latitudeField}" was not found.`);
   }
   if (longitudeIndex < 0) {
-    throw new Error(
-      `Longitude field "${options.longitudeField}" was not found.`,
-    );
+    throw new Error(`Longitude field "${options.longitudeField}" was not found.`);
   }
 
   let skippedRows = 0;
   const features: Feature<Point, GeoJsonProperties>[] = [];
 
   for (const row of rows.slice(1)) {
-    const latitude = parseCoordinate(row[latitudeIndex]);
-    const longitude = parseCoordinate(row[longitudeIndex]);
+    // For a projected CRS, treat a bare comma as a thousands separator (large
+    // easting/northing) rather than a decimal point.
+    const latitude = parseCoordinate(row[latitudeIndex], { grouped: !geographic });
+    const longitude = parseCoordinate(row[longitudeIndex], { grouped: !geographic });
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
       skippedRows += 1;
       continue;
     }
-    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    if (geographic && (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180)) {
       skippedRows += 1;
       continue;
     }
-
-    const properties: GeoJsonProperties = {};
-    fields.forEach((field, index) => {
-      properties[field] = row[index] ?? "";
-    });
 
     features.push({
       type: "Feature",
@@ -93,7 +145,7 @@ export function parseDelimitedTextLayer(
         type: "Point",
         coordinates: [longitude, latitude],
       },
-      properties,
+      properties: buildRowProperties(fields, row),
     });
   }
 
@@ -109,6 +161,7 @@ export function parseDelimitedTextLayer(
     fields,
     skippedRows,
     totalRows: rows.length - 1,
+    isTable: false,
   };
 }
 
@@ -197,6 +250,20 @@ function parseDelimitedRows(text: string, delimiter: string): string[][] {
   return rows;
 }
 
+/**
+ * Builds a feature's properties object by pairing each (de-duplicated) header
+ * name with its raw column value, defaulting to an empty string for short rows.
+ * Shared by the point and attribute-table paths so their property shape cannot
+ * drift apart.
+ */
+function buildRowProperties(fields: string[], row: string[]): GeoJsonProperties {
+  const properties: GeoJsonProperties = {};
+  fields.forEach((field, index) => {
+    properties[field] = row[index] ?? "";
+  });
+  return properties;
+}
+
 function uniqueFieldNames(fields: string[]): string[] {
   const seen = new Set<string>();
   return fields.map((field, index) => {
@@ -218,9 +285,7 @@ function uniqueFieldNames(fields: string[]): string[] {
 
 function findFieldIndex(fields: string[], fieldName: string): number {
   const normalizedFieldName = fieldName.trim().toLowerCase();
-  return fields.findIndex(
-    (field) => field.trim().toLowerCase() === normalizedFieldName,
-  );
+  return fields.findIndex((field) => field.trim().toLowerCase() === normalizedFieldName);
 }
 
 /**
@@ -235,10 +300,33 @@ function findFieldIndex(fields: string[], fieldName: string): number {
  * parses to `1.234`); this is unambiguous for WGS84 coordinates, where a
  * thousands grouping never occurs within the valid +/-180 range.
  *
+ * That last assumption breaks for **projected** coordinates: a UTM easting is
+ * hundreds of thousands to millions of metres, exactly where thousands grouping
+ * occurs, so `"659,319"` means `659319`, not `659.319`. Pass `grouped: true`
+ * (the delimited-text importer sets it for a projected source CRS) so a bare
+ * comma laid out as a thousands group (e.g. `659,319` or `1,234,567`, no decimal
+ * point) is stripped rather than read as a decimal. A comma that is *not* a
+ * valid thousands group (e.g. `659319,6`, a European decimal) still falls
+ * through to the decimal heuristic, so both conventions round-trip correctly.
+ *
+ * **Known limitation:** a single-group value with <=3 integer digits, e.g.
+ * `"45,123"`, is genuinely ambiguous from the string alone -- it could be the
+ * thousands-grouped `45123` or the European decimal `45.123`. In `grouped` mode
+ * it is read as `45123`. This is correct for the dominant projected cases
+ * (UTM/State-Plane eastings/northings are 6-7 digits, well clear of this range)
+ * but misreads a small-magnitude local/site grid coordinate written with a
+ * decimal comma. There is no way to disambiguate without knowing the locale, so
+ * the large-magnitude interpretation is chosen deliberately.
+ *
  * @param value - The raw coordinate field (may include surrounding whitespace).
+ * @param options - `grouped` marks the value as a projected coordinate, where a
+ *   bare comma is a thousands separator rather than a decimal point.
  * @returns The parsed number, or `NaN` when the value is empty or unparsable.
  */
-export function parseCoordinate(value: string | undefined): number {
+export function parseCoordinate(
+  value: string | undefined,
+  options?: { grouped?: boolean },
+): number {
   const trimmed = (value ?? "").trim();
   if (!trimmed) return Number.NaN;
 
@@ -246,12 +334,17 @@ export function parseCoordinate(value: string | undefined): number {
   const lastDot = trimmed.lastIndexOf(".");
   if (lastComma < 0 && lastDot < 0) return Number(trimmed);
 
+  // A projected coordinate written with comma thousands separators and no
+  // decimal point (`659,319`, `1,234,567`) is a whole number of metres; strip
+  // the commas. Only a strict thousands layout qualifies, so a European decimal
+  // like `659319,6` is left for the decimal heuristic below.
+  if (options?.grouped && lastDot < 0 && /^-?\d{1,3}(,\d{3})+$/.test(trimmed)) {
+    return Number(trimmed.replaceAll(",", ""));
+  }
+
   const decimalSeparator = lastComma > lastDot ? "," : ".";
   const groupingSeparator = decimalSeparator === "," ? "." : ",";
-  const normalized = trimmed
-    .split(groupingSeparator)
-    .join("")
-    .replaceAll(decimalSeparator, ".");
+  const normalized = trimmed.split(groupingSeparator).join("").replaceAll(decimalSeparator, ".");
   return Number(normalized);
 }
 
@@ -262,23 +355,10 @@ export function parseCoordinate(value: string | undefined): number {
  * would silently build wrong points. The Add Data dialog still offers it as a
  * manual option where the user confirms the column.
  */
-export const LONGITUDE_FIELD_CANDIDATES = [
-  "longitude",
-  "lon",
-  "lng",
-  "x",
-  "xcoord",
-  "x_coord",
-];
+export const LONGITUDE_FIELD_CANDIDATES = ["longitude", "lon", "lng", "x", "xcoord", "x_coord"];
 
 /** Header names that, case-insensitively, identify a latitude column. */
-export const LATITUDE_FIELD_CANDIDATES = [
-  "latitude",
-  "lat",
-  "y",
-  "ycoord",
-  "y_coord",
-];
+export const LATITUDE_FIELD_CANDIDATES = ["latitude", "lat", "y", "ycoord", "y_coord"];
 
 /** Delimiters tried, in order, when auto-detecting a delimited file's format. */
 export const DELIMITER_CANDIDATES = [",", "\t", ";", "|"];

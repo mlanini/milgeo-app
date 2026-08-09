@@ -10,6 +10,7 @@ import {
 } from "@geolibre/ui";
 import { Clipboard, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   clearDiagnostics,
   setCaptureNetworkInfo,
@@ -36,10 +37,7 @@ function matchesFilter(
 ): boolean {
   if (filter === "all") return true;
   if (filter === "network") {
-    return (
-      record.category === "network" &&
-      (captureNetworkInfo || record.level === "error")
-    );
+    return record.category === "network" && (captureNetworkInfo || record.level === "error");
   }
   return record.level === filter;
 }
@@ -55,9 +53,9 @@ function formatTime(timestamp: string): string {
 }
 
 function recordAccent(record: DiagnosticRecord): string {
-  if (record.level === "error") return "border-l-destructive";
-  if (record.level === "warning") return "border-l-amber-500";
-  return "border-l-primary";
+  if (record.level === "error") return "border-s-destructive";
+  if (record.level === "warning") return "border-s-amber-500";
+  return "border-s-primary";
 }
 
 function recordLevelClass(record: DiagnosticRecord): string {
@@ -70,11 +68,8 @@ function recordLevelClass(record: DiagnosticRecord): string {
   return "bg-muted text-muted-foreground";
 }
 
-export function DiagnosticsDialog({
-  diagnostics,
-  open,
-  onOpenChange,
-}: DiagnosticsDialogProps) {
+export function DiagnosticsDialog({ diagnostics, open, onOpenChange }: DiagnosticsDialogProps) {
+  const { t } = useTranslation();
   const [copyState, setCopyState] = useState<"copied" | "idle">("idle");
   const copyResetTimerRef = useRef<number | null>(null);
   const [activeFilter, setActiveFilter] = useState<DiagnosticFilter>("all");
@@ -87,13 +82,20 @@ export function DiagnosticsDialog({
           ),
     [diagnostics.records, activeFilter, diagnostics.captureNetworkInfo],
   );
-  const listIsFiltered = activeFilter !== "all";
-  // The network filter's label tracks the badge: plain "network" while request
-  // logging is on, "network error" while it is off.
-  const filterLabel =
-    activeFilter === "network" && !diagnostics.captureNetworkInfo
-      ? "network error"
-      : activeFilter;
+  // The network filter's empty state tracks the badge: plain "network" while
+  // request logging is on, "network error" while it is off.
+  const emptyMessage =
+    activeFilter === "all"
+      ? t("diagnostics.emptyAll")
+      : activeFilter === "network"
+        ? diagnostics.captureNetworkInfo
+          ? t("diagnostics.emptyNetwork")
+          : t("diagnostics.emptyNetworkError")
+        : activeFilter === "error"
+          ? t("diagnostics.emptyError")
+          : activeFilter === "warning"
+            ? t("diagnostics.emptyWarning")
+            : t("diagnostics.emptyInfo");
   // Derived here rather than assumed from networkCount so the badge label
   // and count cannot diverge if non-error network levels are introduced.
   const networkErrorCount = useMemo(
@@ -120,9 +122,7 @@ export function DiagnosticsDialog({
   const copyDiagnostics = async () => {
     if (!navigator.clipboard || filteredRecords.length === 0) return;
     try {
-      await navigator.clipboard.writeText(
-        JSON.stringify(filteredRecords, null, 2),
-      );
+      await navigator.clipboard.writeText(JSON.stringify(filteredRecords, null, 2));
     } catch {
       // Clipboard access denied or unavailable.
       return;
@@ -131,10 +131,7 @@ export function DiagnosticsDialog({
     if (copyResetTimerRef.current !== null) {
       window.clearTimeout(copyResetTimerRef.current);
     }
-    copyResetTimerRef.current = window.setTimeout(
-      () => setCopyState("idle"),
-      1500,
-    );
+    copyResetTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1500);
   };
 
   return (
@@ -143,12 +140,9 @@ export function DiagnosticsDialog({
         className="max-h-[min(760px,92vh)] max-w-5xl"
         bodyClassName="grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden p-0"
       >
-        <DialogHeader className="border-b px-6 py-4 pr-12">
-          <DialogTitle>Diagnostics</DialogTitle>
-          <DialogDescription>
-            Recent network requests, MapLibre errors, console warnings, and
-            runtime exceptions.
-          </DialogDescription>
+        <DialogHeader className="border-b px-6 py-4 pe-12">
+          <DialogTitle>{t("diagnostics.title")}</DialogTitle>
+          <DialogDescription>{t("diagnostics.description")}</DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap items-center justify-between gap-3 px-6">
           <div className="flex flex-wrap gap-2 text-xs">
@@ -161,7 +155,7 @@ export function DiagnosticsDialog({
               )}
               onClick={() => setActiveFilter("all")}
             >
-              {diagnostics.totalCount} total
+              {t("diagnostics.countTotal", { count: diagnostics.totalCount })}
             </button>
             <button
               type="button"
@@ -175,7 +169,7 @@ export function DiagnosticsDialog({
               )}
               onClick={() => setActiveFilter("error")}
             >
-              {diagnostics.errorCount} errors
+              {t("diagnostics.countErrors", { count: diagnostics.errorCount })}
             </button>
             <button
               type="button"
@@ -189,7 +183,7 @@ export function DiagnosticsDialog({
               )}
               onClick={() => setActiveFilter("warning")}
             >
-              {diagnostics.warningCount} warnings
+              {t("diagnostics.countWarnings", { count: diagnostics.warningCount })}
             </button>
             <button
               type="button"
@@ -210,22 +204,20 @@ export function DiagnosticsDialog({
               onClick={() => setActiveFilter("network")}
             >
               {diagnostics.captureNetworkInfo
-                ? `${diagnostics.networkCount} network`
-                : `${networkErrorCount} network errors`}
+                ? t("diagnostics.countNetwork", { count: diagnostics.networkCount })
+                : t("diagnostics.countNetworkErrors", { count: networkErrorCount })}
             </button>
             <label
               className="flex items-center gap-1.5 rounded border px-2 py-1 text-muted-foreground"
-              title="Record successful and aborted network requests from now on; requests made while logging was off are not backfilled. Off by default because logging every request slows the app down."
+              title={t("diagnostics.logAllRequestsHint")}
             >
               <input
                 className="h-3.5 w-3.5"
                 type="checkbox"
                 checked={diagnostics.captureNetworkInfo}
-                onChange={(event) =>
-                  setCaptureNetworkInfo(event.target.checked)
-                }
+                onChange={(event) => setCaptureNetworkInfo(event.target.checked)}
               />
-              Log all network requests
+              {t("diagnostics.logAllRequests")}
             </label>
           </div>
           <div className="flex gap-2">
@@ -237,7 +229,7 @@ export function DiagnosticsDialog({
               onClick={() => void copyDiagnostics()}
             >
               <Clipboard className="h-3.5 w-3.5" />
-              {copyState === "copied" ? "Copied" : "Copy JSON"}
+              {copyState === "copied" ? t("diagnostics.copied") : t("diagnostics.copyJson")}
             </Button>
             <Button
               type="button"
@@ -250,24 +242,19 @@ export function DiagnosticsDialog({
               }}
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Clear
+              {t("diagnostics.clear")}
             </Button>
           </div>
         </div>
         <ScrollArea className="min-h-0 border-t">
           {filteredRecords.length === 0 ? (
             <div className="flex min-h-48 items-center justify-center px-6 py-12 text-sm text-muted-foreground">
-              {listIsFiltered
-                ? `No ${filterLabel} diagnostics captured.`
-                : "No diagnostics captured."}
+              {emptyMessage}
             </div>
           ) : (
             <ol className="divide-y">
               {filteredRecords.map((record) => (
-                <li
-                  key={record.id}
-                  className={cn("border-l-2 px-6 py-3", recordAccent(record))}
-                >
+                <li key={record.id} className={cn("border-s-2 px-6 py-3", recordAccent(record))}>
                   <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span
                       className={cn(
@@ -280,14 +267,10 @@ export function DiagnosticsDialog({
                     <span className="rounded bg-muted px-1.5 py-0.5 uppercase">
                       {record.category}
                     </span>
-                    <time dateTime={record.timestamp}>
-                      {formatTime(record.timestamp)}
-                    </time>
+                    <time dateTime={record.timestamp}>{formatTime(record.timestamp)}</time>
                     {record.method ? <span>{record.method}</span> : null}
                     {record.status ? <span>HTTP {record.status}</span> : null}
-                    {record.durationMs != null ? (
-                      <span>{record.durationMs} ms</span>
-                    ) : null}
+                    {record.durationMs != null ? <span>{record.durationMs} ms</span> : null}
                   </div>
                   <div className="break-words text-sm">{record.message}</div>
                   {record.url ? (

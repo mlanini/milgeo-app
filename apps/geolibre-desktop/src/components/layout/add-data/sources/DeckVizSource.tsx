@@ -49,29 +49,22 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
   const [deckVizMode, setDeckVizMode] = useState<"url" | "file">("url");
   const [deckVizUrl, setDeckVizUrl] = useState("");
   const [deckVizSourcePath, setDeckVizSourcePath] = useState("");
-  const [deckVizParsed, setDeckVizParsed] = useState<DeckVizParsedInput | null>(
-    null,
-  );
+  const [deckVizParsed, setDeckVizParsed] = useState<DeckVizParsedInput | null>(null);
   const [deckVizMapping, setDeckVizMapping] = useState<DeckVizFieldMapping>({});
   const [deckVizStyle, setDeckVizStyle] = useState<DeckVizStyle>({
     ...DEFAULT_DECK_VIZ_STYLE,
   });
   const [deckVizStatus, setDeckVizStatus] = useState<string | null>(null);
   const [isLoadingDeckViz, setIsLoadingDeckViz] = useState(false);
+  const [closeAfterDeckVizAdd, setCloseAfterDeckVizAdd] = useState(true);
   // Scenegraph (glTF 3D model) layer-specific inputs.
   const [deckVizModelUrl, setDeckVizModelUrl] = useState(startSg?.modelUrl ?? "");
-  const [deckVizModelMode, setDeckVizModelMode] = useState<"single" | "data">(
-    "single",
-  );
+  const [deckVizModelMode, setDeckVizModelMode] = useState<"single" | "data">("single");
   const [deckVizModelScale, setDeckVizModelScale] = useState(
     String(startSg?.sizeScale ?? DEFAULT_DECK_VIZ_SCENEGRAPH.sizeScale),
   );
-  const [deckVizModelBearing, setDeckVizModelBearing] = useState(
-    String(startSg?.bearing ?? 0),
-  );
-  const [deckVizModelAltitude, setDeckVizModelAltitude] = useState(
-    String(startSg?.altitude ?? 0),
-  );
+  const [deckVizModelBearing, setDeckVizModelBearing] = useState(String(startSg?.bearing ?? 0));
+  const [deckVizModelAltitude, setDeckVizModelAltitude] = useState(String(startSg?.altitude ?? 0));
   const [deckVizModelLng, setDeckVizModelLng] = useState(String(startLng));
   const [deckVizModelLat, setDeckVizModelLat] = useState(String(startLat));
 
@@ -88,9 +81,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
   const isScenegraphKind = deckVizKind === "scenegraph";
   // Single-location scenegraph mode types a coordinate instead of loading a
   // point file, so the data-loader UI is hidden then.
-  const showDeckVizDataLoader = !(
-    isScenegraphKind && deckVizModelMode === "single"
-  );
+  const showDeckVizDataLoader = !(isScenegraphKind && deckVizModelMode === "single");
 
   const handleDeckVizKindChange = (nextKind: string) => {
     setDeckVizKind(nextKind);
@@ -177,7 +168,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
   };
 
   // Validates format/role completeness, then writes the deck-viz store layer
-  // and fits the map. Shared by the "Use example data" and submit paths.
+  // and fits the map.
   const finalizeDeckVizLayer = (params: {
     parsed: DeckVizParsedInput;
     mapping: DeckVizFieldMapping;
@@ -218,9 +209,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
       throw new Error(t("addData.deckViz.needsTabular", { label: def.label }));
     }
     const missing = def.roles.filter(
-      (role) =>
-        role.required &&
-        (mapping[role.key] === undefined || mapping[role.key] === ""),
+      (role) => role.required && (mapping[role.key] === undefined || mapping[role.key] === ""),
     );
     if (missing.length > 0) {
       throw new Error(
@@ -257,33 +246,21 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
     } else if (bounds) {
       source.shell.mapControllerRef.current?.fitBounds(bounds);
     }
-    source.shell.closeDialog();
+    if (closeAfterDeckVizAdd) {
+      source.shell.closeDialog();
+    }
   };
 
-  const handleUseDeckVizExample = async () => {
+  const handleUseDeckVizExample = () => {
     const def = getDeckVizLayerDef(deckVizKind);
     if (!def) return;
     source.setError(null);
     setDeckVizStatus(null);
-    setIsLoadingDeckViz(true);
-    try {
-      const response = await fetch(def.example.url);
-      if (!response.ok) {
-        throw new Error(t("addData.common.requestFailed", { status: response.status }));
-      }
-      const parsed = detectAndParseDeckVizInput(await response.text());
-      finalizeDeckVizLayer({
-        parsed,
-        mapping: def.example.fieldMapping,
-        style: { ...DEFAULT_DECK_VIZ_STYLE, ...(def.example.style ?? {}) },
-        sourcePath: def.example.url,
-        scenegraph: def.example.scenegraph,
-      });
-    } catch (err) {
-      source.setError(errorMessage(err, t("addData.deckViz.errorExample")));
-    } finally {
-      setIsLoadingDeckViz(false);
-    }
+    setDeckVizMode("url");
+    setDeckVizUrl(def.example.url);
+    setDeckVizSourcePath("");
+    setDeckVizParsed(null);
+    setDeckVizMapping({});
   };
 
   const handleRetrieveDeckVizColumns = async () => {
@@ -338,9 +315,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
       // Numeric columns (JSON tuple arrays) are stored as indices.
       const numeric = Number(value);
       next[roleKey] =
-        deckVizParsed?.format === "json-array" && Number.isFinite(numeric)
-          ? numeric
-          : value;
+        deckVizParsed?.format === "json-array" && Number.isFinite(numeric) ? numeric : value;
       return next;
     });
   };
@@ -399,8 +374,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
     source.isSubmitting ||
     isLoadingDeckViz ||
     (isScenegraphKind && !deckVizModelUrl.trim()) ||
-    (!deckVizParsed &&
-      !(isScenegraphKind && deckVizModelMode === "single"));
+    (!deckVizParsed && !(isScenegraphKind && deckVizModelMode === "single"));
 
   return (
     <AddDataSourceForm
@@ -421,36 +395,27 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
             disabled={isLoadingDeckViz}
             onChange={(event) => handleDeckVizKindChange(event.target.value)}
           >
-            {(Object.keys(DECK_VIZ_CATEGORY_LABELS) as DeckVizCategory[]).map(
-              (category) => (
-                <optgroup
-                  key={category}
-                  label={DECK_VIZ_CATEGORY_LABELS[category]}
-                >
-                  {listDeckVizLayerDefs()
-                    .filter((def) => def.category === category)
-                    .map((def) => (
-                      <option key={def.kind} value={def.kind}>
-                        {def.label}
-                      </option>
-                    ))}
-                </optgroup>
-              ),
-            )}
+            {(Object.keys(DECK_VIZ_CATEGORY_LABELS) as DeckVizCategory[]).map((category) => (
+              <optgroup key={category} label={DECK_VIZ_CATEGORY_LABELS[category]}>
+                {listDeckVizLayerDefs()
+                  .filter((def) => def.category === category)
+                  .map((def) => (
+                    <option key={def.kind} value={def.kind}>
+                      {def.label}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
           </Select>
           {deckVizDef ? (
-            <p className="text-xs text-muted-foreground">
-              {deckVizDef.description}
-            </p>
+            <p className="text-xs text-muted-foreground">{deckVizDef.description}</p>
           ) : null}
         </div>
 
         {isScenegraphKind ? (
           <div className="space-y-3 rounded-md border border-border p-3">
             <div className="space-y-1.5">
-              <Label htmlFor="deckviz-model-url">
-                {t("toolbar.scenegraph.modelUrl")}
-              </Label>
+              <Label htmlFor="deckviz-model-url">{t("toolbar.scenegraph.modelUrl")}</Label>
               <Input
                 id="deckviz-model-url"
                 placeholder={t("addData.deckViz.modelUrlPlaceholder")}
@@ -460,9 +425,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="deckviz-model-mode">
-                {t("toolbar.scenegraph.placement")}
-              </Label>
+              <Label htmlFor="deckviz-model-mode">{t("toolbar.scenegraph.placement")}</Label>
               <Select
                 id="deckviz-model-mode"
                 value={deckVizModelMode}
@@ -472,21 +435,15 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
                   setDeckVizStatus(null);
                 }}
               >
-                <option value="single">
-                  {t("toolbar.scenegraph.placementSingle")}
-                </option>
-                <option value="data">
-                  {t("toolbar.scenegraph.placementData")}
-                </option>
+                <option value="single">{t("toolbar.scenegraph.placementSingle")}</option>
+                <option value="data">{t("toolbar.scenegraph.placementData")}</option>
               </Select>
             </div>
 
             {deckVizModelMode === "single" ? (
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="deckviz-model-lng">
-                    {t("toolbar.scenegraph.longitude")}
-                  </Label>
+                  <Label htmlFor="deckviz-model-lng">{t("toolbar.scenegraph.longitude")}</Label>
                   <Input
                     id="deckviz-model-lng"
                     inputMode="decimal"
@@ -496,9 +453,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="deckviz-model-lat">
-                    {t("toolbar.scenegraph.latitude")}
-                  </Label>
+                  <Label htmlFor="deckviz-model-lat">{t("toolbar.scenegraph.latitude")}</Label>
                   <Input
                     id="deckviz-model-lat"
                     inputMode="decimal"
@@ -512,9 +467,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
 
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1.5">
-                <Label htmlFor="deckviz-model-scale">
-                  {t("toolbar.scenegraph.scale")}
-                </Label>
+                <Label htmlFor="deckviz-model-scale">{t("toolbar.scenegraph.scale")}</Label>
                 <Input
                   id="deckviz-model-scale"
                   inputMode="numeric"
@@ -523,29 +476,21 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="deckviz-model-bearing">
-                  {t("toolbar.scenegraph.bearing")}
-                </Label>
+                <Label htmlFor="deckviz-model-bearing">{t("toolbar.scenegraph.bearing")}</Label>
                 <Input
                   id="deckviz-model-bearing"
                   inputMode="numeric"
                   value={deckVizModelBearing}
-                  onChange={(event) =>
-                    setDeckVizModelBearing(event.target.value)
-                  }
+                  onChange={(event) => setDeckVizModelBearing(event.target.value)}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="deckviz-model-altitude">
-                  {t("toolbar.scenegraph.altitude")}
-                </Label>
+                <Label htmlFor="deckviz-model-altitude">{t("toolbar.scenegraph.altitude")}</Label>
                 <Input
                   id="deckviz-model-altitude"
                   inputMode="numeric"
                   value={deckVizModelAltitude}
-                  onChange={(event) =>
-                    setDeckVizModelAltitude(event.target.value)
-                  }
+                  onChange={(event) => setDeckVizModelAltitude(event.target.value)}
                 />
               </div>
             </div>
@@ -560,7 +505,7 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
               onClick={handleUseDeckVizExample}
               disabled={isLoadingDeckViz}
             >
-              <Globe2 className="mr-2 h-3.5 w-3.5" />
+              <Globe2 className="me-2 h-3.5 w-3.5" />
               {isLoadingDeckViz ? t("addData.common.loading") : t("addData.deckViz.useExample")}
             </Button>
 
@@ -601,14 +546,12 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
               type="button"
               variant="outline"
               onClick={handleRetrieveDeckVizColumns}
-              disabled={
-                isLoadingDeckViz || (deckVizMode === "url" && !deckVizUrl.trim())
-              }
+              disabled={isLoadingDeckViz || (deckVizMode === "url" && !deckVizUrl.trim())}
             >
               {deckVizMode === "file" ? (
-                <FileUp className="mr-2 h-3.5 w-3.5" />
+                <FileUp className="me-2 h-3.5 w-3.5" />
               ) : (
-                <Columns3 className="mr-2 h-3.5 w-3.5" />
+                <Columns3 className="me-2 h-3.5 w-3.5" />
               )}
               {isLoadingDeckViz
                 ? t("addData.common.loading")
@@ -624,24 +567,19 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
               <div className="grid gap-3 sm:grid-cols-2">
                 {deckVizDef.roles.map((role) => (
                   <div key={role.key} className="space-y-1.5">
-                    <Label htmlFor={`deckviz-role-${role.key}`}>
-                      {role.label}
-                    </Label>
+                    <Label htmlFor={`deckviz-role-${role.key}`}>{role.label}</Label>
                     <Select
                       id={`deckviz-role-${role.key}`}
                       value={String(deckVizMapping[role.key] ?? "")}
-                      onChange={(event) =>
-                        setDeckVizRole(role.key, event.target.value)
-                      }
+                      onChange={(event) => setDeckVizRole(role.key, event.target.value)}
                     >
                       <option value="">
-                        {role.required ? t("addData.deckViz.selectRole") : t("addData.deckViz.roleNone")}
+                        {role.required
+                          ? t("addData.deckViz.selectRole")
+                          : t("addData.deckViz.roleNone")}
                       </option>
                       {deckVizParsed.columns.map((column) => (
-                        <option
-                          key={String(column.value)}
-                          value={String(column.value)}
-                        >
+                        <option key={String(column.value)} value={String(column.value)}>
                           {column.label}
                         </option>
                       ))}
@@ -742,6 +680,15 @@ export function DeckVizSource({ initialDeckVizKind }: DeckVizSourceProps) {
             ) : null}
           </div>
         ) : null}
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={closeAfterDeckVizAdd}
+            onChange={(event) => setCloseAfterDeckVizAdd(event.target.checked)}
+          />
+          {t("addData.deckViz.closeAfterAdd")}
+        </label>
       </div>
     </AddDataSourceForm>
   );

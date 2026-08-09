@@ -1,4 +1,10 @@
-import { redo, undo, useAppStore } from "@geolibre/core";
+import {
+  canRedoProjectRestore,
+  canUndoProjectRestore,
+  redo,
+  undo,
+  useAppStore,
+} from "@geolibre/core";
 import { useEffect } from "react";
 
 /** True when focus is in a text-editing surface (let the browser handle undo). */
@@ -21,18 +27,16 @@ export function useUndoRedoShortcuts(): void {
       if (isEditableTarget(e.target)) return;
       const key = e.key.toLowerCase();
       // Ctrl/Cmd+Shift+Z, or the Windows-style Ctrl+Y (Ctrl only, not Cmd+Y).
-      const isRedo =
-        (key === "z" && e.shiftKey) ||
-        (key === "y" && e.ctrlKey && !e.shiftKey);
+      const isRedo = (key === "z" && e.shiftKey) || (key === "y" && e.ctrlKey && !e.shiftKey);
       const isUndo = key === "z" && !e.shiftKey;
       if (!isUndo && !isRedo) return;
       // Only consume the event when there is actually something to do, so an
       // empty stack doesn't swallow the browser/OS shortcut (e.g. Cmd+Y).
       const temporal = useAppStore.temporal.getState();
-      if (isRedo && temporal.futureStates.length > 0) {
+      if (isRedo && (temporal.futureStates.length > 0 || canRedoProjectRestore())) {
         e.preventDefault();
         redo();
-      } else if (isUndo && temporal.pastStates.length > 0) {
+      } else if (isUndo && (temporal.pastStates.length > 0 || canUndoProjectRestore())) {
         e.preventDefault();
         undo();
       }

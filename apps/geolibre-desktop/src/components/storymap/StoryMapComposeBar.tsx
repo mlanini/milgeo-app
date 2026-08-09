@@ -18,9 +18,7 @@ interface StoryMapComposeBarProps {
  * zooms, and tilts the real map, then saves the resulting camera straight into
  * the chapter and returns to the editor, or cancels to discard the changes.
  */
-export function StoryMapComposeBar({
-  mapControllerRef,
-}: StoryMapComposeBarProps) {
+export function StoryMapComposeBar({ mapControllerRef }: StoryMapComposeBarProps) {
   const { t } = useTranslation();
   const composingId = useAppStore((s) => s.ui.storymapComposingId);
   const storymap = useAppStore((s) => s.storymap);
@@ -28,9 +26,7 @@ export function StoryMapComposeBar({
   const setOpen = useAppStore((s) => s.setStorymapPanelOpen);
   const updateChapter = useAppStore((s) => s.updateStoryChapter);
 
-  const chapter = composingId
-    ? storymap?.chapters.find((c) => c.id === composingId)
-    : undefined;
+  const chapter = composingId ? storymap?.chapters.find((c) => c.id === composingId) : undefined;
 
   // Disable Save while the camera is in motion. Entering compose flies to the
   // chapter's saved view, and capturing a mid-flight camera would overwrite the
@@ -106,25 +102,20 @@ export function StoryMapComposeBar({
   return (
     <div className="pointer-events-none absolute bottom-6 left-1/2 z-20 flex w-[min(92vw,34rem)] -translate-x-1/2 flex-col">
       <div
-        className="pointer-events-auto flex flex-col gap-2 rounded-md border bg-background/95 px-3 py-2 text-sm shadow-lg backdrop-blur-sm"
+        className="pointer-events-auto flex flex-col gap-2 rounded-md border map-glass px-3 py-2 text-sm shadow-lg"
         role="region"
         aria-label={t("storymap.composeMode.title")}
         data-testid="storymap-compose-bar"
       >
         <div className="flex items-start gap-2">
-          <Frame
-            className="mt-0.5 h-4 w-4 shrink-0 text-primary"
-            aria-hidden="true"
-          />
+          <Frame className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
           <div className="min-w-0">
             <p className="truncate font-medium">
               {t("storymap.composeMode.title")}
               {": "}
               {chapterTitle}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {t("storymap.composeMode.hint")}
-            </p>
+            <p className="text-xs text-muted-foreground">{t("storymap.composeMode.hint")}</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">

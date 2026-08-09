@@ -56,7 +56,13 @@ import {
   pickSavePathWithFallback,
   saveBinaryFileWithFallback,
 } from "../../lib/tauri-io";
+import { IS_MAS_BUILD } from "../../lib/build-flags";
 import { startGeoLibreSidecar } from "../../lib/sidecar";
+import {
+  beginProcessingRun,
+  MAX_TRACKED_HISTORY_JOBS,
+  type ProcessingRunTracker,
+} from "../../lib/processing-history";
 import { createAppAPI } from "../../hooks/usePlugins";
 import { canExportRasterLayer, rasterExportUrl } from "../../lib/raster-export";
 import { fetchableUrl } from "../../lib/url-utils";
@@ -108,19 +114,21 @@ interface RasterToolsDialogProps {
   mapControllerRef: RefObject<MapController | null>;
 }
 
-export function RasterToolsDialog({
-  mapControllerRef,
-}: RasterToolsDialogProps): ReactElement {
+export function RasterToolsDialog({ mapControllerRef }: RasterToolsDialogProps): ReactElement {
   const { t } = useTranslation();
   const openTool = useAppStore((s) => s.ui.rasterToolOpen);
   const setRasterToolOpen = useAppStore((s) => s.setRasterToolOpen);
   const layers = useAppStore((s) => s.layers);
+  const rerun = useAppStore((s) => s.ui.processingRerun);
+  const setProcessingRerun = useAppStore((s) => s.setProcessingRerun);
 
   const open = openTool !== null;
   const desktop = isTauri();
-  const [selectedId, setSelectedId] = useState<string>(
-    openTool ?? RASTER_TOOLS[0].id,
-  );
+  // Whether this build can run the sidecar engine: desktop, except the Mac App
+  // Store build, whose App Sandbox forbids the sidecar process. The client
+  // (in-browser) engine keeps working either way.
+  const desktopServer = desktop && !IS_MAS_BUILD;
+  const [selectedId, setSelectedId] = useState<string>(openTool ?? RASTER_TOOLS[0].id);
   const [inputPath, setInputPath] = useState("");
   const [outputPath, setOutputPath] = useState("");
   const [params, setParams] = useState<Record<string, unknown>>({});
@@ -137,12 +145,14 @@ export function RasterToolsDialog({
   // Aborts an in-flight layer-bytes fetch when the dialog closes/unmounts or a
   // new pick supersedes it, so its state setters never fire on a dead component.
   const layerFetchAbortRef = useRef<AbortController | null>(null);
+  // History trackers per dispatched sidecar job id (#1292). Entries stay after
+  // finish (finish is idempotent); the map is capped (oldest evicted) so a
+  // long session cannot grow it without bound.
+  const historyTrackersRef = useRef<Map<string, ProcessingRunTracker>>(new Map());
 
   // Client-engine state. The browser fallback reads a GeoTIFF into memory,
   // computes a new raster, adds it to the map, and offers a download.
-  const [engine, setEngine] = useState<RasterEngine>(
-    desktop ? "sidecar" : "client",
-  );
+  const [engine, setEngine] = useState<RasterEngine>(desktopServer ? "sidecar" : "client");
   const [clientInput, setClientInput] = useState<{
     name: string;
     bytes: ArrayBuffer;
@@ -156,10 +166,7 @@ export function RasterToolsDialog({
     bytes: ArrayBuffer;
   } | null>(null);
 
-  const tool = useMemo(
-    () => getRasterTool(selectedId) ?? RASTER_TOOLS[0],
-    [selectedId],
-  );
+  const tool = useMemo(() => getRasterTool(selectedId) ?? RASTER_TOOLS[0], [selectedId]);
   const groups = useMemo(groupedTools, []);
 
   // When the menu opens the dialog with a specific tool, preselect it.
@@ -168,12 +175,13 @@ export function RasterToolsDialog({
   }, [openTool]);
 
   const checkRuntime = useCallback(async () => {
-    if (!desktop) {
-      // Raster tools are sidecar-only and the file pickers cannot resolve real
-      // paths in a browser, so a pure web build cannot run them.
+    if (!desktopServer) {
+      // Raster tools' sidecar engine cannot run in a pure web build (no real
+      // file paths) or in the Mac App Store build (no sidecar process); only
+      // the client engine works there.
       setRuntimeAvailable(false);
       setRuntimeMessage(
-        "Raster tools need the GeoLibre desktop app with a running sidecar.",
+        IS_MAS_BUILD ? t("masBuild.unavailable") : t("toolbar.rasterTool.needsDesktopSidecar"),
       );
       return;
     }
@@ -185,11 +193,9 @@ export function RasterToolsDialog({
       setRuntimeMessage(status.message);
     } catch (err) {
       setRuntimeAvailable(false);
-      setRuntimeMessage(
-        err instanceof Error ? err.message : "Could not connect to sidecar.",
-      );
+      setRuntimeMessage(err instanceof Error ? err.message : t("toolbar.rasterTool.errorConnect"));
     }
-  }, [desktop]);
+  }, [desktopServer, t]);
 
   // Reset per-tool state whenever the dialog opens or the selected tool changes.
   // Also reset the engine here (not only on tool change) so reopening the dialog
@@ -205,8 +211,26 @@ export function RasterToolsDialog({
     setClientInput(null);
     setClientLog([]);
     setClientResult(null);
-    setEngine(tool.supportsClient && !desktop ? "client" : "sidecar");
-  }, [open, tool, desktop]);
+    setEngine(tool.supportsClient && !desktopServer ? "client" : "sidecar");
+  }, [open, tool, desktopServer]);
+
+  // Pre-fill from a pending History re-run once the requested tool is selected.
+  // Declared after the reset effect above so the recorded parameters win over
+  // the defaults when both effects fire in the same commit. Input/output paths
+  // are not restored: the user re-picks files.
+  useEffect(() => {
+    if (!open || !rerun || rerun.kind !== "raster") return;
+    // A saved-project history entry can reference a tool that was renamed or
+    // removed since; drop the request instead of leaving it pending forever.
+    if (!getRasterTool(rerun.toolId)) {
+      setError(t("processing.history.toolUnavailable", { toolId: rerun.toolId }));
+      setProcessingRerun(null);
+      return;
+    }
+    if (rerun.toolId !== tool.id) return;
+    setParams({ ...toolDefaults(tool), ...rerun.parameters });
+    setProcessingRerun(null);
+  }, [open, rerun, tool, setProcessingRerun, t]);
 
   // Probe the runtime only when the dialog opens, not on every tool switch
   // (each probe spawns a sidecar subprocess import check).
@@ -231,7 +255,7 @@ export function RasterToolsDialog({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Could not poll job.");
+          setError(err instanceof Error ? err.message : t("toolbar.rasterTool.errorPoll"));
         }
       }
     };
@@ -240,6 +264,15 @@ export function RasterToolsDialog({
       cancelled = true;
       window.clearTimeout(timer);
     };
+  }, [job]);
+
+  // Record a History entry once a sidecar job reaches a terminal status
+  // (#1292). `finish` is idempotent, so re-renders with the same job are no-ops.
+  useEffect(() => {
+    if (!job || RUNNING_JOB_STATUSES.has(job.status)) return;
+    historyTrackersRef.current
+      .get(job.id)
+      ?.finish(job.status === "succeeded" ? "success" : "error", job.error ?? undefined);
   }, [job]);
 
   // Keep the newest log lines in view as messages stream in. One effect per log
@@ -252,8 +285,7 @@ export function RasterToolsDialog({
   }, [clientLog.length]);
 
   const setParam = useCallback(
-    (id: string, value: unknown) =>
-      setParams((prev) => ({ ...prev, [id]: value })),
+    (id: string, value: unknown) => setParams((prev) => ({ ...prev, [id]: value })),
     [],
   );
 
@@ -267,9 +299,7 @@ export function RasterToolsDialog({
       // fields resolve correctly on the first render — before the effect that
       // seeds `params` from toolDefaults has run (avoids a one-frame flicker).
       const controller = tool.parameters.find((p) => p.id === vw.param);
-      const current = (params[vw.param] ?? controller?.default) as
-        | string
-        | undefined;
+      const current = (params[vw.param] ?? controller?.default) as string | undefined;
       if ("in" in vw) return current != null && vw.in.includes(current);
       return current == null || !vw.notIn.includes(current);
     },
@@ -306,9 +336,7 @@ export function RasterToolsDialog({
       await startGeoLibreSidecar();
       await checkRuntime();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not start GeoLibre sidecar.",
-      );
+      setError(err instanceof Error ? err.message : t("toolbar.rasterTool.errorStartSidecar"));
     } finally {
       setStartingServer(false);
     }
@@ -366,9 +394,7 @@ export function RasterToolsDialog({
     () =>
       toolTakesRasterInput
         ? layers.filter((layer) =>
-            engine === "client"
-              ? canExportRasterLayer(layer)
-              : sidecarRasterUrl(layer) !== null,
+            engine === "client" ? canExportRasterLayer(layer) : sidecarRasterUrl(layer) !== null,
           )
         : [],
     [layers, engine, toolTakesRasterInput],
@@ -405,11 +431,7 @@ export function RasterToolsDialog({
         setClientLog([]);
       } catch (err) {
         if (controller.signal.aborted) return;
-        setError(
-          err instanceof Error
-            ? err.message
-            : t("toolbar.rasterTool.layerLoadError"),
-        );
+        setError(err instanceof Error ? err.message : t("toolbar.rasterTool.layerLoadError"));
       } finally {
         if (!controller.signal.aborted) setResolvingLayer(false);
       }
@@ -445,27 +467,40 @@ export function RasterToolsDialog({
           expression: buildSpectralIndexExpression(params).expression,
         };
       } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : t("toolbar.rasterTool.invalidSpectralIndex"),
-        );
+        setError(err instanceof Error ? err.message : t("toolbar.rasterTool.invalidSpectralIndex"));
         return;
       }
     }
+    // Record the raw form params (not the injected sidecar expression) so
+    // Edit & re-run restores the form exactly (#1292).
+    const tracker = beginProcessingRun(
+      {
+        kind: "raster",
+        toolId: tool.id,
+        toolName: tool.name,
+        engine: "sidecar",
+        parameters: params,
+      },
+      { inputPath: inputPath.trim(), outputPath: outputPath.trim() },
+    );
     try {
-      setJob(
-        await runRasterTool({
-          tool_id: tool.id,
-          input_path: inputPath.trim(),
-          output_path: outputPath.trim(),
-          parameters: sidecarParams,
-        }),
-      );
+      const nextJob = await runRasterTool({
+        tool_id: tool.id,
+        input_path: inputPath.trim(),
+        output_path: outputPath.trim(),
+        parameters: sidecarParams,
+      });
+      historyTrackersRef.current.set(nextJob.id, tracker);
+      while (historyTrackersRef.current.size > MAX_TRACKED_HISTORY_JOBS) {
+        const oldest = historyTrackersRef.current.keys().next().value;
+        if (oldest === undefined) break;
+        historyTrackersRef.current.delete(oldest);
+      }
+      setJob(nextJob);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not start raster tool.",
-      );
+      const message = err instanceof Error ? err.message : t("toolbar.rasterTool.errorStartTool");
+      tracker.finish("error", message);
+      setError(message);
     }
   }, [tool, inputPath, outputPath, params, validateParams, t]);
 
@@ -483,6 +518,16 @@ export function RasterToolsDialog({
     }
     setClientRunning(true);
     setClientLog([t("toolbar.rasterTool.runningInBrowser", { tool: tool.name })]);
+    const tracker = beginProcessingRun(
+      {
+        kind: "raster",
+        toolId: tool.id,
+        toolName: tool.name,
+        engine: "client",
+        parameters: params,
+      },
+      { inputPath: clientInput.name },
+    );
     try {
       const raster = await readRasterData(clientInput.bytes);
       setClientLog((prev) => [
@@ -507,11 +552,7 @@ export function RasterToolsDialog({
         ]);
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
-      const { raster: result, bytes } = runRasterToolClient(
-        tool.id,
-        raster,
-        params,
-      );
+      const { raster: result, bytes } = runRasterToolClient(tool.id, raster, params);
       setClientLog((prev) => [
         ...prev,
         t("toolbar.rasterTool.computedInBrowser", { tool: tool.name }),
@@ -530,24 +571,25 @@ export function RasterToolsDialog({
           // it explicitly for correct transparency of masked/edge cells.
           ...(result.nodata != null ? { nodata: result.nodata } : {}),
         });
-        setClientLog((prev) => [
-          ...prev,
-          t("toolbar.rasterTool.addedToMap", { name: outName }),
-        ]);
+        setClientLog((prev) => [...prev, t("toolbar.rasterTool.addedToMap", { name: outName })]);
+        tracker.addOutputLayer(outName);
       } catch (mapError) {
         const mapMessage =
-          mapError instanceof Error
-            ? mapError.message
-            : t("toolbar.rasterTool.mapAddError");
+          mapError instanceof Error ? mapError.message : t("toolbar.rasterTool.mapAddError");
         setError(mapMessage);
         setClientLog((prev) => [
           ...prev,
           t("toolbar.rasterTool.mapAddFailed", { message: mapMessage }),
         ]);
+        // The compute succeeded but the result never made it onto the map, so
+        // record the run as failed rather than a green no-output "success".
+        tracker.finish("error", mapMessage);
+        return;
       }
+      tracker.finish("success");
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : t("toolbar.rasterTool.runError");
+      const message = err instanceof Error ? err.message : t("toolbar.rasterTool.runError");
+      tracker.finish("error", message);
       setError(message);
       setClientLog((prev) => [...prev, message]);
     } finally {
@@ -566,22 +608,15 @@ export function RasterToolsDialog({
       await saveBinaryFileWithFallback(new Uint8Array(clientResult.bytes), {
         defaultName: clientResult.name,
         filters: tool.outputFilters,
-        browserTypes: [
-          { description: "GeoTIFF", accept: { "image/tiff": [".tif", ".tiff"] } },
-        ],
+        browserTypes: [{ description: "GeoTIFF", accept: { "image/tiff": [".tif", ".tiff"] } }],
         mimeType: "image/tiff",
       });
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : t("toolbar.rasterTool.saveError"),
-      );
+      setError(err instanceof Error ? err.message : t("toolbar.rasterTool.saveError"));
     }
   }, [clientResult, tool, t]);
 
-  const running =
-    Boolean(job && RUNNING_JOB_STATUSES.has(job.status)) || clientRunning;
+  const running = Boolean(job && RUNNING_JOB_STATUSES.has(job.status)) || clientRunning;
 
   return (
     <Dialog
@@ -597,11 +632,8 @@ export function RasterToolsDialog({
     >
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Raster tools</DialogTitle>
-          <DialogDescription>
-            Run common raster operations on the Python sidecar (rasterio/GDAL),
-            or in your browser when no sidecar is available.
-          </DialogDescription>
+          <DialogTitle>{t("toolbar.rasterTool.dialogTitle")}</DialogTitle>
+          <DialogDescription>{t("toolbar.rasterTool.dialogDescription")}</DialogDescription>
         </DialogHeader>
 
         <div className="flex gap-4">
@@ -619,9 +651,8 @@ export function RasterToolsDialog({
                       type="button"
                       onClick={() => setSelectedId(entry.id)}
                       className={cn(
-                        "w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
-                        entry.id === selectedId &&
-                          "bg-accent font-medium text-accent-foreground",
+                        "w-full rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent",
+                        entry.id === selectedId && "bg-accent font-medium text-accent-foreground",
                       )}
                     >
                       {entry.name}
@@ -640,19 +671,17 @@ export function RasterToolsDialog({
             {tool.supportsClient && (
               <div className="flex flex-col gap-1">
                 <Label className="flex items-center gap-1.5 text-xs">
-                  <Server className="h-3.5 w-3.5" />{" "}
-                  {t("toolbar.rasterTool.engine")}
+                  <Server className="h-3.5 w-3.5" /> {t("toolbar.rasterTool.engine")}
                 </Label>
-                <Select
-                  value={engine}
-                  onChange={(e) => setEngine(e.target.value as RasterEngine)}
-                >
-                  <option value="client">
-                    {t("toolbar.rasterTool.engineClient")}
-                  </option>
-                  <option value="sidecar" disabled={!desktop}>
-                    {t("toolbar.rasterTool.engineSidecar")}
-                  </option>
+                <Select value={engine} onChange={(e) => setEngine(e.target.value as RasterEngine)}>
+                  <option value="client">{t("toolbar.rasterTool.engineClient")}</option>
+                  {/* The Mac App Store build has no sidecar at all, so the
+                      option is dropped rather than shown disabled. */}
+                  {!IS_MAS_BUILD && (
+                    <option value="sidecar" disabled={!desktop}>
+                      {t("toolbar.rasterTool.engineSidecar")}
+                    </option>
+                  )}
                 </Select>
                 {engine === "client" && (
                   <p className="text-xs text-muted-foreground">
@@ -668,7 +697,7 @@ export function RasterToolsDialog({
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   {runtimeMessage}
                 </p>
-                {desktop && (
+                {desktopServer && (
                   <Button
                     type="button"
                     variant="outline"
@@ -739,7 +768,7 @@ export function RasterToolsDialog({
                     type="button"
                     variant="outline"
                     size="icon"
-                    title="Choose input file"
+                    title={t("processing.filePicker.chooseInputFile")}
                     onClick={() => void pickClientInput()}
                   >
                     <FolderOpen className="h-4 w-4" />
@@ -750,14 +779,14 @@ export function RasterToolsDialog({
                   <Input
                     id="raster-input"
                     value={inputPath}
-                    placeholder="File path"
+                    placeholder={t("processing.filePicker.filePath")}
                     onChange={(event) => setInputPath(event.target.value)}
                   />
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
-                    title="Choose input file"
+                    title={t("processing.filePicker.chooseInputFile")}
                     onClick={() => void pickInput()}
                   >
                     <FolderOpen className="h-4 w-4" />
@@ -770,20 +799,21 @@ export function RasterToolsDialog({
             {engine === "sidecar" && (
               <div className="grid gap-1.5">
                 <Label htmlFor="raster-output" className="text-xs">
-                  Output file<span className="text-destructive"> *</span>
+                  {t("toolbar.rasterTool.outputFile")}
+                  <span className="text-destructive"> *</span>
                 </Label>
                 <div className="grid grid-cols-[minmax(0,1fr)_2.25rem] gap-2">
                   <Input
                     id="raster-output"
                     value={outputPath}
-                    placeholder="File path"
+                    placeholder={t("processing.filePicker.filePath")}
                     onChange={(event) => setOutputPath(event.target.value)}
                   />
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
-                    title="Choose output file"
+                    title={t("processing.filePicker.chooseOutputFile")}
                     onClick={() => void pickOutput()}
                   >
                     <Save className="h-4 w-4" />
@@ -851,7 +881,7 @@ export function RasterToolsDialog({
                 <ScrollArea className="h-24 rounded-md border bg-muted/30 p-2 font-mono text-xs">
                   {job.messages.length === 0 ? (
                     <span className="text-muted-foreground">
-                      No output yet.
+                      {t("toolbar.rasterTool.noOutput")}
                     </span>
                   ) : (
                     <>
@@ -911,6 +941,7 @@ function RasterParameterField({
   onChange,
   onPick,
 }: RasterParameterFieldProps): ReactElement {
+  const { t } = useTranslation();
   const label = (
     <Label htmlFor={param.id} className="text-xs">
       {param.label}
@@ -963,9 +994,7 @@ function RasterParameterField({
           min={param.min}
           max={param.max}
           step={param.step}
-          onChange={(e) =>
-            onChange(e.target.value === "" ? undefined : Number(e.target.value))
-          }
+          onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
         />
         {param.description ? (
           <p className="text-xs text-muted-foreground">{param.description}</p>
@@ -982,14 +1011,14 @@ function RasterParameterField({
           <Input
             id={param.id}
             value={(value as string) ?? ""}
-            placeholder="File path"
+            placeholder={t("processing.filePicker.filePath")}
             onChange={(e) => onChange(e.target.value)}
           />
           <Button
             type="button"
             variant="outline"
             size="icon"
-            title="Choose file"
+            title={t("processing.filePicker.chooseFile")}
             onClick={onPick}
           >
             <FolderOpen className="h-4 w-4" />

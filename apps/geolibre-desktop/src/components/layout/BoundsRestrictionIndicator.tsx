@@ -16,6 +16,9 @@ import { useTranslation } from "react-i18next";
  * (CollaborationStatusBadge), already accounts for this badge: it lifts itself
  * to `bottom-20` (above this `bottom-12`) when a session is active and bounds
  * are restricted. If yet another bottom-left control is added, revisit both.
+ * (The KnowledgeCardPanel also opens bottom-left at `bottom-12`, but as a large
+ * transient `z-20` panel it overlays these small `z-10` badges while open rather
+ * than stacking with them.)
  */
 export function BoundsRestrictionIndicator() {
   const { t } = useTranslation();
@@ -29,15 +32,12 @@ export function BoundsRestrictionIndicator() {
 
   return (
     <div
-      className="pointer-events-auto absolute bottom-12 left-2 z-10 flex items-center gap-1 rounded-md border bg-background/90 px-2 py-1 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm"
+      className="pointer-events-auto absolute bottom-12 left-2 z-10 flex items-center gap-1 rounded-md border map-glass px-2 py-1 text-xs font-medium text-foreground shadow-sm"
       role="status"
       title={tooltip}
       data-testid="bounds-restriction-indicator"
     >
-      <Lock
-        className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400"
-        aria-hidden="true"
-      />
+      <Lock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
       <span>{t("map.boundsRestricted")}</span>
       {/* Full description for assistive tech; the live region announces this
           along with the visible label, while sighted users get it via title. */}

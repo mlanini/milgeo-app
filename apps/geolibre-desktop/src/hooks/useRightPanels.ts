@@ -16,11 +16,7 @@ import { useSyncExternalStore } from "react";
  * @returns The current right-panel registry snapshot.
  */
 export function useRightPanelState(): RightPanelSnapshot {
-  return useSyncExternalStore(
-    subscribeRightPanels,
-    getRightPanelSnapshot,
-    getRightPanelSnapshot,
-  );
+  return useSyncExternalStore(subscribeRightPanels, getRightPanelSnapshot, getRightPanelSnapshot);
 }
 
 /** Which built-in panel the active plugin panel sits next to and collapses. */
@@ -37,8 +33,7 @@ const selectAutoCollapsed = (): AutoCollapsedPanel => {
   if (snapshot.dock === "replace-style" || snapshot.dock === "replace-layers") {
     return null;
   }
-  return snapshot.dock === "left-of-layers" ||
-    snapshot.dock === "right-of-layers"
+  return snapshot.dock === "left-of-layers" || snapshot.dock === "right-of-layers"
     ? "layers"
     : "style";
 };
@@ -54,16 +49,13 @@ const selectAutoCollapsed = (): AutoCollapsedPanel => {
  * @returns "layers", "style", or null.
  */
 export function useAutoCollapsedPanel(): AutoCollapsedPanel {
-  return useSyncExternalStore(
-    subscribeRightPanels,
-    selectAutoCollapsed,
-    selectAutoCollapsed,
-  );
+  return useSyncExternalStore(subscribeRightPanels, selectAutoCollapsed, selectAutoCollapsed);
 }
 
 const selectReplaceStylePanelId = (): string | null => {
   const snapshot = getRightPanelSnapshot();
-  return snapshot.dock === "replace-style" ? snapshot.activeId : null;
+  if (snapshot.dock === "replace-style") return snapshot.activeId;
+  return snapshot.visibleIds.find((id) => snapshot.panelDocks[id] === "replace-style") ?? null;
 };
 
 /**
@@ -86,7 +78,8 @@ export function useReplaceStylePanelId(): string | null {
 
 const selectReplaceLayersPanelId = (): string | null => {
   const snapshot = getRightPanelSnapshot();
-  return snapshot.dock === "replace-layers" ? snapshot.activeId : null;
+  if (snapshot.dock === "replace-layers") return snapshot.activeId;
+  return snapshot.visibleIds.find((id) => snapshot.panelDocks[id] === "replace-layers") ?? null;
 };
 
 /**

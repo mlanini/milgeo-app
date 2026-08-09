@@ -18,6 +18,7 @@ import {
   isShareableTitle,
   MAX_PROJECT_TITLE_LENGTH,
   resolveShareBaseUrl,
+  shareHostLabel,
   ShareUploadError,
   uploadProjectToShare,
   type ShareUploadErrorCode,
@@ -37,12 +38,21 @@ interface ShareProjectDialogProps {
    */
   getProject: (
     title: string,
-  ) => Promise<{ content: string; filename: string }>;
+  ) => Promise<{ content: string; filename: string; redactedCount?: number }>;
 }
 
-// The website's account settings page, where the user both creates API tokens
-// and sets the username required for sharing.
-const ACCOUNT_SETTINGS_URL = `${resolveShareBaseUrl()}/settings`;
+/**
+ * The share host's account settings page, where the user both creates API tokens
+ * and sets the username required for sharing.
+ *
+ * Derived from the resolved host rather than hardcoded, so a self-hosted
+ * deployment sends its users to its own settings page. Null when no share host is
+ * configured, in which case the dialog does not render the link.
+ */
+function accountSettingsUrl(): string | null {
+  const base = resolveShareBaseUrl();
+  return base ? `${base}/settings` : null;
+}
 
 export function ShareProjectDialog({
   open,
@@ -51,6 +61,11 @@ export function ShareProjectDialog({
   getProject,
 }: ShareProjectDialogProps) {
   const { t } = useTranslation();
+  // Resolved per render rather than at module load so a deployment env written
+  // after this module was imported is still honored.
+  const settingsUrl = accountSettingsUrl();
+  // Named in the copy below, so a self-hosted deployment reads its own host.
+  const shareHost = shareHostLabel();
   const shareToken = useDesktopSettingsStore((s) => s.desktopSettings.shareToken);
   const [title, setTitle] = useState("");
   const [visibility, setVisibility] = useState<ShareVisibility>("unlisted");
@@ -59,6 +74,7 @@ export function ShareProjectDialog({
   const [errorCode, setErrorCode] = useState<ShareUploadErrorCode | null>(null);
   const [result, setResult] = useState<ShareUploadResult | null>(null);
   const [copied, setCopied] = useState(false);
+  const [redactedCount, setRedactedCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const copyTimeoutRef = useRef<number | null>(null);
 
@@ -75,6 +91,7 @@ export function ShareProjectDialog({
       setErrorCode(null);
       setResult(null);
       setCopied(false);
+      setRedactedCount(0);
     } else {
       abortRef.current?.abort();
       abortRef.current = null;
@@ -104,7 +121,7 @@ export function ShareProjectDialog({
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const { content, filename } = await getProject(title.trim());
+      const { content, filename, redactedCount: removed = 0 } = await getProject(title.trim());
       const uploaded = await uploadProjectToShare({
         token: shareToken,
         filename,
@@ -112,6 +129,7 @@ export function ShareProjectDialog({
         visibility,
         signal: controller.signal,
       });
+      setRedactedCount(removed);
       setResult(uploaded);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -160,6 +178,26 @@ export function ShareProjectDialog({
       });
   };
 
+  // Defensive: the Share entry points (menu item and command palette) are gated on
+  // the same state, so this should be unreachable. Guarding here anyway keeps a
+  // future caller from rendering setup guidance that names the public hosted
+  // service on a deployment that configured no share host.
+  if (!settingsUrl) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Share2 className="h-4 w-4" />
+              {t("share.title")}
+            </DialogTitle>
+            <DialogDescription>{t("gallery.errorNotConfigured")}</DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
@@ -168,34 +206,32 @@ export function ShareProjectDialog({
             <Share2 className="h-4 w-4" />
             {t("share.title")}
           </DialogTitle>
-          <DialogDescription>{t("share.description")}</DialogDescription>
+          <DialogDescription>{t("share.description", { shareHost })}</DialogDescription>
         </DialogHeader>
 
         {!hasToken ? (
           <div className="space-y-4 text-sm">
-            <p className="text-muted-foreground">{t("share.setupIntro")}</p>
+            <p className="text-muted-foreground">{t("share.setupIntro", { shareHost })}</p>
             <ol className="space-y-3">
               <li className="space-y-2 rounded-md border p-3">
                 <p className="font-medium">{t("share.step1Title")}</p>
                 <p className="text-muted-foreground">
-                  {t("share.step1Description")}
+                  {t("share.step1Description", { shareHost })}
                 </p>
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => void openExternalLink(ACCOUNT_SETTINGS_URL)}
+                  onClick={() => void openExternalLink(settingsUrl)}
                 >
-                  <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                  <ExternalLink className="me-2 h-3.5 w-3.5" />
                   {t("share.getToken")}
                 </Button>
               </li>
               <li className="space-y-2 rounded-md border p-3">
                 <p className="font-medium">{t("share.step2Title")}</p>
-                <p className="text-muted-foreground">
-                  {t("share.step2Description")}
-                </p>
+                <p className="text-muted-foreground">{t("share.step2Description")}</p>
                 <Button type="button" onClick={handleConfigureToken}>
-                  <KeyRound className="mr-2 h-3.5 w-3.5" />
+                  <KeyRound className="me-2 h-3.5 w-3.5" />
                   {t("share.configureToken")}
                 </Button>
               </li>
@@ -203,6 +239,11 @@ export function ShareProjectDialog({
           </div>
         ) : result ? (
           <div className="space-y-3">
+            {redactedCount > 0 ? (
+              <p className="rounded-md bg-muted p-2 text-sm text-muted-foreground">
+                {t("share.credentialsRemoved", { count: redactedCount })}
+              </p>
+            ) : null}
             <p className="text-sm text-muted-foreground">{t("share.liveAt")}</p>
             <div className="flex gap-2">
               <Input readOnly value={result.projectUrl} className="text-xs" />
@@ -212,11 +253,7 @@ export function ShareProjectDialog({
                 aria-label={t("share.copyLink")}
                 onClick={handleCopy}
               >
-                {copied ? (
-                  <Check className="h-3.5 w-3.5" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
-                )}
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
               </Button>
             </div>
             <div className="flex justify-end gap-2">
@@ -225,7 +262,7 @@ export function ShareProjectDialog({
                 variant="outline"
                 onClick={() => void openExternalLink(result.projectUrl)}
               >
-                <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                <ExternalLink className="me-2 h-3.5 w-3.5" />
                 {t("share.open")}
               </Button>
               <Button type="button" onClick={() => onOpenChange(false)}>
@@ -247,9 +284,7 @@ export function ShareProjectDialog({
                 autoFocus={!titleValid}
               />
               {!titleValid && (
-                <p className="text-xs text-muted-foreground">
-                  {t("share.titleRequired")}
-                </p>
+                <p className="text-xs text-muted-foreground">{t("share.titleRequired")}</p>
               )}
             </div>
             <div className="space-y-1.5">
@@ -257,9 +292,7 @@ export function ShareProjectDialog({
               <Select
                 id="share-visibility"
                 value={visibility}
-                onChange={(e) =>
-                  setVisibility(e.target.value as ShareVisibility)
-                }
+                onChange={(e) => setVisibility(e.target.value as ShareVisibility)}
                 disabled={status === "uploading"}
               >
                 <option value="unlisted">{t("share.visibilityUnlisted")}</option>
@@ -273,22 +306,19 @@ export function ShareProjectDialog({
                 role="alert"
                 className="space-y-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive"
               >
-                <p>{t("share.usernameRequired")}</p>
+                <p>{t("share.usernameRequired", { shareHost })}</p>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => void openExternalLink(ACCOUNT_SETTINGS_URL)}
+                  onClick={() => void openExternalLink(settingsUrl)}
                 >
-                  <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                  <ExternalLink className="me-2 h-3.5 w-3.5" />
                   {t("share.openAccountSettings")}
                 </Button>
               </div>
             ) : error ? (
-              <p
-                role="alert"
-                className="rounded-md bg-destructive/10 p-2 text-sm text-destructive"
-              >
+              <p role="alert" className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">
                 {error}
               </p>
             ) : null}
@@ -296,11 +326,7 @@ export function ShareProjectDialog({
             <div className="flex justify-end gap-2">
               {/* Stays enabled during upload: closing the dialog aborts the
                   in-flight request via the open effect's cleanup. */}
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-              >
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 {t("common.cancel")}
               </Button>
               <Button
@@ -310,12 +336,12 @@ export function ShareProjectDialog({
               >
                 {status === "uploading" ? (
                   <>
-                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="me-2 h-3.5 w-3.5 animate-spin" />
                     {t("share.sharing")}
                   </>
                 ) : (
                   <>
-                    <Share2 className="mr-2 h-3.5 w-3.5" />
+                    <Share2 className="me-2 h-3.5 w-3.5" />
                     {t("share.shareButton")}
                   </>
                 )}

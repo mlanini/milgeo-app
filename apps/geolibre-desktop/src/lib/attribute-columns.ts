@@ -1,8 +1,4 @@
-import {
-  styleValue,
-  type GeoLibreLayer,
-  type LayerStyle,
-} from "@geolibre/core";
+import { styleValue, type GeoLibreLayer, type LayerStyle } from "@geolibre/core";
 import type { FeatureCollection } from "geojson";
 import {
   coerceComputedValue,
@@ -46,9 +42,7 @@ function stringArray(value: unknown): string[] | undefined {
 }
 
 /** Read the layer's column settings, tolerating missing/malformed metadata. */
-export function getColumnSettings(
-  layer?: GeoLibreLayer | null,
-): ColumnSettings {
+export function getColumnSettings(layer?: GeoLibreLayer | null): ColumnSettings {
   const raw = layer?.metadata?.[COLUMN_SETTINGS_KEY];
   if (!raw || typeof raw !== "object") return {};
   const settings = raw as ColumnSettings;
@@ -74,10 +68,7 @@ function normalizeSettings(settings: ColumnSettings): ColumnSettings | null {
  * to `updateLayer` (which replaces metadata wholesale). Removes the key when the
  * settings are empty.
  */
-function metadataWithSettings(
-  layer: GeoLibreLayer,
-  next: ColumnSettings,
-): Record<string, unknown> {
+function metadataWithSettings(layer: GeoLibreLayer, next: ColumnSettings): Record<string, unknown> {
   const metadata = { ...(layer.metadata ?? {}) };
   const normalized = normalizeSettings(next);
   if (normalized) metadata[COLUMN_SETTINGS_KEY] = normalized;
@@ -90,10 +81,7 @@ function metadataWithSettings(
  * to columns that still exist), then any newly-discovered columns in their
  * discovery order. Includes hidden columns.
  */
-export function orderColumns(
-  discovered: string[],
-  settings: ColumnSettings,
-): string[] {
+export function orderColumns(discovered: string[], settings: ColumnSettings): string[] {
   const known = new Set(discovered);
   const seen = new Set<string>();
   const result: string[] = [];
@@ -113,39 +101,15 @@ export function orderColumns(
 }
 
 /** Ordered columns with hidden ones removed — what the table renders. */
-export function visibleColumns(
-  discovered: string[],
-  settings: ColumnSettings,
-): string[] {
+export function visibleColumns(discovered: string[], settings: ColumnSettings): string[] {
   const hidden = new Set(settings.hidden ?? []);
   return orderColumns(discovered, settings).filter((key) => !hidden.has(key));
 }
 
 /** Ordered columns that are currently hidden. */
-export function hiddenColumns(
-  discovered: string[],
-  settings: ColumnSettings,
-): string[] {
+export function hiddenColumns(discovered: string[], settings: ColumnSettings): string[] {
   const hidden = new Set(settings.hidden ?? []);
   return orderColumns(discovered, settings).filter((key) => hidden.has(key));
-}
-
-/**
- * Infer a stable JS type for each discovered column from the first non-null
- * value seen across the provided rows.
- */
-export function inferColumnTypes(
-  rows: readonly (Record<string, unknown> | null | undefined)[],
-): Map<string, string> {
-  const types = new Map<string, string>();
-  for (const properties of rows) {
-    if (!properties) continue;
-    for (const [key, value] of Object.entries(properties)) {
-      if (value == null || types.has(key)) continue;
-      types.set(key, typeof value);
-    }
-  }
-  return types;
 }
 
 // NOTE: renameFieldInGeojson/deleteFieldInGeojson/addFieldInGeojson rewrite every
@@ -174,10 +138,7 @@ function renameFieldInGeojson(
   };
 }
 
-function deleteFieldInGeojson(
-  geojson: FeatureCollection,
-  key: string,
-): FeatureCollection {
+function deleteFieldInGeojson(geojson: FeatureCollection, key: string): FeatureCollection {
   return {
     ...geojson,
     features: geojson.features.map((feature) => {
@@ -222,11 +183,7 @@ function defaultValueForType(type: NewColumnType, raw: string): unknown {
   return trimmed;
 }
 
-function renameFieldInStyle(
-  style: LayerStyle,
-  oldKey: string,
-  newKey: string,
-): LayerStyle {
+function renameFieldInStyle(style: LayerStyle, oldKey: string, newKey: string): LayerStyle {
   let next = style;
   for (const key of STYLE_FIELD_KEYS) {
     if (styleValue(style, key) === oldKey) next = { ...next, [key]: newKey };
@@ -255,10 +212,7 @@ function renameKeyInSettings(
   };
 }
 
-function removeKeyFromSettings(
-  settings: ColumnSettings,
-  key: string,
-): ColumnSettings {
+function removeKeyFromSettings(settings: ColumnSettings, key: string): ColumnSettings {
   return {
     hidden: settings.hidden?.filter((entry) => entry !== key),
     order: settings.order?.filter((entry) => entry !== key),
@@ -270,10 +224,7 @@ function removeKeyFromSettings(
  * ordering. When no explicit order exists, return the settings untouched and let
  * discovery order place the (last-added) key last on its own.
  */
-function appendKeyToOrder(
-  settings: ColumnSettings,
-  key: string,
-): ColumnSettings {
+function appendKeyToOrder(settings: ColumnSettings, key: string): ColumnSettings {
   if (!settings.order?.length) return settings;
   return { ...settings, order: [...settings.order, key] };
 }
@@ -307,10 +258,7 @@ export function addColumn(
 }
 
 /** The id the attribute table uses for a feature: its own id, else its index. */
-function featureKey(
-  feature: FeatureCollection["features"][number],
-  index: number,
-): string {
+function featureKey(feature: FeatureCollection["features"][number], index: number): string {
   return String(feature.id ?? index);
 }
 
@@ -369,8 +317,7 @@ export function calculateField(
   let errors = 0;
 
   const features = layer.geojson.features.map((feature, index) => {
-    const inScope =
-      scoped === null || scoped.has(featureKey(feature, index));
+    const inScope = scoped === null || scoped.has(featureKey(feature, index));
     if (!inScope) {
       // Out-of-scope feature on a new field: seed null so the column exists for
       // every feature. An existing field is left exactly as it was.
@@ -384,7 +331,7 @@ export function calculateField(
     const props = (feature.properties ?? {}) as Record<string, unknown>;
     let value: unknown;
     try {
-      value = coerceComputedValue(compiled.evaluate(props, index), outputType);
+      value = coerceComputedValue(compiled.evaluate(props, index, feature.geometry), outputType);
       evaluated += 1;
     } catch {
       value = null;
@@ -426,18 +373,12 @@ export function renameColumn(
   return {
     geojson: renameFieldInGeojson(layer.geojson, oldKey, newKey),
     style: renameFieldInStyle(layer.style, oldKey, newKey),
-    metadata: metadataWithSettings(
-      layer,
-      renameKeyInSettings(settings, oldKey, newKey),
-    ),
+    metadata: metadataWithSettings(layer, renameKeyInSettings(settings, oldKey, newKey)),
   };
 }
 
 /** Destructive removal of a property key from every feature. */
-export function deleteColumn(
-  layer: GeoLibreLayer,
-  key: string,
-): Partial<GeoLibreLayer> | null {
+export function deleteColumn(layer: GeoLibreLayer, key: string): Partial<GeoLibreLayer> | null {
   if (!layer.geojson) return null;
   // Mirror renameColumn's guard: a key absent from every feature is a no-op, so
   // don't return a patch that would touch style/settings without changing data.
@@ -454,10 +395,7 @@ export function deleteColumn(
 }
 
 /** Toggle a column's visibility (view-only metadata change). */
-export function toggleColumnHidden(
-  layer: GeoLibreLayer,
-  key: string,
-): Partial<GeoLibreLayer> {
+export function toggleColumnHidden(layer: GeoLibreLayer, key: string): Partial<GeoLibreLayer> {
   const settings = getColumnSettings(layer);
   const hidden = new Set(settings.hidden ?? []);
   if (hidden.has(key)) hidden.delete(key);
@@ -491,10 +429,7 @@ export function moveColumn(
   const visible = full.filter((entry) => !hidden.has(entry));
   const visibleIndex = visible.indexOf(key);
   if (visibleIndex < 0) return null;
-  const neighbor =
-    direction === "left"
-      ? visible[visibleIndex - 1]
-      : visible[visibleIndex + 1];
+  const neighbor = direction === "left" ? visible[visibleIndex - 1] : visible[visibleIndex + 1];
   if (neighbor === undefined) return null;
 
   const next = [...full];
@@ -504,4 +439,28 @@ export function moveColumn(
   return {
     metadata: metadataWithSettings(layer, { ...settings, order: next }),
   };
+}
+
+/**
+ * The type a column holds, taken from the first feature that has a value for it.
+ *
+ * An individual cell that is null says nothing about its column, and typing into
+ * one used to store a string — so a number column with an empty cell silently
+ * became mixed. That reads fine locally but is rejected by anything with a real
+ * schema behind it (a PostGIS-backed dataset answers "a value is incompatible
+ * with a column's type or constraints"), and it corrupts sorting and styling for
+ * plain files too.
+ */
+export function inferColumnTypes(
+  rows: readonly (Record<string, unknown> | null | undefined)[],
+): Map<string, string> {
+  const types = new Map<string, string>();
+  for (const properties of rows) {
+    if (!properties) continue;
+    for (const [key, value] of Object.entries(properties)) {
+      if (value == null || types.has(key)) continue;
+      types.set(key, typeof value);
+    }
+  }
+  return types;
 }

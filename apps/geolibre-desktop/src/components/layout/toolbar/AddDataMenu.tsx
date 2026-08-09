@@ -12,6 +12,7 @@ import { Fragment, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { AddDataKind } from "../AddDataDialog";
 import { isMobile } from "../../../lib/is-mobile";
+import { masHidesDataSource } from "../../../lib/mas-build";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
 import {
   DATA_SOURCE_CATALOG,
@@ -45,9 +46,7 @@ export function AddDataMenu({
   onOpenOsmPbfDialog,
 }: AddDataMenuProps) {
   const { t } = useTranslation();
-  const uiProfile = useDesktopSettingsStore(
-    (state) => state.desktopSettings.uiProfile,
-  );
+  const uiProfile = useDesktopSettingsStore((state) => state.desktopSettings.uiProfile);
   // PostgreSQL layers are served through the Martin tile server, a local helper
   // binary with no Android build, so hide the source on mobile.
   // The user agent is stable for the session, so evaluate once.
@@ -59,6 +58,9 @@ export function AddDataMenu({
     vector: { onSelect: addLayer.vector },
     raster: { onSelect: addLayer.raster },
     "delimited-text": { onSelect: () => onSetAddDataKind("delimited-text") },
+    cad: { onSelect: () => onSetAddDataKind("cad") },
+    gdb: { onSelect: () => onSetAddDataKind("gdb") },
+    photos: { onSelect: () => onSetAddDataKind("photos") },
     gpx: { onSelect: () => onSetAddDataKind("gpx") },
     mbtiles: { onSelect: () => onSetAddDataKind("mbtiles") },
     "osm-pbf": { onSelect: onOpenOsmPbfDialog, disabled: osmPbfBusy },
@@ -66,6 +68,10 @@ export function AddDataMenu({
     wms: { onSelect: () => onSetAddDataKind("wms") },
     wfs: { onSelect: () => onSetAddDataKind("wfs") },
     wmts: { onSelect: () => onSetAddDataKind("wmts") },
+    "ogc-features": { onSelect: () => onSetAddDataKind("ogc-features") },
+    "ogc-vector-tiles": {
+      onSelect: () => onSetAddDataKind("ogc-vector-tiles"),
+    },
     arcgis: { onSelect: () => onSetAddDataKind("arcgis") },
     georss: { onSelect: () => onSetAddDataKind("georss") },
     stac: { onSelect: addLayer.stac },
@@ -87,15 +93,17 @@ export function AddDataMenu({
   };
 
   // Each rendered section is the catalog entries it owns, filtered by the UI
-  // profile (and the mobile rule for postgres). Sections with no visible items
-  // are dropped along with their header/separator.
+  // profile (and the mobile rule for postgres, and the Mac App Store rule for
+  // the sidecar/martin-only sources). Sections with no visible items are
+  // dropped along with their header/separator.
   const sections = DATA_SOURCE_SECTION_ORDER.map((section) => ({
     section,
     entries: DATA_SOURCE_CATALOG.filter(
       (entry) =>
         entry.section === section &&
         isDataSourceVisible(uiProfile, entry.id) &&
-        !(entry.id === "postgres" && mobile),
+        !(entry.id === "postgres" && mobile) &&
+        !masHidesDataSource(entry.id),
     ),
   })).filter((group) => group.entries.length > 0);
 
@@ -125,11 +133,7 @@ export function AddDataMenu({
               const item = handlers[entry.id];
               if (!item) return null;
               return (
-                <DropdownMenuItem
-                  key={entry.id}
-                  disabled={item.disabled}
-                  onSelect={item.onSelect}
-                >
+                <DropdownMenuItem key={entry.id} disabled={item.disabled} onSelect={item.onSelect}>
                   {t(entry.labelKey)}
                 </DropdownMenuItem>
               );

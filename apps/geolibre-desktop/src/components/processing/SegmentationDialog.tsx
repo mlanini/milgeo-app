@@ -1,11 +1,6 @@
 import { useAppStore } from "@geolibre/core";
 import type { MapController } from "@geolibre/map";
-import {
-  fetchMlStatus,
-  mlSegment,
-  type MlSegmentMode,
-  type MlStatus,
-} from "@geolibre/processing";
+import { fetchMlStatus, mlSegment, type MlSegmentMode, type MlStatus } from "@geolibre/processing";
 import {
   Button,
   Dialog,
@@ -28,31 +23,20 @@ import {
   Server,
 } from "lucide-react";
 import type { FeatureCollection } from "geojson";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactElement,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
+import { IS_MAS_BUILD } from "../../lib/build-flags";
 import { isTauri, openLocalDataFileWithFallback } from "../../lib/tauri-io";
 import { reprojectFeatureCollectionToWgs84 } from "../../lib/duckdb-vector-loader";
 import { startGeoLibreSidecar } from "../../lib/sidecar";
 import { UPDATE_URL } from "../../lib/updates";
-import {
-  SidecarHelpBanner,
-  SIDECAR_PORT,
-  SIDECAR_URL,
-} from "./SidecarHelpBanner";
+import { SidecarHelpBanner, SIDECAR_PORT, SIDECAR_URL } from "./SidecarHelpBanner";
 
 interface SegmentationDialogProps {
   mapControllerRef: React.RefObject<MapController | null>;
 }
 
-const IMAGE_FILTERS = [
-  { name: "Imagery", extensions: ["tif", "tiff", "png", "jpg", "jpeg"] },
-];
+const IMAGE_FILTERS = [{ name: "Imagery", extensions: ["tif", "tiff", "png", "jpg", "jpeg"] }];
 const IMAGE_ACCEPT = ".tif,.tiff,.png,.jpg,.jpeg";
 
 /**
@@ -64,9 +48,7 @@ const IMAGE_ACCEPT = ".tif,.tiff,.png,.jpg,.jpeg";
  * segmentation over a chosen GeoTIFF. Box/point prompts drawn on the map are a
  * follow-up.
  */
-export function SegmentationDialog({
-  mapControllerRef,
-}: SegmentationDialogProps): ReactElement {
+export function SegmentationDialog({ mapControllerRef }: SegmentationDialogProps): ReactElement {
   const { t } = useTranslation();
   const open = useAppStore((s) => s.ui.segmentationOpen);
   const setOpen = useAppStore((s) => s.setSegmentationOpen);
@@ -97,6 +79,14 @@ export function SegmentationDialog({
     const gen = ++checkGenRef.current;
     setChecking(true);
     setStatus(null);
+    // The Mac App Store build has no sidecar to probe or start. The dialog is
+    // already hidden from the menus there; this is the defensive fallback in
+    // case it mounts some other way, mirroring the web-unavailable path.
+    if (IS_MAS_BUILD) {
+      setStatus({ available: false, message: t("masBuild.unavailable") });
+      setChecking(false);
+      return;
+    }
     try {
       const next = await fetchMlStatus();
       if (gen === checkGenRef.current) setStatus(next);
@@ -161,11 +151,7 @@ export function SegmentationDialog({
     } catch (err) {
       // Route the failure into serverError so the bottom of the dialog renders
       // the interactive troubleshooting banner rather than a static error line.
-      setServerError(
-        err instanceof Error
-          ? err.message
-          : t("segmentation.error.startServer"),
-      );
+      setServerError(err instanceof Error ? err.message : t("segmentation.error.startServer"));
     } finally {
       setStartingServer(false);
     }
@@ -188,12 +174,10 @@ export function SegmentationDialog({
     setRunning(true);
     try {
       const blob = new Blob([imageBytes]);
-      const raw: FeatureCollection = await mlSegment(
-        mode,
-        blob,
-        imageName || "image.tif",
-        { prompt: prompt.trim(), confidenceThreshold: confidence },
-      );
+      const raw: FeatureCollection = await mlSegment(mode, blob, imageName || "image.tif", {
+        prompt: prompt.trim(),
+        confidenceThreshold: confidence,
+      });
       // samgeo-api returns polygons in the source raster's CRS (e.g. EPSG:3857)
       // tagged with a GeoJSON `crs` member; the map and store need WGS84.
       const fc = await reprojectFeatureCollectionToWgs84(raw);
@@ -207,30 +191,15 @@ export function SegmentationDialog({
           ? t("segmentation.layerName", { prompt: prompt.trim() })
           : t("segmentation.layerNameDefault");
       const layerId = addGeoJsonLayer(name, fc);
-      const layer = useAppStore
-        .getState()
-        .layers.find((item) => item.id === layerId);
+      const layer = useAppStore.getState().layers.find((item) => item.id === layerId);
       if (layer) mapControllerRef.current?.fitLayer(layer);
-      setResultMessage(
-        t("segmentation.added", { count: features.length, name }),
-      );
+      setResultMessage(t("segmentation.added", { count: features.length, name }));
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : t("segmentation.error.failed"),
-      );
+      setError(err instanceof Error ? err.message : t("segmentation.error.failed"));
     } finally {
       setRunning(false);
     }
-  }, [
-    imageBytes,
-    imageName,
-    mode,
-    prompt,
-    confidence,
-    addGeoJsonLayer,
-    mapControllerRef,
-    t,
-  ]);
+  }, [imageBytes, imageName, mode, prompt, confidence, addGeoJsonLayer, mapControllerRef, t]);
 
   const available = status?.available === true;
   // In the browser the form is shown but disabled rather than hidden (issue
@@ -240,6 +209,12 @@ export function SegmentationDialog({
   // disabled during the async probe too; `available` becomes true only when a
   // proxied sidecar is reachable, the rare web case where segmentation works.
   const webUnavailable = !isTauri() && !available;
+
+  // The Mac App Store build can never reach `available` (the sidecar is
+  // compiled out), so its form is permanently disabled too. Kept separate from
+  // `webUnavailable`, which also drives the desktop-download CTA that would be
+  // nonsense on a build that already IS the desktop app.
+  const formUnavailable = webUnavailable || (IS_MAS_BUILD && !available);
 
   // Browser users cannot run segmentation here, so point them at the desktop
   // download instead of the unusable "Start server" action (issue #777). This
@@ -265,9 +240,7 @@ export function SegmentationDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("segmentation.title")}</DialogTitle>
-          <DialogDescription>
-            {t("segmentation.description")}
-          </DialogDescription>
+          <DialogDescription>{t("segmentation.description")}</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
@@ -302,25 +275,26 @@ export function SegmentationDialog({
               </p>
               {/* Launching the sidecar is a desktop-only (Tauri) capability;
                   in the browser build it cannot work, so offer the desktop
-                  download instead. */}
-              {isTauri() ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void startServer()}
-                  disabled={startingServer}
-                  className="gap-2"
-                >
-                  {startingServer ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Server className="h-4 w-4" />
-                  )}
-                  {t("segmentation.startServer")}
-                </Button>
-              ) : (
-                downloadDesktopButton
-              )}
+                  download instead. The Mac App Store build cannot spawn it
+                  either, so it gets neither action. */}
+              {isTauri()
+                ? !IS_MAS_BUILD && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void startServer()}
+                      disabled={startingServer}
+                      className="gap-2"
+                    >
+                      {startingServer ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Server className="h-4 w-4" />
+                      )}
+                      {t("segmentation.startServer")}
+                    </Button>
+                  )
+                : downloadDesktopButton}
             </div>
           )}
 
@@ -338,7 +312,7 @@ export function SegmentationDialog({
               <Input
                 id="seg-image"
                 readOnly
-                disabled={webUnavailable}
+                disabled={formUnavailable}
                 value={imageName}
                 placeholder={t("segmentation.imagePlaceholder")}
               />
@@ -348,7 +322,7 @@ export function SegmentationDialog({
                 size="icon"
                 title={t("segmentation.chooseImage")}
                 onClick={() => void pickImage()}
-                disabled={webUnavailable}
+                disabled={formUnavailable}
               >
                 <FolderOpen className="h-4 w-4" />
               </Button>
@@ -363,15 +337,11 @@ export function SegmentationDialog({
             <Select
               id="seg-mode"
               value={mode}
-              disabled={webUnavailable}
-              onChange={(e) =>
-                setMode(e.target.value as "text" | "automatic")
-              }
+              disabled={formUnavailable}
+              onChange={(e) => setMode(e.target.value as "text" | "automatic")}
             >
               <option value="text">{t("segmentation.modeText")}</option>
-              <option value="automatic">
-                {t("segmentation.modeAutomatic")}
-              </option>
+              <option value="automatic">{t("segmentation.modeAutomatic")}</option>
             </Select>
           </div>
 
@@ -385,7 +355,7 @@ export function SegmentationDialog({
                 <Input
                   id="seg-prompt"
                   value={prompt}
-                  disabled={webUnavailable}
+                  disabled={formUnavailable}
                   placeholder={t("segmentation.promptPlaceholder")}
                   onChange={(e) => setPrompt(e.target.value)}
                 />
@@ -400,7 +370,7 @@ export function SegmentationDialog({
                   min={0}
                   max={1}
                   step={0.05}
-                  disabled={webUnavailable}
+                  disabled={formUnavailable}
                   value={String(confidence)}
                   onChange={(e) => {
                     if (e.target.value === "") {
@@ -446,9 +416,7 @@ export function SegmentationDialog({
               intro={t("segmentation.sidecar.intro", {
                 sidecarUrl: SIDECAR_URL,
               })}
-              troubleshootingTitle={t(
-                "segmentation.sidecar.troubleshootingTitle",
-              )}
+              troubleshootingTitle={t("segmentation.sidecar.troubleshootingTitle")}
               // The banner only renders after a failed "Start server", which is
               // desktop-only, so the start step is always the desktop one.
               // Install first: a missing segment-geospatial backend is the most

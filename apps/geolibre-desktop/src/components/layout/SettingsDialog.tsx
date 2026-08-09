@@ -1,14 +1,17 @@
 import {
   DEFAULT_PROJECT_PREFERENCES,
+  ELLIPSOIDS,
   GEOCODING_PROVIDERS,
   getGeocodingProvider,
   normalizeGeocodingProviderId,
   useAppStore,
   type MapPreferences,
   type MapProjection,
+  type MapScaleUnit,
   type ProjectPreferences,
   type RuntimeEnvironmentVariable,
 } from "@geolibre/core";
+import { closeRightPanel, collapseRightPanel, openRightPanel } from "@geolibre/plugins";
 import {
   Button,
   Dialog,
@@ -44,10 +47,12 @@ import {
   Eye,
   EyeOff,
   FolderCog,
+  FolderTree,
   Languages,
   Locate,
   MapPinned,
   LayoutPanelTop,
+  MessageSquare,
   Moon,
   Palette,
   PanelLeft,
@@ -57,6 +62,7 @@ import {
   Settings,
   SlidersHorizontal,
   Sun,
+  Terminal,
   Type,
   Trash2,
   TriangleAlert,
@@ -78,10 +84,15 @@ import {
   type UpdateSettings,
 } from "../../hooks/useDesktopSettings";
 import { useLanguage } from "../../hooks/useLanguage";
+import { BROWSER_PANEL_ID } from "../../hooks/useRegisterBrowserPanel";
+import { COMMENTS_PANEL_ID } from "../../hooks/useRegisterCommentsPanel";
+import { useRightPanelState } from "../../hooks/useRightPanels";
 import type { ThemeMode } from "../../hooks/useThemeMode";
 import { isTauri } from "../../lib/is-tauri";
-import { THEME_SCHEMES, type ThemeScheme } from "../../lib/theme-schemes";
-import type { UpdateNotificationLevel } from "../../lib/updates";
+import { THEME_SCHEMES, normalizeHexColor, type ThemeScheme } from "../../lib/theme-schemes";
+import { IS_MAS_BUILD } from "../../lib/build-flags";
+import { resolveShareHost, shareHostLabel } from "../../lib/share-geolibre";
+import { IS_STORE_BUILD, type UpdateNotificationLevel } from "../../lib/updates";
 import {
   DATA_SOURCE_CATALOG,
   DATA_SOURCE_SECTION_LABEL_KEYS,
@@ -98,14 +109,18 @@ import {
 import {
   ASSISTANT_PROVIDER_IDS,
   PROVIDER_LABELS,
-  availableProviders,
+  scopeOsEnvToProject,
+  type AssistantProfile,
   type AssistantProviderId,
+  type RuntimeEnv,
 } from "../../lib/assistant/provider";
+import { loadOsEnvVars, readOsEnv } from "../../lib/assistant/os-env";
 import {
   PROVIDER_DOCS_URL,
   PROVIDER_FIELDS,
   type ProviderField,
 } from "../../lib/assistant/provider-fields";
+import { AiSectionContent } from "./AiSectionContent";
 
 export type SettingsSection =
   | "map"
@@ -218,8 +233,10 @@ interface DraftPreferences {
 
 interface DraftDesktopSettings {
   layout: DesktopLayoutSettings;
-  openTopographyApiKey: string;
   shareToken: string;
+  cesiumIonToken: string;
+  aiProfiles: AssistantProfile[];
+  defaultAiProfileId: string | null;
   uiProfile: UiProfileSettings;
   updates: UpdateSettings;
 }
@@ -247,8 +264,13 @@ function clonePreferences(preferences: ProjectPreferences): DraftPreferences {
 function cloneDesktopSettings(settings: DesktopSettings): DraftDesktopSettings {
   return {
     layout: { ...settings.layout },
-    openTopographyApiKey: settings.openTopographyApiKey,
     shareToken: settings.shareToken,
+    cesiumIonToken: settings.cesiumIonToken,
+    aiProfiles: settings.aiProfiles.map((p) => ({
+      ...p,
+      fieldValues: { ...p.fieldValues },
+    })),
+    defaultAiProfileId: settings.defaultAiProfileId,
     uiProfile: {
       ...settings.uiProfile,
       hiddenDataSources: [...settings.uiProfile.hiddenDataSources],
@@ -260,9 +282,7 @@ function cloneDesktopSettings(settings: DesktopSettings): DraftDesktopSettings {
   };
 }
 
-function normalizeBounds(
-  bounds: MapPreferences["bounds"],
-): MapPreferences["bounds"] {
+function normalizeBounds(bounds: MapPreferences["bounds"]): MapPreferences["bounds"] {
   const west = clamp(bounds[0], -180, 180);
   const south = clamp(bounds[1], -85, 85);
   const east = clamp(bounds[2], -180, 180);
@@ -283,9 +303,7 @@ function roundCoordinate(value: number): number {
   return Number(value.toFixed(6));
 }
 
-function normalizePreferences(
-  preferences: ProjectPreferences,
-): ProjectPreferences {
+function normalizePreferences(preferences: ProjectPreferences): ProjectPreferences {
   const minZoom = clamp(preferences.map.minZoom, 0, 24);
   const maxZoom = Math.max(minZoom, clamp(preferences.map.maxZoom, 0, 24));
   return {
@@ -327,9 +345,7 @@ function normalizeGeocodingPreferences(
 
 // Returned as a code (not a message) so the user-facing string is resolved
 // through i18n at the call site, where `t` is in scope.
-type EnvironmentValidationError =
-  | { kind: "pattern" }
-  | { kind: "duplicate"; name: string };
+type EnvironmentValidationError = { kind: "pattern" } | { kind: "duplicate"; name: string };
 
 function validateEnvironmentVariables(
   variables: RuntimeEnvironmentVariable[],
@@ -363,29 +379,66 @@ export function SettingsDialog({
   onToggleThemeMode,
 }: SettingsDialogProps) {
   const { t } = useTranslation();
-  const {
-    language,
-    options: languageOptions,
-    setLanguage,
-  } = useLanguage();
+  // The share host's settings page, where the API token below is created.
+  // Derived from the resolved host so a self-hosted deployment links to its own
+  // page; null when the deployment configured no share host, in which case the
+  // description renders without a link rather than pointing at a stranger's site.
+  const shareHostState = resolveShareHost();
+  const shareBaseUrl = shareHostState.baseUrl;
+  const shareHost = shareHostLabel();
+  const shareSettingsUrl = shareBaseUrl ? `${shareBaseUrl}/settings` : null;
+  // No usable host (sharing turned off, or a configured address that was
+  // rejected) means the token field is dead: it would authenticate against a
+  // server this deployment never talks to. Say so instead of rendering guidance
+  // that names the public hosted service — the whole point of the opt-out. The
+  // two unusable states get different copy: "not configured" would send an
+  // operator who typo'd the variable looking for one they never set.
+  const shareTokenUsable = shareBaseUrl != null;
+  const shareTokenUnavailableMessage =
+    shareHostState.status === "invalid"
+      ? t("settings.env.tokenHostInvalid")
+      : t("settings.env.tokenUnavailable");
+  const { language, options: languageOptions, setLanguage } = useLanguage();
   const preferences = useAppStore((s) => s.preferences);
   const setPreferences = useAppStore((s) => s.setPreferences);
   const desktopSettings = useDesktopSettingsStore((s) => s.desktopSettings);
-  const setDesktopSettings = useDesktopSettingsStore(
-    (s) => s.setDesktopSettings,
-  );
+  const setDesktopSettings = useDesktopSettingsStore((s) => s.setDesktopSettings);
   // Visibility of the Settings dropdown items under the active UI profile. The
   // Language/Layout/Interface entries are always shown so the profile UI stays
   // reachable.
-  const showSettingsItem = (id: string) =>
-    isMenuItemVisible(desktopSettings.uiProfile, id);
+  const showSettingsItem = (id: string) => isMenuItemVisible(desktopSettings.uiProfile, id);
   const [open, setOpen] = useState(false);
   const [section, setSection] = useState<SettingsSection>("map");
+  // The Browser is a dockable right panel (open/close via the registry), not a
+  // persisted layout preference, so its Layout toggle acts on the live registry
+  // state directly rather than through the draft settings.
+  const rightPanelState = useRightPanelState();
+  const browserPanelOpen = rightPanelState.visibleIds.includes(BROWSER_PANEL_ID);
+  const commentsPanelOpen = rightPanelState.visibleIds.includes(COMMENTS_PANEL_ID);
+  // Show it collapsed on the shared Layers rail, matching its default state, so
+  // re-enabling from Settings doesn't jump to an expanded panel that buries the
+  // Layers panel.
+  const toggleBrowserPanel = (show: boolean) => {
+    if (show) {
+      openRightPanel(BROWSER_PANEL_ID);
+      collapseRightPanel(BROWSER_PANEL_ID);
+    } else {
+      closeRightPanel(BROWSER_PANEL_ID);
+    }
+  };
+  // Collapsed for the same reason as Browser above, and to match the state
+  // Comments registers itself in on mount.
+  const toggleCommentsPanel = (show: boolean) => {
+    if (show) {
+      openRightPanel(COMMENTS_PANEL_ID);
+      collapseRightPanel(COMMENTS_PANEL_ID);
+    } else {
+      closeRightPanel(COMMENTS_PANEL_ID);
+    }
+  };
   // A field a deep-link asked us to focus once its section renders; cleared
   // after the focus lands so a later open without a focus request stays put.
-  const [pendingFocus, setPendingFocus] = useState<SettingsFocusTarget | null>(
-    null,
-  );
+  const [pendingFocus, setPendingFocus] = useState<SettingsFocusTarget | null>(null);
   const shareTokenInputRef = useRef<HTMLInputElement>(null);
   // The native color input in the Appearance pane. The accent-color dropdown's
   // "Custom" entry deep-links here so picking a custom color is reachable
@@ -408,6 +461,9 @@ export function SettingsDialog({
     // Automated update checks run in the desktop build only, so the section is
     // hidden on the web where its controls would be inert.
     if (id === "updates" && !isTauri()) return false;
+    // The Microsoft Store build has no in-app update flow to configure (policy
+    // 10.2.5), so its settings section is dropped entirely.
+    if (id === "updates" && IS_STORE_BUILD) return false;
     const gate = SECTION_GATE[id];
     return gate ? showSettingsItem(gate) : true;
   };
@@ -415,23 +471,20 @@ export function SettingsDialog({
     ? section
     : // "interface" has no gate, so it is always a valid, visible fallback.
       (SECTION_ITEMS.find((item) => isSectionVisible(item.id))?.id ?? "interface");
-  const [draftPreferences, setDraftPreferences] = useState<DraftPreferences>(
-    () => clonePreferences(preferences),
+  const [draftPreferences, setDraftPreferences] = useState<DraftPreferences>(() =>
+    clonePreferences(preferences),
   );
-  const [draftDesktopSettings, setDraftDesktopSettings] =
-    useState<DraftDesktopSettings>(() => cloneDesktopSettings(desktopSettings));
+  const [draftDesktopSettings, setDraftDesktopSettings] = useState<DraftDesktopSettings>(() =>
+    cloneDesktopSettings(desktopSettings),
+  );
   const [error, setError] = useState<string | null>(null);
   // Live map projection, captured when the dialog opens. The Globe projection
   // lets the map drift slightly past restricted bounds, so we warn users to
   // switch to Mercator before capturing the current view (see #505).
-  const [liveProjection, setLiveProjection] = useState<MapProjection | null>(
-    null,
-  );
+  const [liveProjection, setLiveProjection] = useState<MapProjection | null>(null);
   // Ids of variables whose value is temporarily revealed; values are masked
   // by default so secrets are not shown on screen.
-  const [revealedValueIds, setRevealedValueIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [revealedValueIds, setRevealedValueIds] = useState<Set<string>>(() => new Set());
   const enabledVariableCount = useMemo(
     () =>
       draftPreferences.environmentVariables.filter(
@@ -439,10 +492,12 @@ export function SettingsDialog({
       ).length,
     [draftPreferences.environmentVariables],
   );
-  // The AI provider whose credential template is shown in the AI section. Seeded
-  // to the first already-configured provider when the dialog opens (below), so a
-  // returning user lands on the provider they set up.
-  const [aiProvider, setAiProvider] = useState<AssistantProviderId>("google");
+  // The AI profile being edited in the AI section. Null when no profile is
+  // selected (the user sees the profile list). Seeded to the first existing
+  // profile when the dialog opens.
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  // Whether the user is creating a new profile (transient — no id yet).
+  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
   // The draft env vars as a plain name→value map (enabled, named only), matching
   // what the live runtime env will hold after Save. Drives the per-provider
   // "configured" status without re-implementing provider.ts resolution.
@@ -454,9 +509,66 @@ export function SettingsDialog({
     }
     return env;
   }, [draftPreferences.environmentVariables]);
-  const configuredProviders = useMemo(
-    () => new Set(availableProviders(draftEnv)),
-    [draftEnv],
+
+  /** The editing profile (the one whose fields are shown), or null. */
+  const editingProfile: AssistantProfile | null = useMemo(() => {
+    if (isCreatingProfile) return null;
+    if (!editingProfileId) return null;
+    return draftDesktopSettings.aiProfiles.find((p) => p.id === editingProfileId) ?? null;
+  }, [editingProfileId, isCreatingProfile, draftDesktopSettings.aiProfiles]);
+
+  /** The provider shown in the editing fields. Derived from the editing profile. */
+  const editingProvider: AssistantProviderId = editingProfile?.provider ?? "google";
+
+  /**
+   * Flat env map from all profiles' fieldValues. Projected into the runtime env
+   * alongside OS and project values so provider "configured" status reflects
+   * what the assistant will actually resolve.
+   */
+  const draftProfilesEnv = useMemo(() => {
+    const env: Record<string, string> = {};
+    for (const profile of draftDesktopSettings.aiProfiles) {
+      for (const [key, value] of Object.entries(profile.fieldValues)) {
+        const name = key.trim();
+        if (name && value) env[name] = value;
+      }
+    }
+    return env;
+  }, [draftDesktopSettings.aiProfiles]);
+  // AI keys read from the user's OS environment (desktop only). This dialog is
+  // mounted eagerly at startup — before the App-root loader populates the cache
+  // and before the async Tauri read resolves — so a mount-only read would freeze
+  // at `{}`. Load it here through state (mirroring useRuntimeEnvironmentVariables)
+  // so provider status and the badges below reflect env-sourced credentials.
+  const [osEnv, setOsEnv] = useState<RuntimeEnv>(() => readOsEnv());
+  useEffect(() => {
+    let cancelled = false;
+    loadOsEnvVars().then((env) => {
+      if (!cancelled) setOsEnv(env);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  // Scope OS values against the draft exactly as the runtime merge does
+  // (useRuntimeEnvironmentVariables), so this dialog's notion of "configured"
+  // and the field badges match what the assistant will actually resolve — a
+  // plain spread would disagree in the alias-collision case (e.g. an empty
+  // project GOOGLE_API_KEY row shadows the whole Google OS alias group).
+  const scopedOsEnv = useMemo(
+    () =>
+      scopeOsEnvToProject(
+        osEnv,
+        new Set([...Object.keys(draftEnv), ...Object.keys(draftProfilesEnv)]),
+      ),
+    [osEnv, draftEnv, draftProfilesEnv],
+  );
+  // Merge OS env under the drafts so a provider configured purely via a system
+  // environment variable still reports "ready". Precedence mirrors the live
+  // runtime merge: OS < device AI keys < project Environment variables.
+  const effectiveEnv = useMemo(
+    () => ({ ...scopedOsEnv, ...draftProfilesEnv, ...draftEnv }),
+    [scopedOsEnv, draftProfilesEnv, draftEnv],
   );
 
   // Seed the draft from the store only when the dialog opens. Depending on
@@ -471,23 +583,52 @@ export function SettingsDialog({
       // focus RAF fires, a leftover target would otherwise fire on a later
       // open that never asked for it.
       setPendingFocus(null);
+      // Discard any uncommitted hex text so a half-typed/invalid value never
+      // resurfaces on the next open (the swatch already shows the saved color),
+      // and clear the Escape skip flag so a leftover true can't swallow the
+      // first edit of the next session.
+      skipCustomColorCommitRef.current = false;
+      setCustomColorDraft(null);
       return;
     }
-    const seededPreferences = clonePreferences(
-      useAppStore.getState().preferences,
-    );
+    const seededPreferences = clonePreferences(useAppStore.getState().preferences);
     setDraftPreferences(seededPreferences);
     setDraftDesktopSettings(
       cloneDesktopSettings(useDesktopSettingsStore.getState().desktopSettings),
     );
-    // Land the AI section on a provider the user already configured, so editing
-    // existing credentials needs no extra click.
-    const seededEnv: Record<string, string> = {};
+    // Land the AI section on the first profile's provider, or the first
+    // available provider if no profiles exist, so the user sees something
+    // relevant without extra clicks.
+    const storeSettings = useDesktopSettingsStore.getState().desktopSettings;
+    const seededProfiles = storeSettings.aiProfiles.map((p) => ({
+      ...p,
+      fieldValues: { ...p.fieldValues },
+    }));
+    const seededProjectEnv: Record<string, string> = {};
     for (const variable of seededPreferences.environmentVariables) {
       const key = variable.key.trim();
-      if (variable.enabled && key) seededEnv[key] = variable.value;
+      if (variable.enabled && key) seededProjectEnv[key] = variable.value;
     }
-    setAiProvider(availableProviders(seededEnv)[0] ?? "google");
+    // Build a flat env from all profile field values for determining
+    // available providers during seeding.
+    const seededAiEnv: Record<string, string> = {};
+    for (const profile of seededProfiles) {
+      for (const [key, value] of Object.entries(profile.fieldValues)) {
+        const name = key.trim();
+        if (name && value) seededAiEnv[name] = value;
+      }
+    }
+    const seededEnv = {
+      ...scopeOsEnvToProject(
+        readOsEnv(),
+        new Set([...Object.keys(seededProjectEnv), ...Object.keys(seededAiEnv)]),
+      ),
+      ...seededAiEnv,
+      ...seededProjectEnv,
+    };
+    // Show the profile list by default (do not auto-select a profile for editing).
+    setEditingProfileId(null);
+    setIsCreatingProfile(false);
     setRevealedValueIds(new Set());
     setError(null);
     setLiveProjection(mapControllerRef.current?.readProjection() ?? null);
@@ -516,8 +657,7 @@ export function SettingsDialog({
       let sectionShown = false;
       if (requested) {
         const gate = SECTION_GATE[requested];
-        const profile =
-          useDesktopSettingsStore.getState().desktopSettings.uiProfile;
+        const profile = useDesktopSettingsStore.getState().desktopSettings.uiProfile;
         sectionShown = !gate || isMenuItemVisible(profile, gate);
         if (sectionShown) setSection(requested);
       }
@@ -608,11 +748,17 @@ export function SettingsDialog({
     ...(field.aliases ?? []),
   ];
 
-  // The value of an env-var-backed AI provider field, or "" when unset. Only an
-  // enabled row counts: a var disabled in the Environment section must read as
-  // empty so the field matches the (also enabled-only) status banner. An aliased
-  // value (e.g. an existing GOOGLE_API_KEY) is surfaced rather than hidden.
+  // The value of an env-var-backed AI provider field, or "" when unset. Reads
+  // the editing profile's field values first (where the AI section saves keys),
+  // then falls back to a matching value still held in the project's Environment
+  // variables so an existing credential stays visible and editable here.
   const getProviderField = (field: ProviderField): string => {
+    if (editingProfile) {
+      for (const key of fieldEnvKeys(field)) {
+        const value = editingProfile.fieldValues[key];
+        if (value) return value;
+      }
+    }
     for (const key of fieldEnvKeys(field)) {
       const row = draftPreferences.environmentVariables.find(
         (variable) => variable.key === key && variable.enabled,
@@ -622,37 +768,43 @@ export function SettingsDialog({
     return "";
   };
 
-  // Write an AI provider field through to its backing env var. Edits the enabled
-  // row the user already has (canonical or alias) so re-entering a credential
-  // never creates a duplicate key; otherwise drops any same-named disabled rows
-  // (so a deliberately disabled var is not silently re-enabled with its old
-  // value) and appends a fresh enabled row under the canonical name. Clearing
-  // removes the row so the Environment list never accrues empty entries.
+  // The OS-environment variable name backing a field, when the system provides
+  // a value the project doesn't. Drives the "read from your environment" badge
+  // so a user sees a key is already covered without typing (or saving) it here.
+  const osFieldEnvName = (field: ProviderField): string | null => {
+    for (const key of fieldEnvKeys(field)) {
+      if (scopedOsEnv[key]?.trim()) return key;
+    }
+    return null;
+  };
+
+  // Write an AI provider field to the editing profile's field values. Any alias
+  // entry is dropped so re-entering a credential never leaves a stale duplicate
+  // under an alias, and clearing removes the entry so the store never accrues
+  // empty values. The matching rows are also removed from the project's
+  // Environment variables: these keys now live in the profile, so a leftover
+  // project row must not shadow the profile value at runtime (project env has
+  // higher precedence) nor get serialized into a shared project file.
   const setProviderField = (field: ProviderField, value: string) => {
+    if (!editingProfile) return;
     const keys = fieldEnvKeys(field);
+    setDraftDesktopSettings((current) => {
+      const next = current.aiProfiles.map((p) => {
+        if (p.id !== editingProfile.id) return p;
+        const nextFieldValues = { ...p.fieldValues };
+        for (const key of keys) delete nextFieldValues[key];
+        if (value !== "") nextFieldValues[field.envKey] = value;
+        return { ...p, fieldValues: nextFieldValues };
+      });
+      return { ...current, aiProfiles: next };
+    });
     setDraftPreferences((current) => {
-      const enabledIndex = current.environmentVariables.findIndex(
-        (variable) => keys.includes(variable.key) && variable.enabled,
-      );
-      if (enabledIndex !== -1) {
-        const next = current.environmentVariables.slice();
-        if (value === "") {
-          next.splice(enabledIndex, 1);
-        } else {
-          next[enabledIndex] = { ...next[enabledIndex], value };
-        }
-        return { ...current, environmentVariables: next };
+      if (!current.environmentVariables.some((v) => keys.includes(v.key))) {
+        return current;
       }
-      if (value === "") return current;
-      const kept = current.environmentVariables.filter(
-        (variable) => !keys.includes(variable.key),
-      );
       return {
         ...current,
-        environmentVariables: [
-          ...kept,
-          { id: createDraftId(), key: field.envKey, value, enabled: true },
-        ],
+        environmentVariables: current.environmentVariables.filter((v) => !keys.includes(v.key)),
       };
     });
     setError(null);
@@ -681,10 +833,7 @@ export function SettingsDialog({
     setError(null);
   };
 
-  const updateEnvironmentVariable = (
-    index: number,
-    patch: Partial<RuntimeEnvironmentVariable>,
-  ) => {
+  const updateEnvironmentVariable = (index: number, patch: Partial<RuntimeEnvironmentVariable>) => {
     setDraftPreferences((current) => ({
       ...current,
       environmentVariables: current.environmentVariables.map((variable, i) =>
@@ -709,9 +858,7 @@ export function SettingsDialog({
   const removeEnvironmentVariable = (index: number) => {
     setDraftPreferences((current) => ({
       ...current,
-      environmentVariables: current.environmentVariables.filter(
-        (_, i) => i !== index,
-      ),
+      environmentVariables: current.environmentVariables.filter((_, i) => i !== index),
     }));
     setError(null);
   };
@@ -737,9 +884,7 @@ export function SettingsDialog({
     updateMapPreferences(DEFAULT_PROJECT_PREFERENCES.map);
   };
 
-  const updateGeocoding = (
-    patch: Partial<ProjectPreferences["geocoding"]>,
-  ) => {
+  const updateGeocoding = (patch: Partial<ProjectPreferences["geocoding"]>) => {
     setDraftPreferences((current) => ({
       ...current,
       geocoding: { ...current.geocoding, ...patch },
@@ -754,14 +899,6 @@ export function SettingsDialog({
         ...current.geocoding,
         apiKeys: { ...current.geocoding.apiKeys, [providerId]: value },
       },
-    }));
-    setError(null);
-  };
-
-  const updateOpenTopographyApiKey = (value: string) => {
-    setDraftDesktopSettings((current) => ({
-      ...current,
-      openTopographyApiKey: value,
     }));
     setError(null);
   };
@@ -807,6 +944,28 @@ export function SettingsDialog({
     });
   };
 
+  // In-progress text for the inline hex field next to the swatch. While the user
+  // is typing or pasting a code it holds the raw string; `null` means the field
+  // mirrors the saved color. On commit a valid 3- or 6-digit hex applies and an
+  // invalid one is discarded, so the field reverts to the last valid color (#911).
+  const [customColorDraft, setCustomColorDraft] = useState<string | null>(null);
+  // Set just before the Escape-triggered blur so the imminent blur discards the
+  // draft instead of committing it: the dialog still closes (its own Escape
+  // handler), but the typed value is cancelled rather than applied on the way out.
+  const skipCustomColorCommitRef = useRef(false);
+
+  const commitCustomColorDraft = () => {
+    if (skipCustomColorCommitRef.current) {
+      skipCustomColorCommitRef.current = false;
+      setCustomColorDraft(null);
+      return;
+    }
+    if (customColorDraft === null) return;
+    const normalized = normalizeHexColor(customColorDraft);
+    if (normalized) updateSavedThemeCustomColor(normalized);
+    setCustomColorDraft(null);
+  };
+
   const updateDraftUpdateSettings = (patch: Partial<UpdateSettings>) => {
     setDraftDesktopSettings((current) => ({
       ...current,
@@ -849,6 +1008,12 @@ export function SettingsDialog({
     // then closing the dialog without saving discards the change (a secret
     // field should not persist on every keystroke).
     setDraftDesktopSettings((current) => ({ ...current, shareToken: value }));
+  };
+
+  const updateCesiumIonToken = (value: string) => {
+    // Draft-only until Save, like the share token above (a secret field should
+    // not persist on every keystroke).
+    setDraftDesktopSettings((current) => ({ ...current, cesiumIonToken: value }));
   };
 
   const updateUiProfile = (patch: Partial<UiProfileSettings>) => {
@@ -967,9 +1132,7 @@ export function SettingsDialog({
 
   const saveSettings = () => {
     const normalized = normalizePreferences(draftPreferences);
-    const validationError = validateEnvironmentVariables(
-      normalized.environmentVariables,
-    );
+    const validationError = validateEnvironmentVariables(normalized.environmentVariables);
     if (validationError) {
       setError(
         validationError.kind === "duplicate"
@@ -1002,8 +1165,10 @@ export function SettingsDialog({
     setDesktopSettings({
       ...useDesktopSettingsStore.getState().desktopSettings,
       layout: draftDesktopSettings.layout,
-      openTopographyApiKey: draftDesktopSettings.openTopographyApiKey.trim(),
       shareToken: draftDesktopSettings.shareToken,
+      cesiumIonToken: draftDesktopSettings.cesiumIonToken,
+      aiProfiles: draftDesktopSettings.aiProfiles,
+      defaultAiProfileId: draftDesktopSettings.defaultAiProfileId,
       uiProfile: committedUiProfile,
       updates: draftDesktopSettings.updates,
     });
@@ -1042,9 +1207,7 @@ export function SettingsDialog({
             aria-label={t("settings.title")}
           >
             <Settings className={iconClassName} />
-            {showLabels ? (
-              <span className="hidden sm:inline">{t("settings.title")}</span>
-            ) : null}
+            {showLabels ? <span className="hidden sm:inline">{t("settings.title")}</span> : null}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
@@ -1052,19 +1215,13 @@ export function SettingsDialog({
           <DropdownMenuSeparator />
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
-              <Languages className="mr-2 h-3.5 w-3.5" />
+              <Languages className="h-3.5 w-3.5" />
               {t("language.label")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="w-44">
-              <DropdownMenuRadioGroup
-                value={language}
-                onValueChange={setLanguage}
-              >
+              <DropdownMenuRadioGroup value={language} onValueChange={setLanguage}>
                 {languageOptions.map((option) => (
-                  <DropdownMenuRadioItem
-                    key={option.code}
-                    value={option.code}
-                  >
+                  <DropdownMenuRadioItem key={option.code} value={option.code}>
                     {option.nativeName === option.englishName
                       ? option.nativeName
                       : `${option.nativeName} (${option.englishName})`}
@@ -1081,7 +1238,7 @@ export function SettingsDialog({
                 setOpen(true);
               }}
             >
-              <MapPinned className="mr-2 h-3.5 w-3.5" />
+              <MapPinned className="me-2 h-3.5 w-3.5" />
               {t("settings.menu.mapPreferences")}
             </DropdownMenuItem>
           )}
@@ -1134,6 +1291,20 @@ export function SettingsDialog({
               >
                 {t("settings.layout.showStylePanel")}
               </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={browserPanelOpen}
+                onCheckedChange={(checked: boolean) => toggleBrowserPanel(checked === true)}
+                onSelect={(event: Event) => event.preventDefault()}
+              >
+                {t("settings.layout.showBrowserPanel")}
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                checked={commentsPanelOpen}
+                onCheckedChange={(checked: boolean) => toggleCommentsPanel(checked === true)}
+                onSelect={(event: Event) => event.preventDefault()}
+              >
+                {t("settings.layout.showCommentsPanel")}
+              </DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onSelect={() => {
@@ -1160,9 +1331,7 @@ export function SettingsDialog({
               </DropdownMenuLabel>
               <DropdownMenuRadioGroup
                 value={desktopSettings.theme.scheme}
-                onValueChange={(value: string) =>
-                  updateSavedThemeScheme(value as ThemeScheme)
-                }
+                onValueChange={(value: string) => updateSavedThemeScheme(value as ThemeScheme)}
               >
                 {THEME_SCHEMES.map((scheme) => (
                   <DropdownMenuRadioItem
@@ -1172,7 +1341,7 @@ export function SettingsDialog({
                   >
                     <span
                       aria-hidden
-                      className="mr-2 h-3.5 w-3.5 shrink-0 rounded-full border"
+                      className="me-2 h-3.5 w-3.5 shrink-0 rounded-full border"
                       style={{ backgroundColor: scheme.swatch }}
                     />
                     {t(scheme.labelKey)}
@@ -1192,7 +1361,7 @@ export function SettingsDialog({
                 >
                   <span
                     aria-hidden
-                    className="mr-2 h-3.5 w-3.5 shrink-0 rounded-full border"
+                    className="me-2 h-3.5 w-3.5 shrink-0 rounded-full border"
                     style={{ backgroundColor: desktopSettings.theme.customColor }}
                   />
                   {t("settings.appearance.custom")}
@@ -1265,7 +1434,7 @@ export function SettingsDialog({
                 setOpen(true);
               }}
             >
-              <Locate className="mr-2 h-3.5 w-3.5" />
+              <Locate className="me-2 h-3.5 w-3.5" />
               {t("settings.menu.geocoding")}
             </DropdownMenuItem>
           )}
@@ -1276,7 +1445,7 @@ export function SettingsDialog({
                 setOpen(true);
               }}
             >
-              <Bot className="mr-2 h-3.5 w-3.5" />
+              <Bot className="me-2 h-3.5 w-3.5" />
               {t("settings.menu.ai")}
             </DropdownMenuItem>
           )}
@@ -1287,25 +1456,38 @@ export function SettingsDialog({
                 setOpen(true);
               }}
             >
-              <Braces className="mr-2 h-3.5 w-3.5" />
+              <Braces className="me-2 h-3.5 w-3.5" />
               {t("settings.menu.environmentVariables")}
             </DropdownMenuItem>
           )}
-          {isTauri() && (
+          {/* Share the same gate as the in-dialog nav/pane so the Store build
+              (and the web build) hide this shortcut too — otherwise it would
+              open the dialog on a fallback section. */}
+          {isSectionVisible("updates") && (
             <DropdownMenuItem
               onSelect={() => {
                 setSection("updates");
                 setOpen(true);
               }}
             >
-              <DownloadCloud className="mr-2 h-3.5 w-3.5" />
+              <DownloadCloud className="me-2 h-3.5 w-3.5" />
               {t("settings.menu.updates")}
             </DropdownMenuItem>
           )}
-          {showSettingsItem("settings.managePlugins") && (
+          {/* The Mac App Store build has no plugin marketplace (external
+              plugin installs are not allowed there), so its entry point is
+              dropped; composed with the profile gate like the Store build's
+              updates check. */}
+          {!IS_MAS_BUILD && showSettingsItem("settings.managePlugins") && (
             <DropdownMenuItem onSelect={() => onOpenManagePlugins()}>
-              <Puzzle className="mr-2 h-3.5 w-3.5" />
+              <Puzzle className="me-2 h-3.5 w-3.5" />
               {t("settings.menu.managePlugins")}
+            </DropdownMenuItem>
+          )}
+          {showSettingsItem("settings.styleManager") && (
+            <DropdownMenuItem onSelect={() => useAppStore.getState().setStyleManagerOpen(true)}>
+              <Palette className="me-2 h-3.5 w-3.5" />
+              {t("settings.menu.styleManager")}
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
@@ -1319,13 +1501,11 @@ export function SettingsDialog({
             <DialogTitle>{t("settings.title")}</DialogTitle>
             <DialogDescription>{t("settings.description")}</DialogDescription>
           </DialogHeader>
-          <div className="grid min-h-0 grid-cols-1 md:grid-cols-[12rem_1fr]">
-            <nav className="flex gap-1 border-b p-3 md:flex-col md:border-b-0 md:border-r">
-              {SECTION_ITEMS.filter((item) => isSectionVisible(item.id)).map(
-                renderSectionButton,
-              )}
+          <div className="grid min-h-0 min-w-0 grid-cols-1 md:grid-cols-[12rem_1fr]">
+            <nav className="flex min-w-0 gap-1 overflow-x-auto border-b p-3 md:flex-col md:overflow-x-visible md:border-b-0 md:border-e">
+              {SECTION_ITEMS.filter((item) => isSectionVisible(item.id)).map(renderSectionButton)}
             </nav>
-            <div className="min-h-0 overflow-y-auto p-6">
+            <div className="min-h-0 min-w-0 overflow-y-auto p-6">
               {effectiveSection === "map" ? (
                 <div className="space-y-5">
                   <div className="flex items-center justify-between gap-3">
@@ -1334,12 +1514,7 @@ export function SettingsDialog({
                         {t("settings.map.constraintsTitle")}
                       </h3>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={resetMapPreferences}
-                    >
+                    <Button type="button" size="sm" variant="outline" onClick={resetMapPreferences}>
                       <RotateCcw className="h-3.5 w-3.5" />
                       {t("common.reset")}
                     </Button>
@@ -1398,10 +1573,7 @@ export function SettingsDialog({
                           disabled={!draftPreferences.map.restrictBounds}
                           value={draftPreferences.map.bounds[index as number]}
                           onChange={(event) =>
-                            updateBoundsValue(
-                              index as number,
-                              event.target.valueAsNumber,
-                            )
+                            updateBoundsValue(index as number, event.target.valueAsNumber)
                           }
                         />
                       </div>
@@ -1415,9 +1587,7 @@ export function SettingsDialog({
                   ) : null}
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="settings-min-zoom">
-                        {t("settings.map.minZoom")}
-                      </Label>
+                      <Label htmlFor="settings-min-zoom">{t("settings.map.minZoom")}</Label>
                       <Input
                         id="settings-min-zoom"
                         type="number"
@@ -1433,9 +1603,7 @@ export function SettingsDialog({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="settings-max-zoom">
-                        {t("settings.map.maxZoom")}
-                      </Label>
+                      <Label htmlFor="settings-max-zoom">{t("settings.map.maxZoom")}</Label>
                       <Input
                         id="settings-max-zoom"
                         type="number"
@@ -1451,9 +1619,7 @@ export function SettingsDialog({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="settings-max-pitch">
-                        {t("settings.map.maxPitch")}
-                      </Label>
+                      <Label htmlFor="settings-max-pitch">{t("settings.map.maxPitch")}</Label>
                       <Input
                         id="settings-max-pitch"
                         type="number"
@@ -1483,42 +1649,43 @@ export function SettingsDialog({
                     {t("settings.map.renderWorldCopies")}
                   </label>
                   <div className="space-y-1.5">
-                    <Label htmlFor="settings-open-topography-api-key">
-                      OpenTopography API key
-                    </Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="settings-open-topography-api-key"
-                        type={
-                          revealedValueIds.has("open-topography-api-key")
-                            ? "text"
-                            : "password"
-                        }
-                        value={draftDesktopSettings.openTopographyApiKey}
-                        onChange={(event) =>
-                          updateOpenTopographyApiKey(event.target.value)
-                        }
-                        placeholder="Paste your OpenTopography API key"
-                        autoComplete="off"
-                      />
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="outline"
-                        onClick={() =>
-                          toggleValueVisibility("open-topography-api-key")
-                        }
-                        aria-label="Toggle OpenTopography API key visibility"
-                      >
-                        {revealedValueIds.has("open-topography-api-key") ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
+                    <Label htmlFor="settings-ellipsoid">{t("settings.map.ellipsoid")}</Label>
+                    <Select
+                      id="settings-ellipsoid"
+                      value={draftPreferences.map.ellipsoidId}
+                      onChange={(event) =>
+                        updateMapPreferences({
+                          ellipsoidId: event.target.value,
+                        })
+                      }
+                    >
+                      {ELLIPSOIDS.map((ellipsoid) => (
+                        <option key={ellipsoid.id} value={ellipsoid.id}>
+                          {ellipsoid.name}
+                        </option>
+                      ))}
+                    </Select>
                     <p className="text-xs text-muted-foreground">
-                      Used by OpenTopography-backed raster analysis tools such as slope, hillshade, and viewshed.
+                      {t("settings.map.ellipsoidHint")}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="settings-scale-unit">{t("settings.map.scaleUnit")}</Label>
+                    <Select
+                      id="settings-scale-unit"
+                      value={draftPreferences.map.scaleUnit}
+                      onChange={(event) =>
+                        updateMapPreferences({
+                          scaleUnit: event.target.value as MapScaleUnit,
+                        })
+                      }
+                    >
+                      <option value="metric">{t("settings.map.scaleUnitMetric")}</option>
+                      <option value="imperial">{t("settings.map.scaleUnitImperial")}</option>
+                      <option value="nautical">{t("settings.map.scaleUnitNautical")}</option>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.map.scaleUnitHint")}
                     </p>
                   </div>
                 </div>
@@ -1527,19 +1694,12 @@ export function SettingsDialog({
                 <div className="space-y-5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-sm font-semibold">
-                        {t("settings.layout.title")}
-                      </h3>
+                      <h3 className="text-sm font-semibold">{t("settings.layout.title")}</h3>
                       <p className="text-xs text-muted-foreground">
                         {t("settings.layout.description")}
                       </p>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={resetLayoutSettings}
-                    >
+                    <Button type="button" size="sm" variant="outline" onClick={resetLayoutSettings}>
                       <RotateCcw className="h-3.5 w-3.5" />
                       {t("common.reset")}
                     </Button>
@@ -1609,6 +1769,26 @@ export function SettingsDialog({
                       <PanelRight className="h-4 w-4 text-muted-foreground" />
                       <span>{t("settings.layout.showStylePanel")}</span>
                     </label>
+                    <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                      <input
+                        className="h-4 w-4"
+                        type="checkbox"
+                        checked={browserPanelOpen}
+                        onChange={(event) => toggleBrowserPanel(event.target.checked)}
+                      />
+                      <FolderTree className="h-4 w-4 text-muted-foreground" />
+                      <span>{t("settings.layout.showBrowserPanel")}</span>
+                    </label>
+                    <label className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                      <input
+                        className="h-4 w-4"
+                        type="checkbox"
+                        checked={commentsPanelOpen}
+                        onChange={(event) => toggleCommentsPanel(event.target.checked)}
+                      />
+                      <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                      <span>{t("settings.layout.showCommentsPanel")}</span>
+                    </label>
                   </div>
                   {showsAdvancedNotices(desktopSettings.uiProfile) ? (
                     <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
@@ -1620,9 +1800,7 @@ export function SettingsDialog({
               {effectiveSection === "appearance" ? (
                 <div className="space-y-5">
                   <div>
-                    <h3 className="text-sm font-semibold">
-                      {t("settings.appearance.title")}
-                    </h3>
+                    <h3 className="text-sm font-semibold">{t("settings.appearance.title")}</h3>
                     <p className="text-xs text-muted-foreground">
                       {t("settings.appearance.description")}
                     </p>
@@ -1648,16 +1826,12 @@ export function SettingsDialog({
                             }}
                             className={cn(
                               "flex items-center gap-2.5 rounded-md border p-3 text-sm transition-colors",
-                              active
-                                ? "border-primary ring-2 ring-ring"
-                                : "hover:bg-accent",
+                              active ? "border-primary ring-2 ring-ring" : "hover:bg-accent",
                             )}
                           >
                             <ModeIcon className="h-5 w-5 shrink-0" />
                             <span>{t(`settings.appearance.mode.${mode}`)}</span>
-                            {active ? (
-                              <Check className="ml-auto h-4 w-4 text-primary" />
-                            ) : null}
+                            {active ? <Check className="ms-auto h-4 w-4 text-primary" /> : null}
                           </button>
                         );
                       })}
@@ -1669,8 +1843,7 @@ export function SettingsDialog({
                     </h4>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                       {THEME_SCHEMES.map((scheme) => {
-                        const active =
-                          desktopSettings.theme.scheme === scheme.id;
+                        const active = desktopSettings.theme.scheme === scheme.id;
                         return (
                           <button
                             key={scheme.id}
@@ -1679,9 +1852,7 @@ export function SettingsDialog({
                             onClick={() => updateSavedThemeScheme(scheme.id)}
                             className={cn(
                               "flex items-center gap-2.5 rounded-md border p-3 text-sm transition-colors",
-                              active
-                                ? "border-primary ring-2 ring-ring"
-                                : "hover:bg-accent",
+                              active ? "border-primary ring-2 ring-ring" : "hover:bg-accent",
                             )}
                           >
                             <span
@@ -1690,17 +1861,13 @@ export function SettingsDialog({
                               style={{ backgroundColor: scheme.swatch }}
                             />
                             <span>{t(scheme.labelKey)}</span>
-                            {active ? (
-                              <Check className="ml-auto h-4 w-4 text-primary" />
-                            ) : null}
+                            {active ? <Check className="ms-auto h-4 w-4 text-primary" /> : null}
                           </button>
                         );
                       })}
                       <button
                         type="button"
-                        aria-pressed={
-                          desktopSettings.theme.scheme === "custom"
-                        }
+                        aria-pressed={desktopSettings.theme.scheme === "custom"}
                         onClick={() => updateSavedThemeScheme("custom")}
                         className={cn(
                           "flex items-center gap-2.5 rounded-md border p-3 text-sm transition-colors",
@@ -1718,7 +1885,7 @@ export function SettingsDialog({
                         />
                         <span>{t("settings.appearance.custom")}</span>
                         {desktopSettings.theme.scheme === "custom" ? (
-                          <Check className="ml-auto h-4 w-4 text-primary" />
+                          <Check className="ms-auto h-4 w-4 text-primary" />
                         ) : null}
                       </button>
                     </div>
@@ -1729,15 +1896,60 @@ export function SettingsDialog({
                           type="color"
                           className="h-8 w-12 shrink-0 cursor-pointer rounded border bg-transparent p-0.5"
                           value={desktopSettings.theme.customColor}
-                          onChange={(event) =>
-                            updateSavedThemeCustomColor(event.target.value)
-                          }
+                          onChange={(event) => updateSavedThemeCustomColor(event.target.value)}
                           aria-label={t("settings.appearance.customColor")}
                         />
                         <span>{t("settings.appearance.customColor")}</span>
-                        <code className="ml-auto text-xs uppercase text-muted-foreground">
-                          {desktopSettings.theme.customColor}
-                        </code>
+                        {/* Inline hex entry so power users can type or paste an
+                            exact code instead of only dragging the native picker.
+                            The text input is interactive content, so a click lands
+                            here and focuses it rather than reopening the picker the
+                            wrapping label drives (#911). */}
+                        <input
+                          type="text"
+                          spellCheck={false}
+                          autoComplete="off"
+                          className="ms-auto w-24 rounded border bg-transparent px-2 py-1 text-end font-mono text-xs uppercase text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-[invalid=true]:border-destructive aria-[invalid=true]:text-destructive"
+                          value={customColorDraft ?? desktopSettings.theme.customColor}
+                          // The field already holds a full `#rrggbb`, so select
+                          // all on focus to let the user type a replacement.
+                          onFocus={(event) => event.target.select()}
+                          // Drop whitespace and cap to the longest valid form
+                          // (`#rrggbb`) as the draft is stored, so a padded or
+                          // oversized paste is sanitized in place instead of
+                          // sitting clobbered; this also bounds a runaway paste
+                          // without a brittle maxLength that has to guess how
+                          // much surrounding whitespace to allow.
+                          onChange={(event) =>
+                            setCustomColorDraft(event.target.value.replace(/\s/g, "").slice(0, 7))
+                          }
+                          onBlur={commitCustomColorDraft}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              // Blur is the single commit path; the resulting
+                              // onBlur applies/reverts the draft, so don't also
+                              // commit here and double-write the same value.
+                              event.preventDefault();
+                              event.currentTarget.blur();
+                            } else if (event.key === "Escape") {
+                              // Cancel the edit: flag the commit to skip, then
+                              // blur so the value is dropped, not applied. The
+                              // dialog's own Escape handling still closes it.
+                              skipCustomColorCommitRef.current = true;
+                              event.currentTarget.blur();
+                            }
+                          }}
+                          aria-label={t("settings.appearance.customColorHex")}
+                          // `|| undefined` omits the attribute entirely when
+                          // valid; a literal aria-invalid="false" makes some
+                          // screen readers announce "invalid: false" on focus.
+                          aria-invalid={
+                            (customColorDraft !== null &&
+                              customColorDraft.trim() !== "" &&
+                              normalizeHexColor(customColorDraft) === null) ||
+                            undefined
+                          }
+                        />
                       </label>
                     ) : null}
                   </div>
@@ -1747,9 +1959,7 @@ export function SettingsDialog({
                 <div className="space-y-5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-sm font-semibold">
-                        {t("settings.interface.title")}
-                      </h3>
+                      <h3 className="text-sm font-semibold">{t("settings.interface.title")}</h3>
                       <p className="text-xs text-muted-foreground">
                         {t("settings.interface.description")}
                       </p>
@@ -1777,9 +1987,7 @@ export function SettingsDialog({
                     <div className="flex flex-wrap gap-2">
                       {INTERFACE_PROFILES.map((option) => {
                         const active =
-                          activeInterfaceProfile(
-                            draftDesktopSettings.uiProfile,
-                          ) === option;
+                          activeInterfaceProfile(draftDesktopSettings.uiProfile) === option;
                         return (
                           <Button
                             key={option}
@@ -1821,34 +2029,29 @@ export function SettingsDialog({
                           {t(DATA_SOURCE_SECTION_LABEL_KEYS[sectionId])}
                         </h5>
                         <div className="grid gap-1.5 sm:grid-cols-2">
-                          {DATA_SOURCE_CATALOG.filter(
-                            (entry) => entry.section === sectionId,
-                          ).map((entry) => (
-                            <label
-                              key={entry.id}
-                              className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
-                            >
-                              <input
-                                className="h-4 w-4"
-                                type="checkbox"
-                                checked={
-                                  !draftDesktopSettings.uiProfile.hiddenDataSources.includes(
-                                    entry.id,
-                                  )
-                                }
-                                disabled={
-                                  draftDesktopSettings.uiProfile.locked
-                                }
-                                onChange={(event) =>
-                                  toggleDataSourceHidden(
-                                    entry.id,
-                                    event.target.checked,
-                                  )
-                                }
-                              />
-                              <span>{t(entry.labelKey)}</span>
-                            </label>
-                          ))}
+                          {DATA_SOURCE_CATALOG.filter((entry) => entry.section === sectionId).map(
+                            (entry) => (
+                              <label
+                                key={entry.id}
+                                className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                              >
+                                <input
+                                  className="h-4 w-4"
+                                  type="checkbox"
+                                  checked={
+                                    !draftDesktopSettings.uiProfile.hiddenDataSources.includes(
+                                      entry.id,
+                                    )
+                                  }
+                                  disabled={draftDesktopSettings.uiProfile.locked}
+                                  onChange={(event) =>
+                                    toggleDataSourceHidden(entry.id, event.target.checked)
+                                  }
+                                />
+                                <span>{t(entry.labelKey)}</span>
+                              </label>
+                            ),
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1868,13 +2071,9 @@ export function SettingsDialog({
                               className="h-4 w-4"
                               type="checkbox"
                               checked={
-                                !draftDesktopSettings.uiProfile.hiddenPlugins.includes(
-                                  plugin.id,
-                                )
+                                !draftDesktopSettings.uiProfile.hiddenPlugins.includes(plugin.id)
                               }
-                              disabled={
-                                draftDesktopSettings.uiProfile.locked
-                              }
+                              disabled={draftDesktopSettings.uiProfile.locked}
                               onChange={(event) =>
                                 togglePluginHidden(plugin.id, event.target.checked)
                               }
@@ -1898,17 +2097,9 @@ export function SettingsDialog({
                           <input
                             className="h-4 w-4"
                             type="checkbox"
-                            checked={
-                              !draftDesktopSettings.uiProfile.hiddenMenus.includes(
-                                menu.id,
-                              )
-                            }
-                            disabled={
-                              draftDesktopSettings.uiProfile.locked
-                            }
-                            onChange={(event) =>
-                              toggleMenuHidden(menu.id, event.target.checked)
-                            }
+                            checked={!draftDesktopSettings.uiProfile.hiddenMenus.includes(menu.id)}
+                            disabled={draftDesktopSettings.uiProfile.locked}
+                            onChange={(event) => toggleMenuHidden(menu.id, event.target.checked)}
                           />
                           <span>{t(menu.labelKey)}</span>
                         </label>
@@ -1921,31 +2112,27 @@ export function SettingsDialog({
                         {t(group.labelKey)}
                       </h4>
                       <div className="grid gap-1.5 sm:grid-cols-2">
-                        {MENU_ITEM_CATALOG.filter(
-                          (entry) => entry.menuId === group.menuId,
-                        ).map((entry) => (
-                          <label
-                            key={entry.id}
-                            className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
-                          >
-                            <input
-                              className="h-4 w-4"
-                              type="checkbox"
-                              checked={
-                                !draftDesktopSettings.uiProfile.hiddenMenuItems.includes(
-                                  entry.id,
-                                )
-                              }
-                              disabled={
-                                draftDesktopSettings.uiProfile.locked
-                              }
-                              onChange={(event) =>
-                                toggleMenuItemHidden(entry.id, event.target.checked)
-                              }
-                            />
-                            <span>{t(entry.labelKey)}</span>
-                          </label>
-                        ))}
+                        {MENU_ITEM_CATALOG.filter((entry) => entry.menuId === group.menuId).map(
+                          (entry) => (
+                            <label
+                              key={entry.id}
+                              className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                            >
+                              <input
+                                className="h-4 w-4"
+                                type="checkbox"
+                                checked={
+                                  !draftDesktopSettings.uiProfile.hiddenMenuItems.includes(entry.id)
+                                }
+                                disabled={draftDesktopSettings.uiProfile.locked}
+                                onChange={(event) =>
+                                  toggleMenuItemHidden(entry.id, event.target.checked)
+                                }
+                              />
+                              <span>{t(entry.labelKey)}</span>
+                            </label>
+                          ),
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1954,25 +2141,19 @@ export function SettingsDialog({
               {effectiveSection === "geocoding" ? (
                 <div className="space-y-5">
                   <div className="space-y-1">
-                    <h3 className="text-sm font-semibold">
-                      {t("settings.geocoding.title")}
-                    </h3>
+                    <h3 className="text-sm font-semibold">{t("settings.geocoding.title")}</h3>
                     <p className="text-xs text-muted-foreground">
                       {t("settings.geocoding.description")}
                     </p>
                   </div>
                   {(() => {
-                    const provider = getGeocodingProvider(
-                      draftPreferences.geocoding.providerId,
-                    );
+                    const provider = getGeocodingProvider(draftPreferences.geocoding.providerId);
                     const apiKeyId = `geocoding-api-key-${provider.id}`;
                     const apiKeyRevealed = revealedValueIds.has(apiKeyId);
                     return (
                       <div className="space-y-4">
                         <div className="space-y-1.5">
-                          <Label className="text-xs">
-                            {t("settings.geocoding.provider")}
-                          </Label>
+                          <Label className="text-xs">{t("settings.geocoding.provider")}</Label>
                           <Select
                             value={provider.id}
                             onChange={(event) =>
@@ -2012,20 +2193,11 @@ export function SettingsDialog({
                                 type={apiKeyRevealed ? "text" : "password"}
                                 autoComplete="off"
                                 spellCheck={false}
-                                value={
-                                  draftPreferences.geocoding.apiKeys[
-                                    provider.id
-                                  ] ?? ""
-                                }
+                                value={draftPreferences.geocoding.apiKeys[provider.id] ?? ""}
                                 onChange={(event) =>
-                                  updateGeocodingApiKey(
-                                    provider.id,
-                                    event.target.value,
-                                  )
+                                  updateGeocodingApiKey(provider.id, event.target.value)
                                 }
-                                placeholder={t(
-                                  "settings.geocoding.apiKeyPlaceholder",
-                                )}
+                                placeholder={t("settings.geocoding.apiKeyPlaceholder")}
                               />
                               <Button
                                 type="button"
@@ -2048,17 +2220,12 @@ export function SettingsDialog({
                         ) : null}
 
                         <div className="space-y-1.5">
-                          <Label
-                            className="text-xs"
-                            htmlFor="geocoding-forward"
-                          >
+                          <Label className="text-xs" htmlFor="geocoding-forward">
                             {t("settings.geocoding.forwardEndpoint")}
                           </Label>
                           <Input
                             id="geocoding-forward"
-                            value={
-                              draftPreferences.geocoding.forwardEndpoint ?? ""
-                            }
+                            value={draftPreferences.geocoding.forwardEndpoint ?? ""}
                             onChange={(event) =>
                               updateGeocoding({
                                 forwardEndpoint: event.target.value,
@@ -2069,17 +2236,12 @@ export function SettingsDialog({
                         </div>
 
                         <div className="space-y-1.5">
-                          <Label
-                            className="text-xs"
-                            htmlFor="geocoding-reverse"
-                          >
+                          <Label className="text-xs" htmlFor="geocoding-reverse">
                             {t("settings.geocoding.reverseEndpoint")}
                           </Label>
                           <Input
                             id="geocoding-reverse"
-                            value={
-                              draftPreferences.geocoding.reverseEndpoint ?? ""
-                            }
+                            value={draftPreferences.geocoding.reverseEndpoint ?? ""}
                             onChange={(event) =>
                               updateGeocoding({
                                 reverseEndpoint: event.target.value,
@@ -2097,12 +2259,8 @@ export function SettingsDialog({
                             id="geocoding-email"
                             type="email"
                             value={draftPreferences.geocoding.email ?? ""}
-                            onChange={(event) =>
-                              updateGeocoding({ email: event.target.value })
-                            }
-                            placeholder={t(
-                              "settings.geocoding.emailPlaceholder",
-                            )}
+                            onChange={(event) => updateGeocoding({ email: event.target.value })}
+                            placeholder={t("settings.geocoding.emailPlaceholder")}
                           />
                           <p className="text-xs text-muted-foreground">
                             {t("settings.geocoding.emailHint")}
@@ -2114,154 +2272,78 @@ export function SettingsDialog({
                 </div>
               ) : null}
               {effectiveSection === "ai" ? (
-                <div className="space-y-5">
-                  <div className="space-y-1">
-                    <h3 className="text-sm font-semibold">
-                      {t("settings.ai.title")}
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      {t("settings.ai.description")}
-                    </p>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs" htmlFor="settings-ai-provider">
-                      {t("settings.ai.providerLabel")}
-                    </Label>
-                    <Select
-                      id="settings-ai-provider"
-                      value={aiProvider}
-                      onChange={(event) =>
-                        setAiProvider(
-                          event.target.value as AssistantProviderId,
-                        )
-                      }
-                    >
-                      {ASSISTANT_PROVIDER_IDS.map((id) => (
-                        <option key={id} value={id}>
-                          {configuredProviders.has(id)
-                            ? `${PROVIDER_LABELS[id]} ${t("settings.ai.configuredMark")}`
-                            : PROVIDER_LABELS[id]}
-                        </option>
-                      ))}
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {t("settings.ai.providerHint")}
-                    </p>
-                  </div>
-                  {configuredProviders.has(aiProvider) ? (
-                    <div className="flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
-                      <Check className="h-3.5 w-3.5 shrink-0" />
-                      <span>
-                        {t("settings.ai.statusReady", {
-                          provider: PROVIDER_LABELS[aiProvider],
-                        })}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-                      {t("settings.ai.statusIncomplete", {
-                        provider: PROVIDER_LABELS[aiProvider],
-                      })}
-                    </div>
-                  )}
-                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
-                    <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>{t("settings.env.secretsWarning")}</span>
-                  </div>
-                  <div className="space-y-4">
-                    {PROVIDER_FIELDS[aiProvider].map((field) => {
-                      const revealed = revealedValueIds.has(field.envKey);
-                      return (
-                        <div key={field.envKey} className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <Label
-                              className="text-xs"
-                              htmlFor={`settings-ai-${field.envKey}`}
-                            >
-                              {t(field.labelKey)}
-                              {field.required ? null : (
-                                <span className="ml-1 font-normal text-muted-foreground">
-                                  {t("settings.ai.optionalMark")}
-                                </span>
-                              )}
-                            </Label>
-                            <code className="font-mono text-[11px] text-muted-foreground">
-                              {field.envKey}
-                            </code>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Input
-                              id={`settings-ai-${field.envKey}`}
-                              type={
-                                field.secret && !revealed ? "password" : "text"
-                              }
-                              autoComplete="off"
-                              spellCheck={false}
-                              value={getProviderField(field)}
-                              onChange={(event) =>
-                                setProviderField(field, event.target.value)
-                              }
-                              placeholder={t(field.placeholderKey)}
-                            />
-                            {field.secret ? (
-                              <Button
-                                type="button"
-                                size="icon"
-                                variant="ghost"
-                                onClick={() =>
-                                  toggleValueVisibility(field.envKey)
-                                }
-                                aria-label={
-                                  revealed
-                                    ? t("settings.ai.hideValue", {
-                                        name: t(field.labelKey),
-                                      })
-                                    : t("settings.ai.showValue", {
-                                        name: t(field.labelKey),
-                                      })
-                                }
-                              >
-                                {revealed ? (
-                                  <EyeOff className="h-3.5 w-3.5" />
-                                ) : (
-                                  <Eye className="h-3.5 w-3.5" />
-                                )}
-                              </Button>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {PROVIDER_DOCS_URL[aiProvider] ? (
-                    <a
-                      className="inline-flex items-center gap-1 text-xs text-primary underline"
-                      href={PROVIDER_DOCS_URL[aiProvider]}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      {t("settings.ai.getCredentials", {
-                        provider: PROVIDER_LABELS[aiProvider],
-                      })}
-                    </a>
-                  ) : null}
-                </div>
+                <AiSectionContent
+                  draftDesktopSettings={draftDesktopSettings}
+                  setDraftDesktopSettings={setDraftDesktopSettings}
+                  editingProfileId={editingProfileId}
+                  setEditingProfileId={setEditingProfileId}
+                  isCreatingProfile={isCreatingProfile}
+                  setIsCreatingProfile={setIsCreatingProfile}
+                  editingProfile={editingProfile}
+                  editingProvider={editingProvider}
+                  defaultAiProfileId={draftDesktopSettings.defaultAiProfileId}
+                  scopedOsEnv={scopedOsEnv}
+                  effectiveEnv={effectiveEnv}
+                  revealedValueIds={revealedValueIds}
+                  toggleValueVisibility={toggleValueVisibility}
+                  getProviderField={getProviderField}
+                  setProviderField={setProviderField}
+                  osFieldEnvName={osFieldEnvName}
+                />
               ) : null}
               {effectiveSection === "environment" ? (
                 <div className="space-y-5">
                   <div className="space-y-2">
-                    <h3 className="text-sm font-semibold">
-                      {t("settings.env.tokenTitle")}
-                    </h3>
+                    <h3 className="text-sm font-semibold">{t("settings.env.tokenTitle")}</h3>
+                    {shareTokenUsable ? (
+                      <>
+                        <p className="text-xs text-muted-foreground">
+                          <Trans
+                            i18nKey="settings.env.tokenDescription"
+                            values={{ shareHost }}
+                            components={{
+                              // Non-null here: this branch requires shareBaseUrl,
+                              // which is what shareSettingsUrl is derived from.
+                              tokenLink: (
+                                <a
+                                  className="underline"
+                                  href={shareSettingsUrl ?? undefined}
+                                  target="_blank"
+                                  rel="noreferrer noopener"
+                                />
+                              ),
+                            }}
+                          />
+                        </p>
+                        <Input
+                          ref={shareTokenInputRef}
+                          aria-label={t("settings.env.tokenTitle")}
+                          type="password"
+                          autoComplete="new-password"
+                          placeholder={t("settings.env.tokenPlaceholder")}
+                          value={draftDesktopSettings.shareToken}
+                          onChange={(event) => updateShareToken(event.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {t("settings.env.tokenStorageNote", { shareHost })}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        {shareTokenUnavailableMessage}
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2 border-t pt-5">
+                    <h3 className="text-sm font-semibold">{t("settings.env.cesiumTokenTitle")}</h3>
                     <p className="text-xs text-muted-foreground">
                       <Trans
-                        i18nKey="settings.env.tokenDescription"
+                        i18nKey="settings.env.cesiumTokenDescription"
                         components={{
                           tokenLink: (
                             <a
                               className="underline"
-                              href="https://share.geolibre.app/settings"
+                              href="https://ion.cesium.com/tokens"
                               target="_blank"
                               rel="noreferrer noopener"
                             />
@@ -2270,23 +2352,20 @@ export function SettingsDialog({
                       />
                     </p>
                     <Input
-                      ref={shareTokenInputRef}
-                      aria-label={t("settings.env.tokenTitle")}
+                      aria-label={t("settings.env.cesiumTokenTitle")}
                       type="password"
                       autoComplete="new-password"
-                      placeholder={t("settings.env.tokenPlaceholder")}
-                      value={draftDesktopSettings.shareToken}
-                      onChange={(event) => updateShareToken(event.target.value)}
+                      placeholder={t("settings.env.cesiumTokenPlaceholder")}
+                      value={draftDesktopSettings.cesiumIonToken}
+                      onChange={(event) => updateCesiumIonToken(event.target.value)}
                     />
                     <p className="text-xs text-muted-foreground">
-                      {t("settings.env.tokenStorageNote")}
+                      {t("settings.env.cesiumTokenStorageNote")}
                     </p>
                   </div>
                   <div className="flex items-center justify-between gap-3 border-t pt-5">
                     <div>
-                      <h3 className="text-sm font-semibold">
-                        {t("settings.env.variablesTitle")}
-                      </h3>
+                      <h3 className="text-sm font-semibold">{t("settings.env.variablesTitle")}</h3>
                       <p className="text-xs text-muted-foreground">
                         {t("settings.env.variablesCount", {
                           count: enabledVariableCount,
@@ -2313,12 +2392,9 @@ export function SettingsDialog({
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {draftPreferences.environmentVariables.map(
-                        (variable, index) => {
-                          const variableName =
-                            variable.key ||
-                            t("settings.env.variableFallback");
-                          return (
+                      {draftPreferences.environmentVariables.map((variable, index) => {
+                        const variableName = variable.key || t("settings.env.variableFallback");
+                        return (
                           <div
                             key={variable.id}
                             className="grid grid-cols-[1.25rem_minmax(7rem,1fr)_minmax(7rem,1fr)_2rem_2rem] items-center gap-2"
@@ -2349,11 +2425,7 @@ export function SettingsDialog({
                             <Input
                               aria-label={t("settings.env.valueAria")}
                               placeholder={t("settings.env.valuePlaceholder")}
-                              type={
-                                revealedValueIds.has(variable.id)
-                                  ? "text"
-                                  : "password"
-                              }
+                              type={revealedValueIds.has(variable.id) ? "text" : "password"}
                               autoComplete="off"
                               value={variable.value}
                               onChange={(event) =>
@@ -2397,9 +2469,8 @@ export function SettingsDialog({
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
-                          );
-                        },
-                      )}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -2408,19 +2479,12 @@ export function SettingsDialog({
                 <div className="space-y-5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-sm font-semibold">
-                        {t("settings.updates.title")}
-                      </h3>
+                      <h3 className="text-sm font-semibold">{t("settings.updates.title")}</h3>
                       <p className="text-xs text-muted-foreground">
                         {t("settings.updates.description")}
                       </p>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={resetUpdateSettings}
-                    >
+                    <Button type="button" size="sm" variant="outline" onClick={resetUpdateSettings}>
                       <RotateCcw className="h-3.5 w-3.5" />
                       {t("common.reset")}
                     </Button>
@@ -2437,9 +2501,7 @@ export function SettingsDialog({
                       }
                     />
                     <span className="space-y-1">
-                      <span className="block">
-                        {t("settings.updates.checkOnStartup")}
-                      </span>
+                      <span className="block">{t("settings.updates.checkOnStartup")}</span>
                       <span className="block text-xs text-muted-foreground">
                         {t("settings.updates.checkOnStartupHint")}
                       </span>
@@ -2452,9 +2514,7 @@ export function SettingsDialog({
                     <Select
                       id="settings-update-level"
                       value={draftDesktopSettings.updates.notificationLevel}
-                      disabled={
-                        !draftDesktopSettings.updates.checkOnStartup
-                      }
+                      disabled={!draftDesktopSettings.updates.checkOnStartup}
                       onChange={(event) =>
                         updateDraftUpdateSettings({
                           // The options are generated from
@@ -2483,22 +2543,22 @@ export function SettingsDialog({
             </div>
           </div>
           {error ? (
-            <div className="border-t px-6 py-2 text-sm text-destructive">
-              {error}
-            </div>
+            <div className="border-t px-6 py-2 text-sm text-destructive">{error}</div>
           ) : null}
-          <div className="flex justify-end gap-2 border-t px-6 py-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button type="button" onClick={saveSettings}>
-              {t("settings.saveButton")}
-            </Button>
-          </div>
+          {effectiveSection === "ai" && (editingProfileId || isCreatingProfile) ? (
+            <div className="border-t px-6 py-4 text-center text-xs text-muted-foreground">
+              {t("settings.ai.profileEditSaveHint")}
+            </div>
+          ) : (
+            <div className="flex justify-end gap-2 border-t px-6 py-4">
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                {t("common.cancel")}
+              </Button>
+              <Button type="button" onClick={saveSettings}>
+                {t("settings.saveButton")}
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>

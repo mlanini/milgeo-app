@@ -58,12 +58,7 @@ export function VideoSource() {
     if (urls.some((url) => !/^https:\/\//i.test(url))) {
       throw new Error(t("addData.video.errorHttps"));
     }
-    const coordinates: [
-      [number, number],
-      [number, number],
-      [number, number],
-      [number, number],
-    ] = [
+    const coordinates: [[number, number], [number, number], [number, number], [number, number]] = [
       parseCorner(videoTopLeft, t("addData.video.cornerTopLeft")),
       parseCorner(videoTopRight, t("addData.video.cornerTopRight")),
       parseCorner(videoBottomRight, t("addData.video.cornerBottomRight")),
@@ -82,7 +77,12 @@ export function VideoSource() {
       { type: "video", urls, coordinates },
       // Persist the corner bbox so "Zoom to layer" works — a video source
       // exposes no bounds for fitLayer to fall back on.
-      { sourceKind: "video-url", bounds },
+      {
+        sourceKind: "video-url",
+        sourceUrl: primary,
+        ...(webm ? { fallbackSourceUrl: webm } : {}),
+        bounds,
+      },
     );
     source.shell.addLayer(layer, source.beforeLayer);
     // Skip the fit for a degenerate (zero-area) bbox, which would otherwise
@@ -104,6 +104,59 @@ export function VideoSource() {
       submitDisabled={source.isSubmitting}
     >
       <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="video-mp4-url">{t("addData.video.primaryUrl")}</Label>
+          <Input
+            id="video-mp4-url"
+            placeholder={t("addData.video.primaryUrlPlaceholder")}
+            value={videoMp4Url}
+            onChange={(event) => setVideoMp4Url(event.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="video-webm-url">{t("addData.video.fallbackUrl")}</Label>
+          <Input
+            id="video-webm-url"
+            placeholder={t("addData.video.fallbackUrlPlaceholder")}
+            value={videoWebmUrl}
+            onChange={(event) => setVideoWebmUrl(event.target.value)}
+          />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="video-top-left">{t("addData.video.topLeft")}</Label>
+            <Input
+              id="video-top-left"
+              value={videoTopLeft}
+              onChange={(event) => setVideoTopLeft(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="video-top-right">{t("addData.video.topRight")}</Label>
+            <Input
+              id="video-top-right"
+              value={videoTopRight}
+              onChange={(event) => setVideoTopRight(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="video-bottom-right">{t("addData.video.bottomRight")}</Label>
+            <Input
+              id="video-bottom-right"
+              value={videoBottomRight}
+              onChange={(event) => setVideoBottomRight(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="video-bottom-left">{t("addData.video.bottomLeft")}</Label>
+            <Input
+              id="video-bottom-left"
+              value={videoBottomLeft}
+              onChange={(event) => setVideoBottomLeft(event.target.value)}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">{t("addData.video.cornersNote")}</p>
         <SampleDataSelect
           samples={[
             {
@@ -127,69 +180,6 @@ export function VideoSource() {
             setVideoBottomLeft(sample.bottomLeft);
           }}
         />
-        <div className="space-y-1.5">
-          <Label htmlFor="video-mp4-url">{t("addData.video.primaryUrl")}</Label>
-          <Input
-            id="video-mp4-url"
-            placeholder={t("addData.video.primaryUrlPlaceholder")}
-            value={videoMp4Url}
-            onChange={(event) => setVideoMp4Url(event.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="video-webm-url">
-            {t("addData.video.fallbackUrl")}
-          </Label>
-          <Input
-            id="video-webm-url"
-            placeholder={t("addData.video.fallbackUrlPlaceholder")}
-            value={videoWebmUrl}
-            onChange={(event) => setVideoWebmUrl(event.target.value)}
-          />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="video-top-left">{t("addData.video.topLeft")}</Label>
-            <Input
-              id="video-top-left"
-              value={videoTopLeft}
-              onChange={(event) => setVideoTopLeft(event.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="video-top-right">
-              {t("addData.video.topRight")}
-            </Label>
-            <Input
-              id="video-top-right"
-              value={videoTopRight}
-              onChange={(event) => setVideoTopRight(event.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="video-bottom-right">
-              {t("addData.video.bottomRight")}
-            </Label>
-            <Input
-              id="video-bottom-right"
-              value={videoBottomRight}
-              onChange={(event) => setVideoBottomRight(event.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="video-bottom-left">
-              {t("addData.video.bottomLeft")}
-            </Label>
-            <Input
-              id="video-bottom-left"
-              value={videoBottomLeft}
-              onChange={(event) => setVideoBottomLeft(event.target.value)}
-            />
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {t("addData.video.cornersNote")}
-        </p>
       </div>
     </AddDataSourceForm>
   );

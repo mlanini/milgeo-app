@@ -1,17 +1,8 @@
-import type {
-  ConversionToolKind,
-  RasterToolKind,
-  VectorToolKind,
-} from "@geolibre/core";
-import {
-  type BuiltInMapControl,
-  type MapController,
-} from "@geolibre/map";
+import type { ConversionToolKind, RasterToolKind, VectorToolKind } from "@geolibre/core";
+import { type BuiltInMapControl, type MapController } from "@geolibre/map";
 import type { GeoLibreMapControlPosition } from "@geolibre/plugins";
 import type { ParseKeys } from "i18next";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import type { createAppAPI } from "../../../hooks/usePlugins";
-import { isTauri } from "../../../lib/tauri-io";
 import type { AddDataKind } from "../AddDataDialog";
 
 /** The live app API surface plugins and panels are driven through. */
@@ -63,7 +54,15 @@ export const MAP_CONTROL_ITEMS: Array<{
   { id: "scale", labelKey: "toolbar.mapControl.scale" },
   { id: "attribution", labelKey: "toolbar.mapControl.attribution" },
   { id: "logo", labelKey: "toolbar.mapControl.logo" },
+  { id: "maptoolkit-logo", labelKey: "toolbar.mapControl.maptoolkitLogo" },
 ];
+
+/**
+ * The logo controls, grouped under the Controls → Logos submenu (rather than
+ * rendered as flat toggles like the other map controls). Kept as a Set so
+ * ControlsMenu can filter them out of the flat list and render them together.
+ */
+export const LOGO_CONTROL_IDS = new Set<ToolbarMapControl>(["logo", "maptoolkit-logo"]);
 
 export const NEW_PROJECT_VISIBLE_BUILT_IN_CONTROLS = new Set<BuiltInMapControl>([
   "fullscreen",
@@ -88,10 +87,11 @@ export const PLUGIN_POSITION_ITEMS: Array<{
 ];
 
 export const FEEDBACK_URL = "https://github.com/opengeos/GeoLibre/issues";
+export const WEBSITE_URL = "https://geolibre.app";
+export const GITHUB_URL = "https://github.com/opengeos/GeoLibre";
 // A small (~350 KB) CORS-enabled Las Vegas Strip sample, so the URL field works
 // out of the box on both the desktop and web builds.
-export const DEFAULT_OSM_PBF_URL =
-  "https://data.source.coop/giswqs/opengeos/LasVegas.osm.pbf";
+export const DEFAULT_OSM_PBF_URL = "https://data.source.coop/giswqs/opengeos/LasVegas.osm.pbf";
 
 // Static command metadata for the menus that map a single id to a label. These
 // drive the command palette so it stays in sync with the menus without each
@@ -102,6 +102,7 @@ export const ADD_DATA_KIND_COMMANDS: Array<{
   titleKey: ParseKeys;
 }> = [
   { kind: "delimited-text", titleKey: "toolbar.layerType.delimitedText" },
+  { kind: "cad", titleKey: "toolbar.item.cadLayer" },
   { kind: "gpx", titleKey: "toolbar.layerType.gpx" },
   { kind: "mbtiles", titleKey: "toolbar.layerType.mbtiles" },
   { kind: "xyz", titleKey: "toolbar.layerType.xyz" },
@@ -136,6 +137,10 @@ export const CONVERSION_COMMANDS: Array<{
   },
   { kind: "csv-to-geoparquet", titleKey: "toolbar.conversion.csvToGeoparquet" },
   { kind: "vector-to-pmtiles", titleKey: "toolbar.conversion.vectorToPmtiles" },
+  {
+    kind: "raster-to-pmtiles",
+    titleKey: "toolbar.conversion.rasterToPmtiles",
+  },
   { kind: "raster-to-cog", titleKey: "toolbar.conversion.rasterToCog" },
 ];
 
@@ -193,14 +198,9 @@ export const RASTER_TOOL_COMMANDS: Array<{
   { kind: "focal", titleKey: "toolbar.rasterTool.focal" },
 ];
 
-/** Open an external link in the OS browser (Tauri) or a new tab (web). */
-export async function openExternalLink(url: string): Promise<void> {
-  if (isTauri()) {
-    await openUrl(url);
-    return;
-  }
-  window.open(url, "_blank", "noopener,noreferrer");
-}
+// Re-exported so existing toolbar imports keep working; the shared helper
+// guards the URL scheme and logs opener failures instead of rejecting.
+export { openExternalLink } from "../../../lib/open-external";
 
 /** Format a recent-project timestamp for display, or "" if unparseable. */
 export function formatRecentProjectTime(openedAt: string): string {
@@ -217,10 +217,7 @@ export function formatRecentProjectTime(openedAt: string): string {
 }
 
 /** Initial toolbar control visibility map applied when a new project is created. */
-export function newProjectToolbarControlVisibility(): Record<
-  ToolbarMapControl,
-  boolean
-> {
+export function newProjectToolbarControlVisibility(): Record<ToolbarMapControl, boolean> {
   return MAP_CONTROL_ITEMS.reduce(
     (acc, { id }) => {
       acc[id] = NEW_PROJECT_VISIBLE_BUILT_IN_CONTROLS.has(id);

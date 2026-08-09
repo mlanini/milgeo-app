@@ -6,17 +6,11 @@
  */
 
 // The theme CSS variables the chart SVG references, resolved at export time.
-const CHART_COLOR_VARS = [
-  "--border",
-  "--muted-foreground",
-  "--primary",
-] as const;
+const CHART_COLOR_VARS = ["--border", "--muted-foreground", "--primary"] as const;
 
 /** Read a CSS custom property off the document root as an `hsl(...)` string. */
 function resolvedHsl(name: string): string | null {
-  const value = getComputedStyle(document.documentElement)
-    .getPropertyValue(name)
-    .trim();
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value ? `hsl(${value})` : null;
 }
 
@@ -25,11 +19,7 @@ function resolvedHsl(name: string): string | null {
  * explicit pixel dimensions, declare the SVG namespace, and replace each
  * `hsl(var(--x))` reference with the current theme's resolved color.
  */
-export function serializeChartSvg(
-  svg: SVGSVGElement,
-  width: number,
-  height: number,
-): string {
+export function serializeChartSvg(svg: SVGSVGElement, width: number, height: number): string {
   const clone = svg.cloneNode(true) as SVGSVGElement;
   clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   clone.setAttribute("width", String(width));
@@ -43,7 +33,17 @@ export function serializeChartSvg(
   return source;
 }
 
-function triggerDownload(blob: Blob, filename: string): void {
+/**
+ * Hand a blob to the browser as a download.
+ *
+ * Exported so the charts that write their *data* out (the NetCDF spectral
+ * profile's CSV) use the same anchor-and-revoke path as the image exports here,
+ * rather than each growing its own copy.
+ *
+ * @param blob - The file contents.
+ * @param filename - The name to save it under.
+ */
+export function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -62,10 +62,7 @@ export function downloadChartSvg(
   filename: string,
 ): void {
   const source = serializeChartSvg(svg, width, height);
-  triggerDownload(
-    new Blob([source], { type: "image/svg+xml;charset=utf-8" }),
-    filename,
-  );
+  triggerDownload(new Blob([source], { type: "image/svg+xml;charset=utf-8" }), filename);
 }
 
 /**

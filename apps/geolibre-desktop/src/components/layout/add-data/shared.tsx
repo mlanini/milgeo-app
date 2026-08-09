@@ -7,12 +7,7 @@
 import type { GeoLibreLayer } from "@geolibre/core";
 import { Button, Input, Label, Select } from "@geolibre/ui";
 import { Globe2, Map as MapIcon } from "lucide-react";
-import {
-  type FormEvent,
-  type ReactNode,
-  useId,
-  useState,
-} from "react";
+import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAddDataShell } from "./context";
 import { errorMessage } from "./helpers";
@@ -33,10 +28,7 @@ export function useAddDataSource(defaultLayerName: string) {
 
   const beforeLayer = beforeLayerId.trim() || null;
 
-  const addAndClose = (
-    layer: GeoLibreLayer,
-    options: { fit?: boolean } = {},
-  ) => {
+  const addAndClose = (layer: GeoLibreLayer, options: { fit?: boolean } = {}) => {
     shell.addLayer(layer, beforeLayer);
     if (options.fit) shell.mapControllerRef.current?.fitLayer(layer);
     shell.closeDialog();
@@ -47,8 +39,7 @@ export function useAddDataSource(defaultLayerName: string) {
    * submit-in-progress flag, returning a form `onSubmit` handler.
    */
   const runSubmit =
-    (action: () => Promise<void> | void) =>
-    async (event: FormEvent<HTMLFormElement>) => {
+    (action: () => Promise<void> | void) => async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       setError(null);
       shell.setIsSubmitting(true);
@@ -83,6 +74,11 @@ export function useAddDataSource(defaultLayerName: string) {
  * when no samples are supplied, and snaps back to the placeholder after a pick
  * so it reads as an action menu rather than a sticky selection.
  *
+ * Sits at the bottom of each source form as a secondary, low-frequency action,
+ * with a faint top divider so it reads as separate from the production fields
+ * above it (and is less likely to be triggered by accident — picking a sample
+ * overwrites the fields, including any access token typed for the prior entry).
+ *
  * @param samples - The named presets to offer.
  * @param onSelect - Applies the chosen preset's value to the source's fields.
  */
@@ -97,7 +93,7 @@ export function SampleDataSelect<T>({
   const selectId = useId();
   if (samples.length === 0) return null;
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5 border-t border-border/60 pt-3">
       <Label htmlFor={selectId}>{t("addData.shared.sampleData")}</Label>
       <Select
         id={selectId}
@@ -156,8 +152,7 @@ export function InsertBeforeField({
   const { existingLayers, mapControllerRef } = useAddDataShell();
   // Computed during render (not memoized) so the list picks up the map
   // controller once it finishes initialising; the call is a cheap filter.
-  const basemapStyleLayerIds =
-    mapControllerRef.current?.getBasemapStyleLayerIds() ?? [];
+  const basemapStyleLayerIds = mapControllerRef.current?.getBasemapStyleLayerIds() ?? [];
   // The basemap style exposes dozens of internal layer ids that overwhelm the
   // dropdown for standard users (issue #453). Keep them behind an opt-in
   // "advanced" toggle so the default list only shows the user's own layers —
@@ -167,9 +162,7 @@ export function InsertBeforeField({
   const basemapLayersVisible = showBasemapLayers || valueIsBasemapLayer;
   return (
     <div className="space-y-1.5">
-      <Label htmlFor="add-data-before-id">
-        {t("addData.shared.insertBefore")}
-      </Label>
+      <Label htmlFor="add-data-before-id">{t("addData.shared.insertBelow")}</Label>
       <Select
         id="add-data-before-id"
         value={value}
@@ -227,20 +220,15 @@ export function AddDataFooter({
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       <div className="flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={closeDialog}
-          disabled={isSubmitting}
-        >
+        <Button type="button" variant="outline" onClick={closeDialog} disabled={isSubmitting}>
           {t("common.cancel")}
         </Button>
         <Button type="submit" disabled={submitDisabled}>
           {!isSubmitting ? (
             useServiceIcon ? (
-              <Globe2 className="mr-2 h-3.5 w-3.5" />
+              <Globe2 className="me-2 h-3.5 w-3.5" />
             ) : (
-              <MapIcon className="mr-2 h-3.5 w-3.5" />
+              <MapIcon className="me-2 h-3.5 w-3.5" />
             )
           ) : null}
           {isSubmitting ? t("addData.shared.adding") : t("addData.shared.addLayer")}
@@ -278,10 +266,7 @@ export function AddDataSourceForm({
   return (
     <form className="space-y-4" onSubmit={onSubmit}>
       <LayerNameField value={layerName} onChange={onLayerNameChange} />
-      <InsertBeforeField
-        value={beforeLayerId}
-        onChange={onBeforeLayerIdChange}
-      />
+      <InsertBeforeField value={beforeLayerId} onChange={onBeforeLayerIdChange} />
       {children}
       <AddDataFooter
         error={error}

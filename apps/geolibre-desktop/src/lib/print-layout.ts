@@ -8,6 +8,15 @@
  * (PNG / PDF), so the preview is faithful to the output.
  */
 
+import {
+  drawMarkerPath,
+  formatRoundNum,
+  getRoundNum,
+  scaleDenomination,
+  type MapScaleUnit,
+  type MarkerShape,
+} from "@geolibre/core";
+
 export type PaperSizeId =
   | "a4"
   | "a3"
@@ -43,16 +52,86 @@ export interface PaperSize {
  * {@link LayoutOptions.customSize}.
  */
 export const PAPER_SIZES: PaperSize[] = [
-  { id: "a4", label: "A4 (210 × 297 mm)", width: 210, height: 297, unit: "mm", group: "paper" },
-  { id: "a3", label: "A3 (297 × 420 mm)", width: 297, height: 420, unit: "mm", group: "paper" },
-  { id: "letter", label: "Letter (8.5 × 11 in)", width: 215.9, height: 279.4, unit: "mm", group: "paper" },
-  { id: "legal", label: "Legal (8.5 × 14 in)", width: 215.9, height: 355.6, unit: "mm", group: "paper" },
-  { id: "tabloid", label: "Tabloid (11 × 17 in)", width: 279.4, height: 431.8, unit: "mm", group: "paper" },
-  { id: "fullhd", label: "Full HD (1920 × 1080 px)", width: 1080, height: 1920, unit: "px", group: "screen" },
-  { id: "hd", label: "HD (1280 × 720 px)", width: 720, height: 1280, unit: "px", group: "screen" },
-  { id: "uhd4k", label: "4K UHD (3840 × 2160 px)", width: 2160, height: 3840, unit: "px", group: "screen" },
-  { id: "square", label: "Square (1080 × 1080 px)", width: 1080, height: 1080, unit: "px", group: "screen" },
-  { id: "custom", label: "Custom…", width: 1280, height: 720, unit: "px", group: "screen" },
+  {
+    id: "a4",
+    label: "A4 (210 × 297 mm)",
+    width: 210,
+    height: 297,
+    unit: "mm",
+    group: "paper",
+  },
+  {
+    id: "a3",
+    label: "A3 (297 × 420 mm)",
+    width: 297,
+    height: 420,
+    unit: "mm",
+    group: "paper",
+  },
+  {
+    id: "letter",
+    label: "Letter (8.5 × 11 in)",
+    width: 215.9,
+    height: 279.4,
+    unit: "mm",
+    group: "paper",
+  },
+  {
+    id: "legal",
+    label: "Legal (8.5 × 14 in)",
+    width: 215.9,
+    height: 355.6,
+    unit: "mm",
+    group: "paper",
+  },
+  {
+    id: "tabloid",
+    label: "Tabloid (11 × 17 in)",
+    width: 279.4,
+    height: 431.8,
+    unit: "mm",
+    group: "paper",
+  },
+  {
+    id: "fullhd",
+    label: "Full HD (1920 × 1080 px)",
+    width: 1080,
+    height: 1920,
+    unit: "px",
+    group: "screen",
+  },
+  {
+    id: "hd",
+    label: "HD (1280 × 720 px)",
+    width: 720,
+    height: 1280,
+    unit: "px",
+    group: "screen",
+  },
+  {
+    id: "uhd4k",
+    label: "4K UHD (3840 × 2160 px)",
+    width: 2160,
+    height: 3840,
+    unit: "px",
+    group: "screen",
+  },
+  {
+    id: "square",
+    label: "Square (1080 × 1080 px)",
+    width: 1080,
+    height: 1080,
+    unit: "px",
+    group: "screen",
+  },
+  {
+    id: "custom",
+    label: "Custom…",
+    width: 1280,
+    height: 720,
+    unit: "px",
+    group: "screen",
+  },
 ];
 
 export function getPaperSize(id: PaperSizeId): PaperSize {
@@ -105,17 +184,17 @@ export function pageMm(size: ResolvedPageSize): {
   heightMm: number;
 } {
   if (size.unit === "mm") return { widthMm: size.width, heightMm: size.height };
-  return { widthMm: size.width / PX_PER_MM_96, heightMm: size.height / PX_PER_MM_96 };
+  return {
+    widthMm: size.width / PX_PER_MM_96,
+    heightMm: size.height / PX_PER_MM_96,
+  };
 }
 
 /**
  * Convert a resolved page size to output pixels at the given dpi. Pixel-unit
  * sizes are exact (dpi is ignored); millimetre sizes scale by dpi/25.4.
  */
-export function pagePx(
-  size: ResolvedPageSize,
-  dpi: number,
-): { width: number; height: number } {
+export function pagePx(size: ResolvedPageSize, dpi: number): { width: number; height: number } {
   if (size.unit === "px") {
     return { width: Math.round(size.width), height: Math.round(size.height) };
   }
@@ -126,10 +205,40 @@ export function pagePx(
   };
 }
 
+/**
+ * A point layer's marker, carried on its legend swatch so the legend can draw
+ * the actual marker (a built-in shape recolored, or a custom SVG icon) instead
+ * of a plain color square. Mirrors the map's marker sprite (`prepareMarker` in
+ * `@geolibre/map`).
+ */
+export interface LegendMarker {
+  /** Built-in shape, or `"custom"` for an SVG icon in {@link svg}. */
+  shape: MarkerShape;
+  /** Fill color for a built-in shape (ignored for `"custom"`). */
+  color: string;
+  /**
+   * Raw SVG markup or a URL, set only when {@link shape} is `"custom"`. Doubles
+   * as the lookup key into {@link LayoutOptions.markerIcons}.
+   */
+  svg?: string;
+}
+
 /** A single swatch in a legend entry (one color, with an optional label). */
 export interface LegendSwatch {
   color: string;
   label?: string;
+  /**
+   * When set, the swatch represents a point marker: the legend draws the marker
+   * (see {@link LegendMarker}) in place of the {@link color} square, falling
+   * back to the square if a custom SVG icon has not been preloaded.
+   */
+  marker?: LegendMarker;
+  /**
+   * Circle radius in map pixels for a proportional-symbol row. When set, the
+   * legend draws a filled circle instead of a color square (scaled to fit the
+   * legend box, keeping ratios across the entry).
+   */
+  size?: number;
 }
 
 export interface LegendEntry {
@@ -138,6 +247,46 @@ export interface LegendEntry {
   name: string;
   swatches: LegendSwatch[];
 }
+
+/** Corner of the map body a composed panel is anchored to. */
+export type BodyCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+/**
+ * Resolved, drawable data for the chart block (GH #1324). Like the colorbar's
+ * `colors`, everything here is already computed by the dialog (aggregation,
+ * top-N capping, colors) so this drawing code stays data-only.
+ */
+export type DataChartData =
+  | {
+      kind: "bar";
+      bars: { label: string; value: number; color: string }[];
+      /** Largest bar value (>= 0), for scaling. */
+      maxValue: number;
+      /** Smallest bar value; negative when sum/mean produce negatives. */
+      minValue: number;
+      /**
+       * Categories dropped past the top-N cap, drawn as a "+N more" note so
+       * the chart is never silently incomplete (the pie folds its remainder
+       * into an "(other)" slice instead).
+       */
+      truncated?: number;
+    }
+  | {
+      kind: "pie";
+      slices: { label: string; value: number; color: string }[];
+      /** Sum of every slice value (> 0). */
+      total: number;
+    }
+  | {
+      kind: "line";
+      /** Finite values plotted against original row order (gaps skipped). */
+      points: { index: number; value: number }[];
+      min: number;
+      max: number;
+      /** Total row count, so x spans the full feature order. */
+      length: number;
+      color: string;
+    };
 
 export interface LayoutOptions {
   title: string;
@@ -155,6 +304,13 @@ export interface LayoutOptions {
   titleAlign?: "left" | "center" | "right";
   showLegend: boolean;
   showScaleBar: boolean;
+  /**
+   * Unit system the scale bar labels distances in: `"metric"` (km/m/cm),
+   * `"imperial"` (mi/ft), or `"nautical"` (nmi). Follows the project's map
+   * preference so the printed bar matches the on-screen bar. Defaults to
+   * `"metric"` when omitted.
+   */
+  scaleUnit?: MapScaleUnit;
   showNorthArrow: boolean;
   /**
    * Group the north arrow directly above the scale bar in the lower-right
@@ -249,6 +405,49 @@ export interface LayoutOptions {
     entries: { label: string; color: string }[];
     position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   } | null;
+  /**
+   * An attribute-table block composed in the Print Layout (GH #1324): rows of a
+   * vector layer's attributes drawn as a bordered panel at the chosen corner.
+   * Cell text is already resolved to display strings (and, for an atlas page,
+   * already filtered to the page extent) by the dialog, so this drawing code
+   * stays data-only.
+   */
+  dataTable?: {
+    title?: string;
+    /** Column headers, in display order. */
+    columns: string[];
+    /** Row cells as display strings, aligned with {@link columns}. */
+    rows: string[][];
+    /**
+     * How many source rows the dialog's row limit already dropped. Rows the
+     * renderer additionally hides to fit the body height are added to this
+     * count in a "+N more" note under the table.
+     */
+    truncated?: number;
+    /**
+     * Translated formatter for the note (e.g. `(n) => t("moreRows", {count:
+     * n})`). A function rather than preformatted text because the final count
+     * depends on the canvas geometry; falls back to English "+N more" when
+     * omitted, like the drawing code's other i18n fallbacks.
+     */
+    formatNote?: (count: number) => string;
+    position: BodyCorner;
+  } | null;
+  /**
+   * A chart block composed in the Print Layout (GH #1324): a bar, pie, or line
+   * chart of a vector layer's attributes, drawn crisply at export resolution
+   * at the chosen corner.
+   */
+  dataChart?: {
+    title?: string;
+    position: BodyCorner;
+    data: DataChartData;
+    /**
+     * Translated formatter for the bar chart's "+N more" truncation note;
+     * falls back to English when omitted (like the table's formatter).
+     */
+    formatNote?: (count: number) => string;
+  } | null;
   legend: LegendEntry[];
   /** Heading drawn above the legend entries. */
   legendTitle: string;
@@ -257,8 +456,24 @@ export interface LayoutOptions {
    * classes; when false, classes are listed flat without the layer heading.
    */
   legendGroupByLayer: boolean;
+  /**
+   * Translated formatter for the legend's "+N more" note, drawn when the class
+   * rows do not fit the map body; falls back to English when omitted (like the
+   * table's and chart's formatters).
+   */
+  legendFormatNote?: (count: number) => string;
+  /**
+   * Preloaded custom-SVG marker icons for legend swatches, keyed by the
+   * swatch marker's `svg` string ({@link LegendMarker.svg}). Loading SVGs is
+   * async, but {@link drawLayout} is synchronous, so the caller resolves them
+   * up front (like {@link mapImage}) and passes them here; a marker whose icon
+   * is missing falls back to a plain color square.
+   */
+  markerIcons?: ReadonlyMap<string, CanvasImageSource>;
   /** Ground metres per source-image pixel at the map centre. */
   metersPerPixel: number;
+  /** Device pixels per CSS pixel in the captured map image. */
+  mapPixelRatio?: number;
   /** Map bearing in degrees clockwise from north. */
   bearingDeg: number;
   /** The captured map image (already composited). */
@@ -304,8 +519,7 @@ function resolveContentFlags(opts: LayoutOptions): ContentFlags {
   // the other new booleans: GH #526 wants a pre-checked "Created with GeoLibre"
   // credit so it survives a user replacing the footer text.
   const attributionText =
-    opts.showAttribution !== false &&
-    (opts.attributionText ?? "Created with GeoLibre").trim();
+    opts.showAttribution !== false && (opts.attributionText ?? "Created with GeoLibre").trim();
   const footerText = opts.showFooter && opts.footerText.trim();
   const dateText = (opts.showDate && (opts.dateText ?? "").trim()) || false;
   return {
@@ -339,8 +553,7 @@ interface BodyRect {
  */
 function computeBodyRect(opts: LayoutOptions, W: number, H: number): BodyRect {
   const unit = Math.min(W, H) / 100;
-  const marginScale =
-    opts.pageMargin === "none" ? 0 : opts.pageMargin === "narrow" ? 0.5 : 1;
+  const marginScale = opts.pageMargin === "none" ? 0 : opts.pageMargin === "narrow" ? 0.5 : 1;
   const margin = unit * 5 * marginScale;
   const f = resolveContentFlags(opts);
 
@@ -368,6 +581,19 @@ function computeBodyRect(opts: LayoutOptions, W: number, H: number): BodyRect {
     bodyW: W - margin * 2,
     bodyH: Math.max(unit * 10, bodyBottom - bodyTop),
   };
+}
+
+/**
+ * Aspect ratio of the map frame after page margins, outside titles, and the
+ * footer row reserve their space. Atlas camera fitting uses this ratio so the
+ * feature remains visible after the captured live map is cover-cropped into
+ * the print frame.
+ */
+export function mapBodyAspectRatio(opts: LayoutOptions): number {
+  const page = resolvePageSize(opts);
+  const rect = computeBodyRect(opts, page.width, page.height);
+  const ratio = rect.bodyW / rect.bodyH;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : page.width / page.height;
 }
 
 /**
@@ -439,10 +665,7 @@ export function computeScaleRatio(opts: LayoutOptions): number {
  *   size in pixels.
  * @param opts - Layout content and options.
  */
-export function drawLayout(
-  canvas: HTMLCanvasElement,
-  opts: LayoutOptions,
-): void {
+export function drawLayout(canvas: HTMLCanvasElement, opts: LayoutOptions): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
@@ -451,11 +674,7 @@ export function drawLayout(
   // Scale furniture relative to the page's shorter side so output looks the
   // same at any resolution / paper size. The body rectangle and unit come from
   // the shared geometry helper so the on-screen scale matches the export.
-  const { unit, margin, bodyX, bodyY, bodyW, bodyH } = computeBodyRect(
-    opts,
-    W,
-    H,
-  );
+  const { unit, margin, bodyX, bodyY, bodyW, bodyH } = computeBodyRect(opts, W, H);
   const {
     hasTitleText,
     hasSubtitleText,
@@ -474,8 +693,7 @@ export function drawLayout(
   ctx.fillRect(0, 0, W, H);
 
   // X anchor + canvas textAlign for the chosen title alignment.
-  const titleX =
-    titleAlign === "left" ? margin : titleAlign === "right" ? W - margin : W / 2;
+  const titleX = titleAlign === "left" ? margin : titleAlign === "right" ? W - margin : W / 2;
 
   // --- Title block (outside the map) -------------------------------------
   if (hasTitleBlock && !titleInside) {
@@ -564,8 +782,7 @@ export function drawLayout(
   // thickness of 0 hides the frame entirely (GH #749). The thickness is a 0–10
   // scale relative to the page so it reads the same at any export resolution.
   const mapBorderScale = Math.max(0, Math.min(10, opts.mapBorderWidth ?? 1));
-  const mapBorderWidth =
-    mapBorderScale > 0 ? Math.max(1, unit * 0.2 * mapBorderScale) : 0;
+  const mapBorderWidth = mapBorderScale > 0 ? Math.max(1, unit * 0.2 * mapBorderScale) : 0;
   if (mapBorderWidth > 0) {
     ctx.strokeStyle = opts.mapBorderColor ?? BORDER;
     ctx.lineWidth = mapBorderWidth;
@@ -633,8 +850,7 @@ export function drawLayout(
   const inset = unit * 2;
   // Metres per pixel in the *output* image after cover scaling.
   const outputMpp = opts.metersPerPixel / (coverScale || 1);
-  const hasScale =
-    opts.showScaleBar && outputMpp > 0 && Number.isFinite(outputMpp);
+  const hasScale = opts.showScaleBar && outputMpp > 0 && Number.isFinite(outputMpp);
   // Representative fraction (1:N) from the shared, resolution-independent helper
   // so the scale bar, the info block, and the dialog's scale input all agree.
   // It is only non-zero for physical paper sizes with a captured map.
@@ -652,13 +868,7 @@ export function drawLayout(
     ctx.beginPath();
     ctx.rect(bodyX, bodyY, bodyW, bodyH);
     ctx.clip();
-    drawInfoBlock(
-      ctx,
-      bodyX + bodyW - inset,
-      bodyY + bodyH - inset,
-      infoLines,
-      unit,
-    );
+    drawInfoBlock(ctx, bodyX + bodyW - inset, bodyY + bodyH - inset, infoLines, unit);
     ctx.restore();
   }
 
@@ -667,9 +877,7 @@ export function drawLayout(
   // When the info block occupies the bottom-right corner, move the scale bar +
   // north arrow to the bottom-left so they never sit under the block.
   const navOnLeft = hasInfoBlock;
-  const navAnchorX = navOnLeft
-    ? bodyX + inset + bodyW * 0.28
-    : bodyX + bodyW - inset;
+  const navAnchorX = navOnLeft ? bodyX + inset + bodyW * 0.28 : bodyX + bodyW - inset;
 
   // --- Scale bar + north arrow ------------------------------------------
   let scaleTopY = bodyY + bodyH - inset;
@@ -682,6 +890,7 @@ export function drawLayout(
       outputMpp,
       unit,
       scaleRatio,
+      opts.scaleUnit ?? "metric",
     );
   }
   if (opts.showNorthArrow) {
@@ -712,45 +921,122 @@ export function drawLayout(
     }
   }
 
-  // --- Legend (bottom-left inside the map) ------------------------------
+  // --- Legend (top-left inside the map) ---------------------------------
   // Clip to the map body so a legend with many layers cannot overflow onto the
   // footer or off the page.
+  let legendHeight = 0;
   if (opts.showLegend && opts.legend.length > 0) {
     ctx.save();
     ctx.beginPath();
     ctx.rect(bodyX, bodyY, bodyW, bodyH);
     ctx.clip();
-    drawLegend(ctx, bodyX + inset, bodyY + inset, opts.legend, unit, {
+    legendHeight = drawLegend(ctx, bodyX + inset, bodyY + inset, opts.legend, unit, {
       title: opts.legendTitle,
       groupByLayer: opts.legendGroupByLayer,
+      markerIcons: opts.markerIcons,
+      // Legend sizes are stored in MapLibre CSS pixels. The capture is in
+      // device pixels and is then fitted into the page body, so apply both
+      // transforms to make the legend symbols match their map counterparts.
+      mapSymbolScale: Math.max(0, (opts.mapPixelRatio ?? 1) * coverScale),
+      maxHeight: bodyH - inset * 2,
+      formatNote: opts.legendFormatNote,
     });
     ctx.restore();
   }
 
-  // --- Colorbar (user-chosen corner inside the map) ---------------------
-  if (opts.colorbar && opts.colorbar.colors.length >= 2) {
-    // The info block ("stempel") always occupies the bottom-right corner; move a
-    // bottom-right colorbar to the top-right so the two never overlap.
-    const colorbar =
-      hasInfoBlock && opts.colorbar.position === "bottom-right"
-        ? { ...opts.colorbar, position: "top-right" as const }
-        : opts.colorbar;
+  // --- Corner panels (colorbar, custom legend, table, chart) ------------
+  // Panels sharing a corner stack toward the body centre instead of drawing
+  // on top of each other (e.g. colorbar + chart, both defaulting top-right).
+  // The ledger tracks the vertical space already claimed per corner; the info
+  // block still owns the bottom-right, so panels aimed there relocate to the
+  // top-right first (the original colorbar rule, GH #522).
+  const stackGap = unit * 1.2;
+  const cornerUsed: Record<BodyCorner, number> = {
+    // The layer-derived legend always occupies the top-left corner when shown;
+    // seed the ledger so a panel aimed there stacks below it.
+    "top-left": legendHeight > 0 ? legendHeight + stackGap : 0,
+    "top-right": 0,
+    "bottom-left": 0,
+    "bottom-right": 0,
+  };
+  const resolveCorner = (position: BodyCorner): BodyCorner =>
+    hasInfoBlock && position === "bottom-right" ? "top-right" : position;
+  const drawCornerPanel = (
+    position: BodyCorner,
+    draw: (corner: BodyCorner, stackOffset: number) => number,
+  ) => {
+    const corner = resolveCorner(position);
     ctx.save();
     ctx.beginPath();
     ctx.rect(bodyX, bodyY, bodyW, bodyH);
     ctx.clip();
-    drawColorbar(ctx, colorbar, bodyX, bodyY, bodyW, bodyH, unit);
+    const height = draw(corner, cornerUsed[corner]);
     ctx.restore();
+    cornerUsed[corner] += height + stackGap;
+  };
+
+  if (opts.colorbar && opts.colorbar.colors.length >= 2) {
+    const colorbar = opts.colorbar;
+    drawCornerPanel(colorbar.position, (corner, stackOffset) =>
+      drawColorbar(
+        ctx,
+        { ...colorbar, position: corner },
+        bodyX,
+        bodyY,
+        bodyW,
+        bodyH,
+        unit,
+        stackOffset,
+      ),
+    );
   }
 
-  // --- Custom legend (user-chosen corner inside the map) ----------------
   if (opts.customLegend && opts.customLegend.entries.length > 0) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(bodyX, bodyY, bodyW, bodyH);
-    ctx.clip();
-    drawCustomLegend(ctx, opts.customLegend, bodyX, bodyY, bodyW, bodyH, unit);
-    ctx.restore();
+    const customLegend = opts.customLegend;
+    drawCornerPanel(customLegend.position, (corner, stackOffset) =>
+      drawCustomLegend(
+        ctx,
+        { ...customLegend, position: corner },
+        bodyX,
+        bodyY,
+        bodyW,
+        bodyH,
+        unit,
+        stackOffset,
+      ),
+    );
+  }
+
+  if (opts.dataTable && opts.dataTable.columns.length > 0 && opts.dataTable.rows.length > 0) {
+    const table = opts.dataTable;
+    drawCornerPanel(table.position, (corner, stackOffset) =>
+      drawDataTable(
+        ctx,
+        { ...table, position: corner },
+        bodyX,
+        bodyY,
+        bodyW,
+        bodyH,
+        unit,
+        stackOffset,
+      ),
+    );
+  }
+
+  if (opts.dataChart) {
+    const chart = opts.dataChart;
+    drawCornerPanel(chart.position, (corner, stackOffset) =>
+      drawDataChart(
+        ctx,
+        { ...chart, position: corner },
+        bodyX,
+        bodyY,
+        bodyW,
+        bodyH,
+        unit,
+        stackOffset,
+      ),
+    );
   }
 
   // --- Page border -------------------------------------------------------
@@ -808,29 +1094,38 @@ function drawNorthArrow(
   ctx.restore();
 }
 
-/** Round a distance down to a "nice" 1/2/5 × 10ⁿ value. */
-function niceDistance(meters: number): number {
-  // Guard against a zero/negative body width: Math.log10(0) is -Infinity, which
-  // would propagate as NaN through the scale-bar geometry.
-  if (meters <= 0) return 1;
-  const pow = Math.pow(10, Math.floor(Math.log10(meters)));
-  const frac = meters / pow;
-  let nice: number;
-  if (frac >= 5) nice = 5;
-  else if (frac >= 2) nice = 2;
-  else nice = 1;
-  return nice * pow;
+/**
+ * Round a positive span with the shared cartographic rounder ({@link
+ * getRoundNum} — the same one the on-screen `PlanetaryScaleControl` uses), so
+ * the printed bar snaps a given ground span to the same value the map does.
+ * Falls back to 1 for a non-positive span (a zero/negative body width) so the
+ * bar geometry never turns into NaN — `getRoundNum` returns 0 there.
+ */
+function niceSpan(span: number): number {
+  return span > 0 ? getRoundNum(span) : 1;
 }
 
-function formatDistance(meters: number): string {
-  if (meters >= 1000) {
-    const km = meters / 1000;
-    return `${km % 1 === 0 ? km : km.toFixed(1)} km`;
+/**
+ * The denomination the print bar rounds and labels distances with. Delegates to
+ * the shared {@link scaleDenomination} (km/m, mi/ft, nmi) and adds one
+ * print-only refinement: a metric sub-metre span (street/parcel zoom) labels in
+ * centimetres rather than showing a useless "0.x m". Returns the size in metres
+ * of one unit of that denomination so the caller can round in unit space and
+ * convert the result back to metres (and thus pixels).
+ */
+function printScaleDenomination(
+  maxMeters: number,
+  unit: MapScaleUnit,
+): { metersPerUnit: number; label: string } {
+  if (unit === "metric" && maxMeters > 0 && maxMeters < 1) {
+    return { metersPerUnit: 0.01, label: "cm" };
   }
-  // Below a metre (street/parcel zoom) label in centimetres instead of showing
-  // a useless "0.0 m".
-  if (meters >= 1) return `${Math.round(meters)} m`;
-  return `${Math.round(meters * 100)} cm`;
+  return scaleDenomination(maxMeters, unit);
+}
+
+/** Format a rounded span in its denomination, trimming trailing-zero noise. */
+function formatSpanLabel(span: number, label: string): string {
+  return `${formatRoundNum(span)} ${label}`;
 }
 
 /**
@@ -849,9 +1144,15 @@ function drawScaleBar(
   metersPerPixel: number,
   unit: number,
   scaleRatio = 0,
+  scaleUnit: MapScaleUnit = "metric",
 ): number {
   const maxMeters = maxWidthPx * metersPerPixel;
-  const distance = niceDistance(maxMeters);
+  // Round to a nice number in the target unit (feet, miles, km, ...) so the bar
+  // lands on a readable value in that system, then convert back to metres for
+  // the pixel width.
+  const { metersPerUnit, label } = printScaleDenomination(maxMeters, scaleUnit);
+  const rounded = niceSpan(maxMeters / metersPerUnit);
+  const distance = rounded * metersPerUnit;
   const barWidth = distance / metersPerPixel;
   const barHeight = unit * 1.1;
   const x0 = rightX - barWidth;
@@ -893,7 +1194,7 @@ function drawScaleBar(
   ctx.font = `500 ${unit * 1.7}px system-ui, sans-serif`;
   ctx.textAlign = "right";
   ctx.textBaseline = "bottom";
-  ctx.fillText(formatDistance(distance), rightX, y0 - unit * 0.5);
+  ctx.fillText(formatSpanLabel(rounded, label), rightX, y0 - unit * 0.5);
   ctx.restore();
   return backingTop;
 }
@@ -1019,6 +1320,9 @@ type ColorbarSpec = NonNullable<LayoutOptions["colorbar"]>;
  * panel anchored at one of the four body corners. Rendered with the canvas at
  * full output resolution, so it stays crisp in the export (unlike a rasterized
  * on-map control).
+ *
+ * @returns The drawn panel's height, so a later panel sharing the corner can
+ *   stack below/above it instead of overlapping.
  */
 function drawColorbar(
   ctx: CanvasRenderingContext2D,
@@ -1028,7 +1332,8 @@ function drawColorbar(
   bodyW: number,
   bodyH: number,
   unit: number,
-): void {
+  stackOffset = 0,
+): number {
   const vertical = cb.orientation === "vertical";
   const pad = unit * 1.4;
   const barThick = unit * 2.2;
@@ -1054,9 +1359,7 @@ function drawColorbar(
   // Enough decimals to keep adjacent ticks distinct for small ranges (at least
   // 2, as before, for normal ranges).
   const decimals =
-    step > 0 && step < 1
-      ? Math.max(2, Math.min(8, Math.ceil(-Math.log10(step)) + 1))
-      : 2;
+    step > 0 && step < 1 ? Math.max(2, Math.min(8, Math.ceil(-Math.log10(step)) + 1)) : 2;
   const ticks = Array.from({ length: TICKS }, (_, i) => {
     const t = TICKS === 1 ? 0.5 : i / (TICKS - 1);
     return { t, text: formatColorbarTick(cb.min + span * t, decimals) };
@@ -1086,12 +1389,17 @@ function drawColorbar(
     panelH = pad * 2 + titleStrip + barThick + tickLen + tickGap + labelSize;
   }
 
-  const px = cb.position.endsWith("left")
-    ? bodyX + inset
-    : bodyX + bodyW - inset - panelW;
-  const py = cb.position.startsWith("top")
-    ? bodyY + inset
-    : bodyY + bodyH - inset - panelH;
+  const { x: px, y: py } = panelOrigin(
+    cb.position,
+    bodyX,
+    bodyY,
+    bodyW,
+    bodyH,
+    inset,
+    panelW,
+    panelH,
+    stackOffset,
+  );
 
   ctx.fillStyle = "rgba(255,255,255,0.85)";
   ctx.strokeStyle = BORDER;
@@ -1180,6 +1488,7 @@ function drawColorbar(
     }
   }
   ctx.restore();
+  return panelH;
 }
 
 type CustomLegendSpec = NonNullable<LayoutOptions["customLegend"]>;
@@ -1188,6 +1497,8 @@ type CustomLegendSpec = NonNullable<LayoutOptions["customLegend"]>;
  * Draw a user-defined legend (title + colour/label rows) as a bordered panel
  * anchored at one of the four body corners. Crisp at export resolution, the
  * native equivalent of a Controls -> Legend control.
+ *
+ * @returns The drawn panel's height, for corner stacking.
  */
 function drawCustomLegend(
   ctx: CanvasRenderingContext2D,
@@ -1197,7 +1508,8 @@ function drawCustomLegend(
   bodyW: number,
   bodyH: number,
   unit: number,
-): void {
+  stackOffset = 0,
+): number {
   const pad = unit * 1.4;
   const rowH = unit * 2.6;
   const swatch = unit * 2;
@@ -1220,12 +1532,17 @@ function drawCustomLegend(
   const titleBlock = hasTitle ? titleSize + unit : 0;
   const boxW = pad * 2 + maxText;
   const boxH = pad * 2 + titleBlock + cl.entries.length * rowH;
-  const x = cl.position.endsWith("left")
-    ? bodyX + inset
-    : bodyX + bodyW - inset - boxW;
-  const y = cl.position.startsWith("top")
-    ? bodyY + inset
-    : bodyY + bodyH - inset - boxH;
+  const { x, y } = panelOrigin(
+    cl.position,
+    bodyX,
+    bodyY,
+    bodyW,
+    bodyH,
+    inset,
+    boxW,
+    boxH,
+    stackOffset,
+  );
 
   ctx.fillStyle = "rgba(255,255,255,0.85)";
   ctx.strokeStyle = BORDER;
@@ -1256,29 +1573,565 @@ function drawCustomLegend(
     ctx.fillText(e.label, x + pad + swatch + gap, cy, boxW - pad * 2 - swatch - gap);
   }
   ctx.restore();
+  return boxH;
 }
 
-/** Draw a legend box anchored at its top-left corner. */
+/**
+ * Top-left origin of a panel of `boxW`×`boxH` anchored at a body corner.
+ * `stackOffset` shifts the panel toward the body centre (down from a top
+ * corner, up from a bottom one) past panels already drawn in that corner, so
+ * two panels sharing a corner stack instead of overlapping.
+ */
+function panelOrigin(
+  position: BodyCorner,
+  bodyX: number,
+  bodyY: number,
+  bodyW: number,
+  bodyH: number,
+  inset: number,
+  boxW: number,
+  boxH: number,
+  stackOffset = 0,
+): { x: number; y: number } {
+  return {
+    x: position.endsWith("left") ? bodyX + inset : bodyX + bodyW - inset - boxW,
+    y: position.startsWith("top")
+      ? bodyY + inset + stackOffset
+      : bodyY + bodyH - inset - boxH - stackOffset,
+  };
+}
+
+/**
+ * Truncate text to fit `maxWidth` with a trailing ellipsis, using the context's
+ * current font. Returns the text unchanged when it already fits.
+ */
+function truncateToWidth(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let lo = 0;
+  let hi = text.length;
+  // Largest prefix whose "prefix…" still fits (binary search on length).
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (ctx.measureText(`${text.slice(0, mid)}…`).width <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return `${text.slice(0, lo)}…`;
+}
+
+type DataTableSpec = NonNullable<LayoutOptions["dataTable"]>;
+
+/**
+ * Draw the attribute-table block as a bordered panel anchored at one of the
+ * four body corners: an optional title, a bold header row over a hairline, one
+ * row per feature, and an optional "+N more" note. Column widths come from the
+ * widest cell, capped per column and scaled down together when the full table
+ * would overrun the body width. GH #1324.
+ *
+ * @returns The drawn panel's height, for corner stacking.
+ */
+function drawDataTable(
+  ctx: CanvasRenderingContext2D,
+  table: DataTableSpec,
+  bodyX: number,
+  bodyY: number,
+  bodyW: number,
+  bodyH: number,
+  unit: number,
+  stackOffset = 0,
+): number {
+  const pad = unit * 1.4;
+  const rowH = unit * 2.4;
+  const labelSize = unit * 1.7;
+  const titleSize = unit * 2;
+  const colGap = unit * 1.6;
+  const maxColW = unit * 26;
+  const inset = unit * 2; // matches the info block/legend corner inset
+  const title = (table.title ?? "").trim();
+  const hasTitle = title.length > 0;
+  const titleBlockH = hasTitle ? titleSize + unit : 0;
+
+  // Fit the rows to the body height remaining below/above the stack offset:
+  // a 50-row table on a small page would otherwise clip its title or note
+  // away silently. The note row is part of the same budget, so a table whose
+  // rows exactly fill the space still has room for a dialog-truncation note.
+  const budget = bodyH - inset * 2 - stackOffset - (pad * 2 + titleBlockH + rowH);
+  let rows = table.rows;
+  let hidden = table.truncated ?? 0;
+  if (rows.length * rowH + (hidden > 0 ? rowH : 0) > budget) {
+    // Reserve one row of the budget for the note the truncation produces.
+    // When even a single row cannot fit (several panels already stacked in
+    // this corner on a small page), degrade to header + note only rather
+    // than forcing a row that would overlap the neighbouring panel.
+    const fitRows = Math.max(0, Math.floor((budget - rowH) / rowH));
+    if (fitRows < rows.length) {
+      hidden += rows.length - fitRows;
+      rows = rows.slice(0, fitRows);
+    }
+  }
+  const note = hidden > 0 ? (table.formatNote?.(hidden) ?? `+${hidden} more`) : "";
+  const hasNote = note.length > 0;
+
+  ctx.save();
+  // Measure each column: the widest of its header (bold) and cells (regular),
+  // capped so one long text field cannot swallow the page.
+  const colW = table.columns.map((header, i) => {
+    ctx.font = `600 ${labelSize}px system-ui, sans-serif`;
+    let w = ctx.measureText(header).width;
+    ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+    for (const row of rows) {
+      w = Math.max(w, ctx.measureText(row[i] ?? "").width);
+    }
+    return Math.min(w, maxColW);
+  });
+  let contentW = colW.reduce((sum, w) => sum + w, 0) + colGap * (table.columns.length - 1);
+  // Shrink every column proportionally if the table would overrun the body;
+  // cell text is ellipsis-truncated to its final column width below.
+  const availW = bodyW - inset * 2 - pad * 2;
+  if (contentW > availW && contentW > 0) {
+    const scale = availW / contentW;
+    for (let i = 0; i < colW.length; i++) colW[i] *= scale;
+    contentW = availW;
+  }
+  ctx.font = `600 ${titleSize}px system-ui, sans-serif`;
+  const titleW = hasTitle ? ctx.measureText(title).width : 0;
+
+  const boxW = pad * 2 + Math.max(contentW, Math.min(titleW, availW));
+  const boxH = pad * 2 + titleBlockH + (1 + rows.length) * rowH + (hasNote ? rowH : 0);
+  const { x, y } = panelOrigin(
+    table.position,
+    bodyX,
+    bodyY,
+    bodyW,
+    bodyH,
+    inset,
+    boxW,
+    boxH,
+    stackOffset,
+  );
+
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.strokeStyle = BORDER;
+  ctx.lineWidth = Math.max(1, unit * 0.15);
+  roundRect(ctx, x, y, boxW, boxH, unit);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  let cy = y + pad;
+  if (hasTitle) {
+    cy += titleSize;
+    ctx.fillStyle = INK;
+    ctx.font = `600 ${titleSize}px system-ui, sans-serif`;
+    ctx.fillText(truncateToWidth(ctx, title, boxW - pad * 2), x + pad, cy);
+    cy += unit;
+  }
+
+  // Header row, with a hairline separating it from the data rows.
+  cy += rowH;
+  ctx.fillStyle = INK;
+  ctx.font = `600 ${labelSize}px system-ui, sans-serif`;
+  let cx = x + pad;
+  table.columns.forEach((header, i) => {
+    ctx.fillText(truncateToWidth(ctx, header, colW[i]), cx, cy);
+    cx += colW[i] + colGap;
+  });
+  ctx.strokeStyle = BORDER;
+  ctx.lineWidth = Math.max(1, unit * 0.12);
+  ctx.beginPath();
+  ctx.moveTo(x + pad, cy + unit * 0.7);
+  ctx.lineTo(x + boxW - pad, cy + unit * 0.7);
+  ctx.stroke();
+
+  ctx.fillStyle = INK;
+  ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+  for (const row of rows) {
+    cy += rowH;
+    cx = x + pad;
+    table.columns.forEach((_, i) => {
+      ctx.fillText(truncateToWidth(ctx, row[i] ?? "", colW[i]), cx, cy);
+      cx += colW[i] + colGap;
+    });
+  }
+
+  if (hasNote) {
+    cy += rowH;
+    ctx.fillStyle = MUTED;
+    ctx.fillText(truncateToWidth(ctx, note, boxW - pad * 2), x + pad, cy);
+  }
+  ctx.restore();
+  return boxH;
+}
+
+type DataChartSpec = NonNullable<LayoutOptions["dataChart"]>;
+
+/**
+ * Draw the chart block as a bordered panel anchored at one of the four body
+ * corners. Bars render horizontally (label, bar, value per row — long category
+ * names stay readable), the pie renders as a disc with a swatch legend, and the
+ * line renders as a framed sparkline with min/max labels. GH #1324.
+ *
+ * @returns The drawn panel's height, for corner stacking.
+ */
+function drawDataChart(
+  ctx: CanvasRenderingContext2D,
+  chart: DataChartSpec,
+  bodyX: number,
+  bodyY: number,
+  bodyW: number,
+  bodyH: number,
+  unit: number,
+  stackOffset = 0,
+): number {
+  const pad = unit * 1.4;
+  const rowH = unit * 2.4;
+  const labelSize = unit * 1.7;
+  const titleSize = unit * 2;
+  const gap = unit;
+  const inset = unit * 2; // matches the info block/legend corner inset
+  const title = (chart.title ?? "").trim();
+  const hasTitle = title.length > 0;
+  const titleBlock = hasTitle ? titleSize + unit : 0;
+  const data = chart.data;
+
+  ctx.save();
+  ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+
+  // Content size + a deferred content draw at (cx0, cy0), so panel sizing and
+  // anchoring are computed once for all three chart kinds.
+  let contentW = 0;
+  let contentH = 0;
+  let drawContent: (cx0: number, cy0: number) => void = () => {};
+
+  if (data.kind === "bar") {
+    const labelCap = unit * 18;
+    const barAreaW = unit * 20;
+    // Categories the top-N cap dropped are surfaced as a note row, so the
+    // chart is never silently incomplete.
+    const barNote =
+      (data.truncated ?? 0) > 0
+        ? (chart.formatNote?.(data.truncated ?? 0) ?? `+${data.truncated} more`)
+        : "";
+    let labelW = 0;
+    let valueW = 0;
+    for (const bar of data.bars) {
+      labelW = Math.max(labelW, Math.min(ctx.measureText(bar.label).width, labelCap));
+      valueW = Math.max(valueW, ctx.measureText(formatColorbarTick(bar.value)).width);
+    }
+    contentW = labelW + gap + barAreaW + gap + valueW;
+    contentH = (data.bars.length + (barNote ? 1 : 0)) * rowH;
+    drawContent = (cx0, cy0) => {
+      // Scale across the full value range so negative sums/means keep a truthful
+      // zero baseline (bars extend left of it).
+      const lo = Math.min(0, data.minValue);
+      const hi = Math.max(0, data.maxValue);
+      const span = hi - lo || 1;
+      const zeroX = cx0 + labelW + gap + ((0 - lo) / span) * barAreaW;
+      let cy = cy0;
+      for (const bar of data.bars) {
+        cy += rowH;
+        ctx.fillStyle = INK;
+        ctx.textAlign = "left";
+        ctx.fillText(truncateToWidth(ctx, bar.label, labelCap), cx0, cy);
+        const barW = (Math.abs(bar.value) / span) * barAreaW;
+        const barX = bar.value < 0 ? zeroX - barW : zeroX;
+        ctx.fillStyle = bar.color;
+        ctx.fillRect(barX, cy - labelSize * 0.85, barW, labelSize);
+        ctx.fillStyle = INK;
+        ctx.fillText(formatColorbarTick(bar.value), cx0 + labelW + gap + barAreaW + gap, cy);
+      }
+      if (barNote) {
+        cy += rowH;
+        ctx.fillStyle = MUTED;
+        ctx.textAlign = "left";
+        ctx.fillText(truncateToWidth(ctx, barNote, contentW), cx0, cy);
+      }
+    };
+  } else if (data.kind === "pie") {
+    const diameter = unit * 14;
+    const swatch = unit * 2;
+    let legendW = 0;
+    for (const slice of data.slices) {
+      const pct = Math.round((slice.value / data.total) * 100);
+      legendW = Math.max(
+        legendW,
+        swatch + gap + Math.min(ctx.measureText(`${slice.label} (${pct}%)`).width, unit * 22),
+      );
+    }
+    contentW = diameter + gap * 2 + legendW;
+    contentH = Math.max(diameter, data.slices.length * rowH);
+    drawContent = (cx0, cy0) => {
+      const cx = cx0 + diameter / 2;
+      const cyMid = cy0 + contentH / 2;
+      const r = diameter / 2;
+      let angle = -Math.PI / 2;
+      for (const slice of data.slices) {
+        const sweep = (slice.value / data.total) * Math.PI * 2;
+        ctx.fillStyle = slice.color;
+        ctx.beginPath();
+        ctx.moveTo(cx, cyMid);
+        ctx.arc(cx, cyMid, r, angle, angle + sweep);
+        ctx.closePath();
+        ctx.fill();
+        angle += sweep;
+      }
+      ctx.strokeStyle = BORDER;
+      ctx.lineWidth = Math.max(1, unit * 0.12);
+      ctx.beginPath();
+      ctx.arc(cx, cyMid, r, 0, Math.PI * 2);
+      ctx.stroke();
+      // Swatch legend, vertically centred beside the disc.
+      let cy = cy0 + (contentH - data.slices.length * rowH) / 2;
+      ctx.textAlign = "left";
+      for (const slice of data.slices) {
+        cy += rowH;
+        ctx.fillStyle = slice.color;
+        ctx.fillRect(cx0 + diameter + gap * 2, cy - swatch * 0.85, swatch, swatch);
+        ctx.strokeStyle = BORDER;
+        ctx.strokeRect(cx0 + diameter + gap * 2, cy - swatch * 0.85, swatch, swatch);
+        const pct = Math.round((slice.value / data.total) * 100);
+        ctx.fillStyle = INK;
+        ctx.fillText(
+          truncateToWidth(ctx, `${slice.label} (${pct}%)`, unit * 22),
+          cx0 + diameter + gap * 2 + swatch + gap,
+          cy,
+        );
+      }
+    };
+  } else {
+    const plotW = unit * 24;
+    const plotH = unit * 12;
+    const maxLabel = formatColorbarTick(data.max);
+    const minLabel = formatColorbarTick(data.min);
+    const axisW = Math.max(ctx.measureText(maxLabel).width, ctx.measureText(minLabel).width);
+    contentW = axisW + gap + plotW;
+    contentH = plotH;
+    drawContent = (cx0, cy0) => {
+      const plotX = cx0 + axisW + gap;
+      ctx.strokeStyle = BORDER;
+      ctx.lineWidth = Math.max(1, unit * 0.12);
+      ctx.strokeRect(plotX, cy0, plotW, plotH);
+      ctx.fillStyle = MUTED;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "top";
+      ctx.fillText(maxLabel, plotX - gap * 0.6, cy0);
+      ctx.textBaseline = "bottom";
+      ctx.fillText(minLabel, plotX - gap * 0.6, cy0 + plotH);
+      ctx.textBaseline = "alphabetic";
+      const spanY = data.max - data.min || 1;
+      const spanX = Math.max(1, data.length - 1);
+      const px = (index: number) => plotX + (index / spanX) * plotW;
+      const py = (value: number) => cy0 + plotH - ((value - data.min) / spanY) * plotH;
+      ctx.strokeStyle = data.color;
+      ctx.lineWidth = Math.max(1, unit * 0.25);
+      if (data.points.length === 1) {
+        // A single sample has no path to stroke; mark it with a dot instead.
+        ctx.fillStyle = data.color;
+        ctx.beginPath();
+        ctx.arc(px(data.points[0].index), py(data.points[0].value), unit * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (data.points.length > 1) {
+        ctx.beginPath();
+        data.points.forEach((p, i) => {
+          if (i === 0) ctx.moveTo(px(p.index), py(p.value));
+          else ctx.lineTo(px(p.index), py(p.value));
+        });
+        ctx.stroke();
+      }
+    };
+  }
+
+  ctx.font = `600 ${titleSize}px system-ui, sans-serif`;
+  const titleW = hasTitle ? ctx.measureText(title).width : 0;
+  const boxW = pad * 2 + Math.max(contentW, Math.min(titleW, unit * 40));
+  const boxH = pad * 2 + titleBlock + contentH;
+  const { x, y } = panelOrigin(
+    chart.position,
+    bodyX,
+    bodyY,
+    bodyW,
+    bodyH,
+    inset,
+    boxW,
+    boxH,
+    stackOffset,
+  );
+
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.strokeStyle = BORDER;
+  ctx.lineWidth = Math.max(1, unit * 0.15);
+  roundRect(ctx, x, y, boxW, boxH, unit);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  let topY = y + pad;
+  if (hasTitle) {
+    ctx.fillStyle = INK;
+    ctx.font = `600 ${titleSize}px system-ui, sans-serif`;
+    ctx.fillText(truncateToWidth(ctx, title, boxW - pad * 2), x + pad, topY + titleSize);
+    topY += titleBlock;
+  }
+  ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+  drawContent(x + pad, topY);
+  ctx.restore();
+  return boxH;
+}
+
+/**
+ * Draw a point layer's marker into a `size`×`size` legend swatch box at
+ * (`sx`, `sy`): a custom SVG icon (from the preloaded {@link markerIcons}) or a
+ * built-in shape recolored to the marker color. Falls back to a plain
+ * `fallbackColor` square when a custom SVG has not been (or could not be)
+ * preloaded, so the swatch is never blank.
+ *
+ * `boxed` frames a custom SVG so a light or transparent-edged icon still reads
+ * as a bounded swatch. A proportional size ramp passes false: there the varying
+ * icon size IS the information, and a frame around each step makes the rows read
+ * as nested squares instead of one growing symbol.
+ */
+function drawLegendMarker(
+  ctx: CanvasRenderingContext2D,
+  marker: LegendMarker,
+  sx: number,
+  sy: number,
+  size: number,
+  fallbackColor: string,
+  markerIcons?: ReadonlyMap<string, CanvasImageSource>,
+  boxed = true,
+): void {
+  if (marker.shape === "custom") {
+    const icon = marker.svg ? markerIcons?.get(marker.svg) : undefined;
+    if (icon) {
+      ctx.drawImage(icon, sx, sy, size, size);
+      if (boxed) {
+        // Border for parity with every other swatch (built-in shapes, the
+        // fallback square, fill/ramp squares).
+        ctx.strokeStyle = BORDER;
+        ctx.strokeRect(sx, sy, size, size);
+      }
+      return;
+    }
+    // SVG not available (still loading, or the load failed): fall back to a
+    // neutral shape. A proportional row falls back to the same circle the
+    // markerless ramp draws, so an entry mid-load still reads as one growing
+    // symbol; the outline stays either way, since a pale fallback color would
+    // otherwise vanish against the legend box.
+    ctx.fillStyle = fallbackColor || "#999999";
+    ctx.strokeStyle = BORDER;
+    if (!boxed) {
+      ctx.beginPath();
+      ctx.arc(sx + size / 2, sy + size / 2, size / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      return;
+    }
+    ctx.fillRect(sx, sy, size, size);
+    ctx.strokeRect(sx, sy, size, size);
+    return;
+  }
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.fillStyle = marker.color;
+  ctx.strokeStyle = BORDER;
+  ctx.lineWidth = Math.max(1, size * 0.06);
+  ctx.lineJoin = "round";
+  drawMarkerPath(ctx, marker.shape, size);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Draw a legend box anchored at its top-left corner.
+ *
+ * @returns The drawn box's height, so corner panels can stack below it.
+ */
 function drawLegend(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   entries: LegendEntry[],
   unit: number,
-  opts: { title: string; groupByLayer: boolean },
-): void {
+  opts: {
+    title: string;
+    groupByLayer: boolean;
+    markerIcons?: ReadonlyMap<string, CanvasImageSource>;
+    /** Output pixels per MapLibre CSS pixel in the composed map image. */
+    mapSymbolScale: number;
+    /** Vertical space the box may occupy before rows are elided. */
+    maxHeight?: number;
+    formatNote?: (count: number) => string;
+  },
+): number {
   const pad = unit * 1.4;
-  const rowH = unit * 2.6;
-  const swatch = unit * 2;
   const titleSize = unit * 2;
   const labelSize = unit * 1.7;
   const title = opts.title.trim();
   const hasTitle = title.length > 0;
+  const chromeH = pad * 2 + (hasTitle ? titleSize + unit : 0);
+  // Proportional sizes are MapLibre CSS-pixel radii. Size the legend column and
+  // rows around their actual footprint after the captured map is fitted into
+  // the page, so the ramp remains 1:1 with the symbols visible behind it.
+  const maxSizedRadius = entries.reduce(
+    (max, entry) =>
+      Math.max(
+        max,
+        ...entry.swatches.map((entrySwatch) =>
+          entrySwatch.size === undefined ? 0 : entrySwatch.size * opts.mapSymbolScale,
+        ),
+      ),
+    0,
+  );
+  const wantedSwatch = Math.max(unit * 2, maxSizedRadius * 2);
+  // A map symbol's size is independent of the page, so 1:1 sizing alone would
+  // let one outlier circle push rowH past the height the caller allows — and
+  // the truncation below then draws *nothing*, blanking unrelated normally
+  // sized entries too. Hold any single row to a quarter of the space left after
+  // chrome, so a layer heading, two class rows and the "+N more" note always
+  // survive: an extreme ramp then merely stops being 1:1 with the map instead
+  // of costing the reader the whole legend.
+  const swatchCap =
+    opts.maxHeight === undefined
+      ? Infinity
+      : Math.max(unit * 2, (opts.maxHeight - chromeH) / 4 - unit * 0.6);
+  const swatch = Math.min(wantedSwatch, swatchCap);
+  const rowH = Math.max(unit * 2.6, swatch + unit * 0.6);
+  // The swatch column is legend-wide, so the cap above has to be too — but the
+  // shrink it forces is scoped to the entry that overflowed, the same rule the
+  // on-map MapLegendPanel applies. One entry's ramp keeps its ratios, and a
+  // neighbouring layer whose symbols already fit still renders 1:1 with the map.
+  const entryScale = new Map<string, number>();
+  for (const entry of entries) {
+    const entryMax = entry.swatches.reduce(
+      (max, entrySwatch) =>
+        entrySwatch.size === undefined
+          ? max
+          : Math.max(max, entrySwatch.size * opts.mapSymbolScale),
+      0,
+    );
+    entryScale.set(entry.id, entryMax > swatch / 2 ? swatch / 2 / entryMax : 1);
+  }
+  /** A sized row's drawn radius in output pixels, after any per-entry shrink. */
+  const sizedRadius = (entryId: string, size: number): number =>
+    size * opts.mapSymbolScale * (entryScale.get(entryId) ?? 1);
 
   // Flatten entries into drawable rows. Single-swatch entries render inline; a
   // multi-class entry renders a layer heading (when groupByLayer is on) above
-  // its class swatches, or just the flat class swatches when it is off.
-  const rows: { color: string; text: string }[] = [];
+  // its class swatches, or just the flat class swatches when it is off. A row
+  // draws a swatch when it has a color or a marker; a group heading has neither.
+  // `entryId` keeps proportional scaling scoped to one legend entry even when
+  // groupByLayer is off and adjacent layers' size rows become contiguous.
+  const rows: {
+    entryId: string;
+    color: string;
+    text: string;
+    marker?: LegendMarker;
+    size?: number;
+    /** True for a groupByLayer layer heading: scaffolding, not a legend item. */
+    heading?: boolean;
+  }[] = [];
   for (const entry of entries) {
     if (entry.swatches.length <= 1) {
       // Prefer the swatch's own label so a multi-class entry collapsed to one
@@ -1287,16 +2140,70 @@ function drawLegend(
       // entries carry no swatch label, so they still show entry.name.
       const swatch = entry.swatches[0];
       rows.push({
+        entryId: entry.id,
         color: swatch?.color ?? "#999999",
         text: swatch?.label ?? entry.name,
+        marker: swatch?.marker,
+        size: swatch?.size,
       });
     } else {
-      if (opts.groupByLayer) rows.push({ color: "", text: entry.name });
+      if (opts.groupByLayer) {
+        rows.push({
+          entryId: entry.id,
+          color: "",
+          text: entry.name,
+          heading: true,
+        });
+      }
       for (const sw of entry.swatches) {
-        rows.push({ color: sw.color, text: sw.label ?? "" });
+        // Carry the marker so a marker + diagram layer (a multi-swatch entry
+        // whose primary swatch is the marker) draws its marker, not a square.
+        rows.push({
+          entryId: entry.id,
+          color: sw.color,
+          text: sw.label ?? "",
+          marker: sw.marker,
+          size: sw.size,
+        });
       }
     }
   }
+
+  const rowHasSwatch = (r: { color: string; marker?: LegendMarker }): boolean =>
+    Boolean(r.color) || Boolean(r.marker);
+
+  // Fit the rows to the space the caller allows. A categorized layer can carry
+  // dozens of classes, and the legend is clipped to the map body, so without
+  // this the tail would vanish at the body edge with nothing to say it had
+  // (GH #1608). Reserve one row for the note the truncation produces, the same
+  // budget rule the attribute-table panel uses.
+  let hiddenRows = 0;
+  const maxHeight = opts.maxHeight;
+  if (maxHeight !== undefined) {
+    if (chromeH + rows.length * rowH > maxHeight) {
+      const fitRows = Math.max(0, Math.floor((maxHeight - chromeH - rowH) / rowH));
+      // Not even one row plus its note fits. Drawing anyway would produce a box
+      // taller than the caller allotted whose only content is "+N more", so
+      // draw nothing and report no height. Defensive: every unit here scales
+      // with the page — proportional rows included, thanks to swatchCap — so
+      // drawLayout's own maxHeight always clears at least one row plus the
+      // note whatever the paper size. Safe to return early — ctx.save() is below.
+      if (fitRows === 0) return 0;
+      if (fitRows < rows.length) {
+        // A layer heading only means something with class rows under it, so a
+        // cut that lands right after one drops it too rather than printing a
+        // section title that describes nothing.
+        let kept = fitRows;
+        while (kept > 0 && rows[kept - 1]!.heading) kept -= 1;
+        // Headings are scaffolding, so the note counts elided class rows only;
+        // counting the headings too would overstate what the reader is missing.
+        hiddenRows = rows.slice(kept).filter((r) => !r.heading).length;
+        rows.length = kept;
+      }
+    }
+  }
+  const note = hiddenRows > 0 ? (opts.formatNote?.(hiddenRows) ?? `+${hiddenRows} more`) : "";
+  const hasNote = note.length > 0;
 
   // Measure required width.
   ctx.save();
@@ -1304,13 +2211,14 @@ function drawLegend(
   let maxText = hasTitle ? ctx.measureText(title).width : 0;
   ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
   for (const r of rows) {
-    const w = ctx.measureText(r.text).width + (r.color ? swatch + unit : 0);
+    const w = ctx.measureText(r.text).width + (rowHasSwatch(r) ? swatch + unit : 0);
     if (w > maxText) maxText = w;
   }
+  if (hasNote) maxText = Math.max(maxText, ctx.measureText(note).width);
 
   const boxW = maxText + pad * 2;
   const titleBlock = hasTitle ? titleSize + unit : 0;
-  const boxH = pad * 2 + titleBlock + rows.length * rowH;
+  const boxH = pad * 2 + titleBlock + (rows.length + (hasNote ? 1 : 0)) * rowH;
 
   ctx.fillStyle = "rgba(255,255,255,0.85)";
   ctx.strokeStyle = BORDER;
@@ -1337,18 +2245,57 @@ function drawLegend(
 
   for (const r of rows) {
     cy += rowH;
-    const textX = r.color ? x + pad + swatch + unit : x + pad;
-    if (r.color) {
+    const hasSwatch = rowHasSwatch(r);
+    const textX = hasSwatch ? x + pad + swatch + unit : x + pad;
+    const sx = x + pad;
+    const sy = cy - swatch * 0.85;
+    if (r.marker) {
+      // A sized marker row is a proportional symbol: the map scales the sprite
+      // through icon-size, so draw the marker at the same footprint the circle
+      // branch below would use (same center, edge = 2 × radius) rather than at
+      // the fixed swatch box, which would flatten the whole ramp.
+      const edge =
+        r.size !== undefined ? Math.max(unit * 0.7, sizedRadius(r.entryId, r.size) * 2) : swatch;
+      const inset = (swatch - edge) / 2;
+      drawLegendMarker(
+        ctx,
+        r.marker,
+        sx + inset,
+        sy + inset,
+        edge,
+        r.color,
+        opts.markerIcons,
+        r.size === undefined,
+      );
+    } else if (r.size !== undefined && r.color) {
+      const radius = Math.max(unit * 0.35, sizedRadius(r.entryId, r.size));
+      const cx = sx + swatch / 2;
+      const cyc = sy + swatch / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cyc, radius, 0, Math.PI * 2);
       ctx.fillStyle = r.color;
-      ctx.fillRect(x + pad, cy - swatch * 0.85, swatch, swatch);
+      ctx.fill();
       ctx.strokeStyle = BORDER;
-      ctx.strokeRect(x + pad, cy - swatch * 0.85, swatch, swatch);
+      ctx.lineWidth = Math.max(1, unit * 0.1);
+      ctx.stroke();
+    } else if (r.color) {
+      ctx.fillStyle = r.color;
+      ctx.fillRect(sx, sy, swatch, swatch);
+      ctx.strokeStyle = BORDER;
+      ctx.strokeRect(sx, sy, swatch, swatch);
     }
-    ctx.fillStyle = r.color ? INK : MUTED;
-    ctx.font = `${r.color ? 400 : 600} ${labelSize}px system-ui, sans-serif`;
+    ctx.fillStyle = hasSwatch ? INK : MUTED;
+    ctx.font = `${hasSwatch ? 400 : 600} ${labelSize}px system-ui, sans-serif`;
     ctx.fillText(r.text, textX, cy);
   }
+  if (hasNote) {
+    cy += rowH;
+    ctx.fillStyle = MUTED;
+    ctx.font = `400 ${labelSize}px system-ui, sans-serif`;
+    ctx.fillText(note, x + pad, cy);
+  }
   ctx.restore();
+  return boxH;
 }
 
 function roundRect(

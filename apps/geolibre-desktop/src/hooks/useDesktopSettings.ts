@@ -11,6 +11,9 @@ import {
   type ThemeScheme,
 } from "../lib/theme-schemes";
 import type { UpdateNotificationLevel } from "../lib/updates";
+import { migrateLegacyAiEnv } from "../lib/assistant/profiles";
+import { ASSISTANT_PROVIDER_IDS } from "../lib/assistant/provider";
+import type { AssistantProfile } from "../lib/assistant/provider";
 
 /** Notification-granularity options, in order. Single source of truth. */
 export const UPDATE_NOTIFICATION_LEVELS: readonly UpdateNotificationLevel[] = [
@@ -29,7 +32,6 @@ export interface DesktopSettings {
    */
   language: string;
   layout: DesktopLayoutSettings;
-  openTopographyApiKey: string;
   pluginManifestUrls: string[];
   /**
    * Personal API token for uploading projects to share.geolibre.app. Stored in
@@ -41,6 +43,30 @@ export interface DesktopSettings {
    * hardening (see PR #190 review).
    */
   shareToken: string;
+  /**
+   * Cesium Ion access token for the 3D-globe view (Cesium World Imagery +
+   * Terrain need one). Stored here — device-local localStorage, not the shared
+   * project file — so a personal credential is never serialized into a
+   * `.geolibre.json` a user shares. Projected into `VITE_CESIUM_TOKEN` at
+   * runtime by `useRuntimeEnvironmentVariables`, and resolved through
+   * `getCesiumIonToken`, so it overrides the build-time token with no rebuild.
+   * Same "token in localStorage" trade-off as {@link shareToken}.
+   */
+  cesiumIonToken: string;
+  /**
+   * AI Assistant provider profiles. Each profile bundles a provider, model, and
+   * credential values. Stored here — device-local localStorage, not the shared
+   * project file — so personal API keys survive app restarts yet are never
+   * serialized into a `.geolibre.json` a user shares.
+   */
+  aiProfiles: AssistantProfile[];
+  /**
+   * The id of the default / active profile, or null. When set, this profile's
+   * credentials are projected into the runtime env and the assistant panel
+   * preselects it. Persisted separately to localStorage so the active choice
+   * survives settings dialog Cancel without extra plumbing.
+   */
+  defaultAiProfileId: string | null;
   /**
    * Appearance preferences (the accent color scheme). The light/dark mode is
    * handled separately by `useThemeMode` (it tracks the OS / embed preference).
@@ -128,9 +154,13 @@ export const DEFAULT_DESKTOP_LAYOUT_SETTINGS: DesktopLayoutSettings = {
 };
 
 export const DEFAULT_UI_PROFILE_SETTINGS: UiProfileSettings = {
+  // Ship the Advanced interface by default (`enabled: false` shows every item,
+  // which `activeInterfaceProfile` reports as "advanced") and skip the
+  // first-launch welcome dialog (`onboarded: true`). Users can still switch to a
+  // curated preset from the Settings dialog.
   enabled: false,
   level: null,
-  onboarded: false,
+  onboarded: true,
   locked: false,
   hiddenDataSources: [],
   hiddenPlugins: [],
@@ -152,9 +182,11 @@ const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   additionalPluginDirectories: [],
   language: "",
   layout: DEFAULT_DESKTOP_LAYOUT_SETTINGS,
-  openTopographyApiKey: "",
   pluginManifestUrls: [],
   shareToken: "",
+  cesiumIonToken: "",
+  aiProfiles: [],
+  defaultAiProfileId: null,
   theme: DEFAULT_THEME_SETTINGS,
   uiProfile: DEFAULT_UI_PROFILE_SETTINGS,
   updates: DEFAULT_UPDATE_SETTINGS,
@@ -167,34 +199,97 @@ export const EXPERIENCE_LEVELS: readonly ExperienceLevel[] = [
   "advanced",
 ];
 
-function normalizeDesktopSettings(settings: unknown): DesktopSettings {
+export function normalizeDesktopSettings(settings: unknown): DesktopSettings {
   if (!settings || typeof settings !== "object") {
     return DEFAULT_DESKTOP_SETTINGS;
   }
 
   const candidate = settings as Partial<DesktopSettings>;
   return {
-    additionalPluginDirectories: normalizeStringList(
-      candidate.additionalPluginDirectories,
-    ),
-    language:
-      typeof candidate.language === "string" ? candidate.language.trim() : "",
+    additionalPluginDirectories: normalizeStringList(candidate.additionalPluginDirectories),
+    language: typeof candidate.language === "string" ? candidate.language.trim() : "",
     layout: normalizeDesktopLayoutSettings(candidate.layout),
-    openTopographyApiKey:
-      typeof candidate.openTopographyApiKey === "string"
-        ? candidate.openTopographyApiKey.trim()
-        : "",
     // Apply the same scheme rule as project-file loading so stale or edited
     // localStorage values cannot smuggle in disallowed URL schemes.
     pluginManifestUrls: normalizeStringList(candidate.pluginManifestUrls).filter(
       isAllowedPluginManifestUrl,
     ),
-    shareToken:
-      typeof candidate.shareToken === "string" ? candidate.shareToken.trim() : "",
+    shareToken: typeof candidate.shareToken === "string" ? candidate.shareToken.trim() : "",
+    cesiumIonToken:
+      typeof candidate.cesiumIonToken === "string" ? candidate.cesiumIonToken.trim() : "",
+    aiProfiles: normalizeAssistantProfiles(
+      candidate.aiProfiles,
+      (candidate as Record<string, unknown>).aiProviderEnv,
+    ),
+    defaultAiProfileId:
+      typeof candidate.defaultAiProfileId === "string" && candidate.defaultAiProfileId.trim()
+        ? candidate.defaultAiProfileId.trim()
+        : null,
     theme: normalizeThemeSettings(candidate.theme),
     uiProfile: normalizeUiProfileSettings(candidate.uiProfile),
     updates: normalizeUpdateSettings(candidate.updates),
   };
+}
+
+/**
+ * Coerce a persisted (or tampered) profiles array into a clean form. Each
+ * profile must have valid fields matching its provider's schema. The legacy
+ * `aiProviderEnv` flat map is migrated into profiles on first load.
+ */
+function normalizeAssistantProfiles(value: unknown, legacyEnv: unknown): AssistantProfile[] {
+  const profiles: AssistantProfile[] = [];
+
+  if (Array.isArray(value)) {
+    const seenIds = new Set<string>();
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const candidate = item as Record<string, unknown>;
+      const id =
+        typeof candidate.id === "string" && candidate.id.trim()
+          ? candidate.id.trim()
+          : `prof_auto_${profiles.length}_${Date.now()}`;
+      // Deduplicate by id.
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+
+      const name =
+        typeof candidate.name === "string" && candidate.name.trim()
+          ? candidate.name.trim()
+          : `Profile ${profiles.length + 1}`;
+      const provider =
+        typeof candidate.provider === "string" &&
+        ASSISTANT_PROVIDER_IDS.includes(candidate.provider as AssistantProfile["provider"])
+          ? (candidate.provider as AssistantProfile["provider"])
+          : "google";
+      const modelId =
+        typeof candidate.modelId === "string" && candidate.modelId.trim()
+          ? candidate.modelId.trim()
+          : "";
+      const fieldValues: Record<string, string> = {};
+      if (
+        candidate.fieldValues &&
+        typeof candidate.fieldValues === "object" &&
+        !Array.isArray(candidate.fieldValues)
+      ) {
+        for (const [k, v] of Object.entries(candidate.fieldValues)) {
+          const key = k.trim();
+          if (key && typeof v === "string" && v.trim()) {
+            fieldValues[key] = v.trim();
+          }
+        }
+      }
+
+      profiles.push({ id, name, provider, modelId, fieldValues });
+    }
+  }
+
+  // Migrate legacy flat env map into profiles (dedup against existing).
+  if (legacyEnv && typeof legacyEnv === "object" && !Array.isArray(legacyEnv)) {
+    const migrated = migrateLegacyAiEnv(legacyEnv as Record<string, string>, profiles);
+    profiles.push(...migrated);
+  }
+
+  return profiles;
 }
 
 function normalizeThemeSettings(theme: unknown): ThemeSettings {
@@ -207,9 +302,7 @@ function normalizeThemeSettings(theme: unknown): ThemeSettings {
   // arbitrary string into the inline custom-color tokens.
   const candidate = theme as Partial<ThemeSettings>;
   return {
-    scheme: isThemeScheme(candidate.scheme)
-      ? candidate.scheme
-      : DEFAULT_THEME_SETTINGS.scheme,
+    scheme: isThemeScheme(candidate.scheme) ? candidate.scheme : DEFAULT_THEME_SETTINGS.scheme,
     // Normalize so the value bound to `<input type="color">` is exactly
     // `#rrggbb` lowercase (isHexColor already requires the leading `#`).
     customColor: isHexColor(candidate.customColor)
@@ -233,9 +326,7 @@ function normalizeUpdateSettings(updates: unknown): UpdateSettings {
         : DEFAULT_UPDATE_SETTINGS.checkOnStartup,
     notificationLevel:
       typeof candidate.notificationLevel === "string" &&
-      UPDATE_NOTIFICATION_LEVELS.includes(
-        candidate.notificationLevel as UpdateNotificationLevel,
-      )
+      UPDATE_NOTIFICATION_LEVELS.includes(candidate.notificationLevel as UpdateNotificationLevel)
         ? (candidate.notificationLevel as UpdateNotificationLevel)
         : DEFAULT_UPDATE_SETTINGS.notificationLevel,
   };
@@ -264,9 +355,7 @@ function normalizeUiProfileSettings(profile: unknown): UiProfileSettings {
         ? candidate.onboarded
         : DEFAULT_UI_PROFILE_SETTINGS.onboarded,
     locked:
-      typeof candidate.locked === "boolean"
-        ? candidate.locked
-        : DEFAULT_UI_PROFILE_SETTINGS.locked,
+      typeof candidate.locked === "boolean" ? candidate.locked : DEFAULT_UI_PROFILE_SETTINGS.locked,
     hiddenDataSources: normalizeStringList(candidate.hiddenDataSources),
     hiddenPlugins: normalizeStringList(candidate.hiddenPlugins),
     hiddenMenus: normalizeStringList(candidate.hiddenMenus),
@@ -274,9 +363,7 @@ function normalizeUiProfileSettings(profile: unknown): UiProfileSettings {
   };
 }
 
-function normalizeDesktopLayoutSettings(
-  layout: unknown,
-): DesktopLayoutSettings {
+function normalizeDesktopLayoutSettings(layout: unknown): DesktopLayoutSettings {
   if (!layout || typeof layout !== "object") {
     return DEFAULT_DESKTOP_LAYOUT_SETTINGS;
   }
@@ -320,10 +407,7 @@ function saveDesktopSettings(settings: DesktopSettings): void {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem(
-      DESKTOP_SETTINGS_STORAGE_KEY,
-      JSON.stringify(settings),
-    );
+    window.localStorage.setItem(DESKTOP_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   } catch {
     // Persistence is best-effort; ignore quota or disabled-storage errors.
   }
@@ -331,8 +415,7 @@ function saveDesktopSettings(settings: DesktopSettings): void {
 
 export const useDesktopSettingsStore = create<DesktopSettingsState>((set) => ({
   desktopSettings: loadDesktopSettings(),
-  setDesktopSettings: (settings) =>
-    set({ desktopSettings: normalizeDesktopSettings(settings) }),
+  setDesktopSettings: (settings) => set({ desktopSettings: normalizeDesktopSettings(settings) }),
 }));
 
 export function useDesktopSettingsPersistence() {

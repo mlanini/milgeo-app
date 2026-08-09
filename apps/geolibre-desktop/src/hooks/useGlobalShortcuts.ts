@@ -11,10 +11,13 @@ import {
 interface UseGlobalShortcutsOptions {
   /** The current command registry; commands with a `shortcut` are bound. */
   commands: Command[];
-  /** Opens the command palette (Cmd/Ctrl-K). */
-  onOpenPalette: () => void;
-  /** Opens the keyboard shortcuts cheat sheet (?). */
-  onOpenShortcuts: () => void;
+  /**
+   * Opens the command palette (Cmd/Ctrl-K). Omit to leave the key unbound —
+   * what the viewer preset does, since it does not mount the palette.
+   */
+  onOpenPalette?: () => void;
+  /** Opens the keyboard shortcuts cheat sheet (?). Omit to leave it unbound. */
+  onOpenShortcuts?: () => void;
   /** When false, no listener is attached. */
   enabled?: boolean;
 }
@@ -23,8 +26,9 @@ interface UseGlobalShortcutsOptions {
  * Centralized global hotkey layer. Attaches a single window keydown listener
  * that opens the command palette, opens the cheat sheet, and runs any command
  * whose `shortcut` matches. Shortcuts are ignored while the user is typing in a
- * text field, and only `mod`/`?`-style combinations are used so MapLibre's own
- * arrow/zoom key handling on the focused canvas is left untouched.
+ * text field. Bare-letter shortcuts (e.g. "N"/"R" for the camera resets) only
+ * use keys MapLibre does not bind, so its own arrow/zoom key handling on the
+ * focused canvas is left untouched.
  */
 export function useGlobalShortcuts({
   commands,
@@ -52,12 +56,12 @@ export function useGlobalShortcuts({
       if (event.repeat) return;
       if (isEditableTarget(event.target)) return;
 
-      if (matchesShortcut(event, PALETTE_SHORTCUT, isMac)) {
+      if (onOpenPaletteRef.current && matchesShortcut(event, PALETTE_SHORTCUT, isMac)) {
         event.preventDefault();
         onOpenPaletteRef.current();
         return;
       }
-      if (matchesShortcut(event, SHORTCUTS_HELP_SHORTCUT, isMac)) {
+      if (onOpenShortcutsRef.current && matchesShortcut(event, SHORTCUTS_HELP_SHORTCUT, isMac)) {
         event.preventDefault();
         onOpenShortcutsRef.current();
         return;

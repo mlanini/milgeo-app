@@ -1,3 +1,4 @@
+import { useAppStore } from "@geolibre/core";
 import {
   Button,
   Dialog,
@@ -8,16 +9,28 @@ import {
   Input,
   Label,
 } from "@geolibre/ui";
+import { useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { useProjectFileActions } from "../../../hooks/useProjectFileActions";
+import type { ProjectFileActions } from "../../../hooks/useProjectFileActions";
+import { SaveTemplateDialog } from "../SaveTemplateDialog";
 
 interface ProjectFileDialogsProps {
-  projectFiles: ReturnType<typeof useProjectFileActions>;
+  projectFiles: ProjectFileActions;
 }
 
 /** The project-file dialogs: Open-from-URL, the error dialog, the save-name prompt, and the env-var strip prompt. */
 export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
   const { t } = useTranslation();
+
+  // The save-name prompt is cleared to null synchronously on submit/cancel,
+  // before the dialog's exit animation finishes. Keep the last non-null copy so
+  // its title/label text stays put through the close transition instead of
+  // flashing blank.
+  const lastSaveNamePrompt = useRef<typeof projectFiles.saveNamePrompt>(null);
+  if (projectFiles.saveNamePrompt) {
+    lastSaveNamePrompt.current = projectFiles.saveNamePrompt;
+  }
+  const saveNameLabels = projectFiles.saveNamePrompt ?? lastSaveNamePrompt.current;
 
   return (
     <>
@@ -28,9 +41,7 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{t("toolbar.item.openProjectFromUrl")}</DialogTitle>
-            <DialogDescription>
-              {t("toolbar.item.openProjectFromUrlDesc")}
-            </DialogDescription>
+            <DialogDescription>{t("toolbar.item.openProjectFromUrlDesc")}</DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={projectFiles.handleOpenFromUrl}>
             <div className="space-y-2">
@@ -45,9 +56,7 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
                 }}
               />
               {projectFiles.projectUrlError ? (
-                <p className="text-xs text-destructive">
-                  {projectFiles.projectUrlError}
-                </p>
+                <p className="text-xs text-destructive">{projectFiles.projectUrlError}</p>
               ) : null}
             </div>
             <div className="flex justify-end gap-2">
@@ -157,27 +166,18 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{t("toolbar.item.saveProjectAsTitle")}</DialogTitle>
-            <DialogDescription>
-              {t("toolbar.item.saveProjectAsDesc")}
-            </DialogDescription>
+            <DialogTitle>{saveNameLabels?.title}</DialogTitle>
+            <DialogDescription>{saveNameLabels?.description}</DialogDescription>
           </DialogHeader>
-          <form
-            className="space-y-4"
-            onSubmit={projectFiles.submitSaveNamePrompt}
-          >
+          <form className="space-y-4" onSubmit={projectFiles.submitSaveNamePrompt}>
             <div className="space-y-2">
-              <Label htmlFor="save-project-name">
-                {t("toolbar.item.saveProjectFileName")}
-              </Label>
+              <Label htmlFor="save-project-name">{saveNameLabels?.label}</Label>
               <Input
                 id="save-project-name"
                 autoFocus
-                placeholder={t("toolbar.item.saveProjectFileNamePlaceholder")}
+                placeholder={saveNameLabels?.placeholder}
                 value={projectFiles.saveNameInput}
-                onChange={(event) =>
-                  projectFiles.setSaveNameInput(event.target.value)
-                }
+                onChange={(event) => projectFiles.setSaveNameInput(event.target.value)}
               />
             </div>
             <div className="flex justify-end gap-2">
@@ -188,10 +188,7 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
               >
                 {t("common.cancel")}
               </Button>
-              <Button
-                type="submit"
-                disabled={!projectFiles.saveNameInput.trim()}
-              >
+              <Button type="submit" disabled={!projectFiles.saveNameInput.trim()}>
                 {t("common.save")}
               </Button>
             </div>
@@ -199,9 +196,9 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
         </DialogContent>
       </Dialog>
       <Dialog
-        open={projectFiles.envStripPrompt !== null}
+        open={projectFiles.credentialStripPrompt !== null}
         onOpenChange={(open: boolean) => {
-          if (!open) projectFiles.resolveEnvStripPrompt("cancel");
+          if (!open) projectFiles.resolveCredentialStripPrompt("cancel");
         }}
       >
         <DialogContent className="max-w-lg">
@@ -209,24 +206,24 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
             <DialogTitle>{t("settings.env.stripPromptTitle")}</DialogTitle>
             <DialogDescription>
               {t("settings.env.stripPromptDesc", {
-                count: projectFiles.envStripPrompt?.count ?? 0,
+                count: projectFiles.credentialStripPrompt?.count ?? 0,
               })}
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">
             <Button
               variant="outline"
-              onClick={() => projectFiles.resolveEnvStripPrompt("cancel")}
+              onClick={() => projectFiles.resolveCredentialStripPrompt("cancel")}
             >
               {t("common.cancel")}
             </Button>
             <Button
               variant="outline"
-              onClick={() => projectFiles.resolveEnvStripPrompt("keep")}
+              onClick={() => projectFiles.resolveCredentialStripPrompt("keep")}
             >
               {t("settings.env.keepButton")}
             </Button>
-            <Button onClick={() => projectFiles.resolveEnvStripPrompt("strip")}>
+            <Button onClick={() => projectFiles.resolveCredentialStripPrompt("strip")}>
               {t("settings.env.stripButton")}
             </Button>
           </div>
@@ -248,9 +245,7 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
                   : "toolbar.item.embedVectorDesc",
                 {
                   count: projectFiles.embedVectorDataPrompt?.count ?? 0,
-                  size: formatByteSize(
-                    projectFiles.embedVectorDataPrompt?.bytes ?? 0,
-                  ),
+                  size: formatByteSize(projectFiles.embedVectorDataPrompt?.bytes ?? 0),
                 },
               )}
             </DialogDescription>
@@ -258,17 +253,13 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
           <div className="flex justify-end gap-2">
             <Button
               variant="outline"
-              onClick={() =>
-                projectFiles.resolveEmbedVectorDataPrompt("cancel")
-              }
+              onClick={() => projectFiles.resolveEmbedVectorDataPrompt("cancel")}
             >
               {t("common.cancel")}
             </Button>
             <Button
               variant="outline"
-              onClick={() =>
-                projectFiles.resolveEmbedVectorDataPrompt("noembed")
-              }
+              onClick={() => projectFiles.resolveEmbedVectorDataPrompt("noembed")}
             >
               {t(
                 projectFiles.embedVectorDataPrompt?.desktop
@@ -276,14 +267,21 @@ export function ProjectFileDialogs({ projectFiles }: ProjectFileDialogsProps) {
                   : "toolbar.item.embedVectorSkipButton",
               )}
             </Button>
-            <Button
-              onClick={() => projectFiles.resolveEmbedVectorDataPrompt("embed")}
-            >
+            <Button onClick={() => projectFiles.resolveEmbedVectorDataPrompt("embed")}>
               {t("toolbar.item.embedVectorEmbedButton")}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
+      <SaveTemplateDialog
+        open={projectFiles.saveTemplateDialogOpen}
+        onOpenChange={projectFiles.setSaveTemplateDialogOpen}
+        getProject={() => {
+          const { project } = projectFiles.buildCurrentProject();
+          const currentName = useAppStore.getState().projectName;
+          return { project, defaultProjectName: currentName };
+        }}
+      />
     </>
   );
 }

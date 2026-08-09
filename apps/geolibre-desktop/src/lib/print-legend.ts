@@ -287,7 +287,12 @@ export function applyLegendConfig(base: LegendEntry[], config: LegendConfig): Le
         label: hasLabelOverride(override?.label)
           ? renderedLabel(override?.label, swatch.label ?? "")
           : swatch.label,
+        // Preserve the marker so a point layer with both a marker icon and
+        // diagram symbology (a multi-swatch entry: [marker primary, ...diagrams])
+        // still draws its marker rather than regressing to a color square.
         marker: swatch.marker,
+        // Preserve proportional-symbol sizes so a customized size-ramp entry
+        // still draws graduated circles in the print layout.
         size: swatch.size,
       });
     });
@@ -404,6 +409,9 @@ export function legendEditorRows(base: LegendEntry[], config: LegendConfig): Leg
       color: single ? entry.swatches[0]?.color : undefined,
       marker: single ? entry.swatches[0]?.marker : undefined,
       defaultLabel: entry.name,
+      // Show the raw override (so the input can hold spaces mid-edit) but fall
+      // back to the default when it is blank, matching what applyLegendConfig
+      // renders.
       label: hasLabelOverride(entryOverride?.label) ? (entryOverride?.label as string) : entry.name,
       hidden: Boolean(entryOverride?.hidden),
       reorderable: true,
@@ -526,6 +534,7 @@ function lerp(from: number, to: number, ratio: number): number {
 function proportionalSizeSwatches(
   range: ProportionalSizeRange,
   color: string,
+  /** The layer's point marker, so the ramp shows the symbol the map draws. */
   marker?: LegendMarker,
 ): LegendSwatch[] {
   return [0, 0.5, 1].map((ratio) => ({
@@ -545,6 +554,7 @@ function sizeClassSwatches(
   swatches: { color: string; label: string }[],
   stops: VectorStyleStop[],
   range: ProportionalSizeRange,
+  /** The layer's point marker, so the ramp shows the symbol the map draws. */
   marker?: LegendMarker,
 ): LegendSwatch[] {
   return swatches.map((swatch, index) => {

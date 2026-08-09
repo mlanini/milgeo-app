@@ -143,8 +143,7 @@ class _GeoLibre:
         """Return the live viewport bounds as ``[west, south, east, north]``."""
         return _to_py(_js.getBounds())
 
-    def fly_to(self, lng=None, lat=None, *, zoom=None, bearing=None,
-               pitch=None, duration=None):
+    def fly_to(self, lng=None, lat=None, *, zoom=None, bearing=None, pitch=None, duration=None):
         """Animate the camera; only the provided fields change."""
         params = {}
         if lng is not None and lat is not None:
@@ -188,16 +187,21 @@ class _GeoLibre:
                 return layer
         raise ValueError(f"No layer with id {layer_id!r}")
 
-    def add_geojson(self, data, name="GeoJSON"):
+    def add_geojson(self, data, name="GeoJSON", **style):
         """Add a GeoJSON layer from a dict / geometry / ``__geo_interface__``.
 
+        Style overrides (e.g. ``fillColor="#facc15"``) are applied to the new
+        layer in the same call, matching the notebook client's ``add_geojson``.
         Returns the new layer id. For a remote URL use :meth:`load_geojson`.
         """
         fc = _coerce_featurecollection(data)
-        return _js.addGeoJsonLayer(_to_js({"name": name, "geojson": fc}))
+        return _js.addGeoJsonLayer(_to_js({"name": name, "geojson": fc, "style": style}))
 
-    async def load_geojson(self, url, name="GeoJSON"):
-        """Fetch a GeoJSON URL and add it as a layer (async). Returns the id."""
+    async def load_geojson(self, url, name="GeoJSON", **style):
+        """Fetch a GeoJSON URL and add it as a layer (async). Returns the id.
+
+        Takes the same style overrides as :meth:`add_geojson`.
+        """
         from pyodide.http import pyfetch
 
         response = await pyfetch(url)
@@ -206,7 +210,7 @@ class _GeoLibre:
         if not response.ok:
             raise RuntimeError(f"Failed to fetch {url!r}: HTTP {response.status}")
         fc = _coerce_featurecollection(await response.json())
-        return _js.addGeoJsonLayer(_to_js({"name": name, "geojson": fc}))
+        return _js.addGeoJsonLayer(_to_js({"name": name, "geojson": fc, "style": style}))
 
     def remove_layer(self, layer_id):
         """Remove a layer by id."""
@@ -219,9 +223,7 @@ class _GeoLibre:
 
     async def run_algorithm(self, algorithm_id, parameters=None):
         """Run a processing algorithm and add its result layers (async)."""
-        result = await _js.runAlgorithm(
-            _to_js({"id": algorithm_id, "params": parameters or {}})
-        )
+        result = await _js.runAlgorithm(_to_js({"id": algorithm_id, "params": parameters or {}}))
         return _to_py(result)
 
     # -- export / packages ---------------------------------------------

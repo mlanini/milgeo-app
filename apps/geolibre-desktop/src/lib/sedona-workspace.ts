@@ -2,6 +2,7 @@ import type { GeoLibreLayer } from "@geolibre/core";
 import { fetchSqlStatus, runSedonaSql } from "@geolibre/processing";
 import type { FeatureCollection } from "geojson";
 import { tableFromIPC } from "apache-arrow";
+import { IS_MAS_BUILD } from "./build-flags";
 import { loadCereusDb, type CereusInstance } from "./cereus-loader";
 import {
   assignTableNames,
@@ -251,10 +252,7 @@ async function describeQuery(
  * (EPSG:4326). The returned shape matches {@link SqlQueryResult} so the dialog
  * renders this engine identically to DuckDB and PostGIS.
  */
-async function runCereusQuery(
-  statement: string,
-  layers: GeoLibreLayer[],
-): Promise<SqlQueryResult> {
+async function runCereusQuery(statement: string, layers: GeoLibreLayer[]): Promise<SqlQueryResult> {
   return runExclusive(async () => {
     const db = await getDb();
     await registerLayerTables(db, layers);
@@ -280,13 +278,8 @@ async function runCereusQuery(
       const queryRows = await db.sqlJSON(
         `SELECT ${projection.join(", ")} FROM (${statement}) AS ${sub}`,
       );
-      const baseColumns = described.columnNames.filter(
-        (name) => name !== GEOMETRY_JSON_COLUMN,
-      );
-      const { rows: flatRows, columns } = flattenProperties(
-        queryRows,
-        baseColumns,
-      );
+      const baseColumns = described.columnNames.filter((name) => name !== GEOMETRY_JSON_COLUMN);
+      const { rows: flatRows, columns } = flattenProperties(queryRows, baseColumns);
       const geojson = rowsToFeatureCollection(flatRows, geometryColumn);
       const rows = flatRows.map((row) => normalizeRow(row, columns));
       return {
@@ -304,10 +297,7 @@ async function runCereusQuery(
       : queryRows[0]
         ? Object.keys(queryRows[0])
         : [];
-    const { rows: flatRows, columns } = flattenProperties(
-      queryRows,
-      baseColumns,
-    );
+    const { rows: flatRows, columns } = flattenProperties(queryRows, baseColumns);
     const rows = flatRows.map((row) => normalizeRow(row, columns));
     return {
       columns,
@@ -359,6 +349,9 @@ let sidecarProbe: { at: number; available: boolean } | null = null;
  * connection failure as unavailable.
  */
 async function sidecarSqlAvailable(): Promise<boolean> {
+  // The Mac App Store build has no sidecar; skip the probe and let every
+  // query run on the in-browser CereusDB engine.
+  if (IS_MAS_BUILD) return false;
   const now = Date.now();
   if (sidecarProbe && now - sidecarProbe.at < SIDECAR_PROBE_TTL_MS) {
     return sidecarProbe.available;

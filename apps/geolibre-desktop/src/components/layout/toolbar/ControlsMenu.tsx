@@ -2,10 +2,20 @@ import { useAppStore } from "@geolibre/core";
 import {
   DEFAULT_EFFECTS_SETTINGS,
   type EffectsSettings,
+  getCloudsAnimationState,
+  getPrecipitationAnimationState,
   HALO_EXTENT_MAX,
   HALO_EXTENT_MIN,
   HALO_OPACITY_MAX,
   HALO_OPACITY_MIN,
+  setCloudsFrame,
+  setPrecipitationFrame,
+  subscribeClouds,
+  subscribePrecipitation,
+  toggleCloudsPlaying,
+  togglePrecipitationPlaying,
+  type WeatherAnimationState,
+  type WeatherLayerController,
 } from "@geolibre/plugins";
 import {
   Button,
@@ -26,26 +36,40 @@ import {
   DropdownMenuTrigger,
   Slider,
 } from "@geolibre/ui";
-import { ClipboardList, SlidersHorizontal } from "lucide-react";
-import { type MouseEvent as ReactMouseEvent, useState } from "react";
+import { Clapperboard, ClipboardList, LocateFixed, SlidersHorizontal, Video } from "lucide-react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ToolbarPanels } from "../../../hooks/useToolbarPanels";
 import { useDesktopSettingsStore } from "../../../hooks/useDesktopSettings";
+import { isMaptoolkitBasemapActive } from "../../../lib/maptoolkit-basemap";
 import { isMenuItemVisible } from "../../../lib/ui-profile";
 import {
+  LOGO_CONTROL_IDS,
   MAP_CONTROL_ITEMS,
   type ToolbarChrome,
   type ToolbarMapControl,
 } from "./constants";
 
+/**
+ * Controls-menu entries that write to the project rather than only changing
+ * what the map shows, so the read-only viewer preset hides them. The rest of
+ * the menu — on-map controls, panels, Record Tour, Record Video — is part of
+ * the viewer chrome and stays.
+ */
+const AUTHORING_CONTROL_ITEMS = ["controls.fieldCollection", "controls.gpsTracking"];
+
 interface ControlsMenuProps {
   chrome: ToolbarChrome;
+  /** The read-only viewer preset; hides {@link AUTHORING_CONTROL_ITEMS}. */
+  viewer?: boolean;
   controlsVisible: Record<ToolbarMapControl, boolean>;
   panels: ToolbarPanels;
   effectsActive: boolean;
   directionsActive: boolean;
   reverseGeocodeActive: boolean;
   graticuleActive: boolean;
+  cloudsActive: boolean;
+  precipitationActive: boolean;
   onToggleMapControl: (control: ToolbarMapControl) => void;
   onToggleEffects: () => void;
   getEffectsSettings: () => EffectsSettings;
@@ -54,18 +78,26 @@ interface ControlsMenuProps {
   onToggleDirections: () => void;
   onToggleReverseGeocode: () => void;
   onToggleGraticule: () => void;
+  onToggleClouds: () => void;
+  onTogglePrecipitation: () => void;
   onOpenFieldCollection: () => void;
+  onOpenGpsTracking: () => void;
+  onOpenRecordTour: () => void;
+  onOpenRecordVideo: () => void;
 }
 
 /** The Controls menu: built-in map controls, atmosphere/routing toggles, and panels. */
 export function ControlsMenu({
   chrome,
+  viewer = false,
   controlsVisible,
   panels,
   effectsActive,
   directionsActive,
   reverseGeocodeActive,
   graticuleActive,
+  cloudsActive,
+  precipitationActive,
   onToggleMapControl,
   onToggleEffects,
   getEffectsSettings,
@@ -74,11 +106,17 @@ export function ControlsMenu({
   onToggleDirections,
   onToggleReverseGeocode,
   onToggleGraticule,
+  onToggleClouds,
+  onTogglePrecipitation,
   onOpenFieldCollection,
+  onOpenGpsTracking,
+  onOpenRecordTour,
+  onOpenRecordVideo,
 }: ControlsMenuProps) {
   const { t } = useTranslation();
   const uiProfile = useDesktopSettingsStore((s) => s.desktopSettings.uiProfile);
-  const show = (id: string) => isMenuItemVisible(uiProfile, id);
+  const show = (id: string) =>
+    viewer && AUTHORING_CONTROL_ITEMS.includes(id) ? false : isMenuItemVisible(uiProfile, id);
   // Atmospheric effects only render on the globe (the engine idles in Mercator),
   // so the submenu is disabled while the map is in a flat projection (#783). The
   // GlobeControl toggle syncs this preference via the map "projectiontransition"
@@ -112,14 +150,29 @@ export function ControlsMenu({
   // Whether the first group (built-in controls + atmosphere/routing toggles) has
   // any visible item, so the separator below it isn't left orphaned.
   const anyTopControls =
-    MAP_CONTROL_ITEMS.some((control) =>
-      show(`controls.mapControl.${control.id}`),
-    ) ||
+    MAP_CONTROL_ITEMS.some((control) => show(`controls.mapControl.${control.id}`)) ||
     show("controls.atmosphereEffects") ||
+    show("controls.clouds") ||
     show("controls.spinGlobe") ||
     show("controls.graticule") ||
+    show("controls.sun") ||
+    show("controls.routeAnimation") ||
+    show("controls.flightSimulator") ||
     show("controls.directions") ||
     show("controls.reverseGeocode");
+  // Whether the middle group (panels) has any visible item. The separator that
+  // precedes the Field Collection / Record Tour group is gated on this so it
+  // never renders as a leading or doubled separator when the group above it is
+  // empty (e.g. a custom profile that hides every panel).
+  const anyMiddleControls =
+    show("controls.search") ||
+    show("controls.colorbar") ||
+    show("controls.legend") ||
+    show("controls.html") ||
+    show("controls.measure") ||
+    show("controls.bookmark") ||
+    show("controls.minimap") ||
+    show("controls.viewState");
 
   return (
     <>
@@ -138,17 +191,22 @@ export function ControlsMenu({
         <DropdownMenuContent align="start">
           <DropdownMenuLabel>{t("toolbar.item.mapControls")}</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {MAP_CONTROL_ITEMS.filter((control) =>
-            show(`controls.mapControl.${control.id}`),
+          {MAP_CONTROL_ITEMS.filter(
+            (control) =>
+              !LOGO_CONTROL_IDS.has(control.id) && show(`controls.mapControl.${control.id}`),
           ).map((control) => (
-            <DropdownMenuItem
-              key={control.id}
-              onClick={() => onToggleMapControl(control.id)}
-            >
+            <DropdownMenuItem key={control.id} onClick={() => onToggleMapControl(control.id)}>
               {t(control.labelKey)}
               {controlsVisible[control.id] ? " ✓" : ""}
             </DropdownMenuItem>
           ))}
+          {(show("controls.mapControl.logo") || show("controls.mapControl.maptoolkit-logo")) && (
+            <LogosSubmenu
+              controlsVisible={controlsVisible}
+              onToggleMapControl={onToggleMapControl}
+              show={show}
+            />
+          )}
           {show("controls.atmosphereEffects") && (
             <AtmosphereEffectsSubmenu
               active={effectsActive}
@@ -158,6 +216,38 @@ export function ControlsMenu({
               onPreview={onPreviewEffectsSettings}
               onCommit={onCommitEffectsSettings}
             />
+          )}
+          {show("controls.clouds") && (
+            <WeatherSubmenu
+              cloudsActive={cloudsActive}
+              onToggleClouds={onToggleClouds}
+              precipitationActive={precipitationActive}
+              onTogglePrecipitation={onTogglePrecipitation}
+            />
+          )}
+          {show("controls.sun") && (
+            <DropdownMenuItem title={t("toolbar.item.sunTooltip")} onSelect={panels.sun.toggle}>
+              {t("toolbar.item.sun")}
+              {panels.sun.visible ? " ✓" : ""}
+            </DropdownMenuItem>
+          )}
+          {show("controls.routeAnimation") && (
+            <DropdownMenuItem
+              title={t("toolbar.item.routeAnimationTooltip")}
+              onSelect={panels.routeAnimation.toggle}
+            >
+              {t("toolbar.item.routeAnimation")}
+              {panels.routeAnimation.visible ? " ✓" : ""}
+            </DropdownMenuItem>
+          )}
+          {show("controls.flightSimulator") && (
+            <DropdownMenuItem
+              title={t("toolbar.item.flightSimulatorTooltip")}
+              onSelect={panels.flightSimulator.toggle}
+            >
+              {t("toolbar.item.flightSimulator")}
+              {panels.flightSimulator.visible ? " ✓" : ""}
+            </DropdownMenuItem>
           )}
           {show("controls.spinGlobe") && (
             <DropdownMenuItem onSelect={handleSpinGlobe}>
@@ -238,14 +328,34 @@ export function ControlsMenu({
               {panels.viewState.visible ? " ✓" : ""}
             </DropdownMenuItem>
           )}
+          {anyMiddleControls &&
+            (show("controls.fieldCollection") ||
+              show("controls.gpsTracking") ||
+              show("controls.recordTour") ||
+              show("controls.recordVideo")) && <DropdownMenuSeparator />}
           {show("controls.fieldCollection") && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={onOpenFieldCollection}>
-                <ClipboardList className="mr-2 h-3.5 w-3.5" />
-                {t("toolbar.item.fieldCollection")}
-              </DropdownMenuItem>
-            </>
+            <DropdownMenuItem onSelect={onOpenFieldCollection}>
+              <ClipboardList className="me-2 h-3.5 w-3.5" />
+              {t("toolbar.item.fieldCollection")}
+            </DropdownMenuItem>
+          )}
+          {show("controls.gpsTracking") && (
+            <DropdownMenuItem onSelect={onOpenGpsTracking}>
+              <LocateFixed className="me-2 h-3.5 w-3.5" />
+              {t("toolbar.item.gpsTracking")}
+            </DropdownMenuItem>
+          )}
+          {show("controls.recordTour") && (
+            <DropdownMenuItem onSelect={onOpenRecordTour}>
+              <Video className="me-2 h-3.5 w-3.5" />
+              {t("toolbar.item.recordTour")}
+            </DropdownMenuItem>
+          )}
+          {show("controls.recordVideo") && (
+            <DropdownMenuItem onSelect={onOpenRecordVideo}>
+              <Clapperboard className="me-2 h-3.5 w-3.5" />
+              {t("toolbar.item.recordVideo")}
+            </DropdownMenuItem>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -260,29 +370,95 @@ export function ControlsMenu({
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{t("toolbar.item.spinGlobeBoundsTitle")}</DialogTitle>
-            <DialogDescription>
-              {t("toolbar.item.spinGlobeBoundsDesc")}
-            </DialogDescription>
+            <DialogDescription>{t("toolbar.item.spinGlobeBoundsDesc")}</DialogDescription>
           </DialogHeader>
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-            <p className="text-muted-foreground">
-              {t("toolbar.item.spinGlobeBoundsHint")}
-            </p>
+            <p className="text-muted-foreground">{t("toolbar.item.spinGlobeBoundsHint")}</p>
           </div>
           <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setSpinGlobeNoticeOpen(false)}
-            >
+            <Button variant="outline" onClick={() => setSpinGlobeNoticeOpen(false)}>
               {t("common.cancel")}
             </Button>
-            <Button onClick={confirmSpinGlobe}>
-              {t("toolbar.item.spinGlobeBoundsUnlock")}
-            </Button>
+            <Button onClick={confirmSpinGlobe}>{t("toolbar.item.spinGlobeBoundsUnlock")}</Button>
           </div>
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+interface LogosSubmenuProps {
+  controlsVisible: Record<ToolbarMapControl, boolean>;
+  onToggleMapControl: (control: ToolbarMapControl) => void;
+  show: (id: string) => boolean;
+}
+
+/**
+ * The Logos submenu: groups the on-map logo controls (the MapLibre logo and the
+ * Maptoolkit logo). Each is an independent on/off toggle.
+ *
+ * The Maptoolkit logo is the branding companion to Maptoolkit basemaps added via
+ * the basemap control — Maptoolkit's terms require their mark be shown on maps
+ * that use their tiles/styles. So that toggle is disabled (with an explanatory
+ * hint) until a Maptoolkit basemap is actually in use, unless it is already on,
+ * in which case it stays interactive so the user can always turn it back off.
+ */
+function LogosSubmenu({ controlsVisible, onToggleMapControl, show }: LogosSubmenuProps) {
+  const { t } = useTranslation();
+  // A Maptoolkit basemap is active either as a whole-map style (its URL lives on
+  // styles.maptoolkit.org) or as a stacked raster basemap layer (the basemap
+  // control tags those with `metadata.basemapProvider`). Either makes the logo
+  // relevant. See maplibre-basemap-control.ts (registerRasterBasemap).
+  const maptoolkitBasemapActive = useAppStore((s) =>
+    isMaptoolkitBasemapActive(s.basemapStyleUrl, s.layers),
+  );
+
+  const mapLibreLogoVisible = show("controls.mapControl.logo");
+  const maptoolkitLogoVisible = show("controls.mapControl.maptoolkit-logo");
+  const maptoolkitLogoActive = controlsVisible["maptoolkit-logo"];
+  // Keep the toggle usable when it is already on (so it can be turned off) even
+  // if the Maptoolkit basemap has since been removed.
+  const maptoolkitDisabled = !maptoolkitBasemapActive && !maptoolkitLogoActive;
+  const anyLogoActive = controlsVisible.logo || maptoolkitLogoActive;
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        {t("toolbar.mapControl.logos")}
+        {/* Aggregate indicator so an active logo shows without opening the
+            submenu (parity with the old top-level logo entry). */}
+        {anyLogoActive ? " ✓" : ""}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        {mapLibreLogoVisible && (
+          <DropdownMenuItem
+            onSelect={(e: Event) => {
+              // Keep the submenu open after toggling so a second logo can be
+              // flipped without reopening it.
+              e.preventDefault();
+              onToggleMapControl("logo");
+            }}
+          >
+            {t("toolbar.mapControl.logo")}
+            {controlsVisible.logo ? " ✓" : ""}
+          </DropdownMenuItem>
+        )}
+        {maptoolkitLogoVisible && (
+          <DropdownMenuItem
+            disabled={maptoolkitDisabled}
+            title={maptoolkitDisabled ? t("toolbar.mapControl.maptoolkitLogoHint") : undefined}
+            onSelect={(e: Event) => {
+              e.preventDefault();
+              if (maptoolkitDisabled) return;
+              onToggleMapControl("maptoolkit-logo");
+            }}
+          >
+            {t("toolbar.mapControl.maptoolkitLogo")}
+            {maptoolkitLogoActive ? " ✓" : ""}
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }
 
@@ -366,10 +542,7 @@ function AtmosphereEffectsSubmenu({
         <DropdownMenuSeparator />
         {/* Stop key events from reaching the menu's roving-focus/typeahead
             handlers so sliders respond to arrow keys and the color inputs work. */}
-        <div
-          className="space-y-3 px-2 py-1.5"
-          onKeyDown={(e) => e.stopPropagation()}
-        >
+        <div className="space-y-3 px-2 py-1.5" onKeyDown={(e) => e.stopPropagation()}>
           <ColorRow
             label={t("toolbar.atmosphere.haloColor")}
             value={settings.haloColor}
@@ -417,6 +590,173 @@ function AtmosphereEffectsSubmenu({
         >
           {t("toolbar.atmosphere.reset")}
         </DropdownMenuItem>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
+interface WeatherSubmenuProps {
+  cloudsActive: boolean;
+  onToggleClouds: () => void;
+  precipitationActive: boolean;
+  onTogglePrecipitation: () => void;
+}
+
+/**
+ * The Weather submenu: groups the Clouds and Precipitation overlays. Each nested
+ * item is a {@link WeatherLayerSubmenu} with its own on/off toggle and time-scrub
+ * animation. The overlays themselves live in the Layers panel as normal tile
+ * layers (with their own visibility/opacity); these submenus only drive the
+ * animation.
+ */
+function WeatherSubmenu({
+  cloudsActive,
+  onToggleClouds,
+  precipitationActive,
+  onTogglePrecipitation,
+}: WeatherSubmenuProps) {
+  const { t } = useTranslation();
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger title={t("toolbar.item.weatherTooltip")}>
+        {t("toolbar.item.weather")}
+        {/* Aggregate indicator so an active overlay shows without opening the
+            submenu (parity with the old top-level Clouds entry). */}
+        {cloudsActive || precipitationActive ? " ✓" : ""}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        <WeatherLayerSubmenu
+          label={t("toolbar.item.clouds")}
+          showLabel={t("toolbar.item.cloudsShow")}
+          tooltip={t("toolbar.item.cloudsTooltip")}
+          sliderLabel={t("toolbar.item.cloudsDate")}
+          active={cloudsActive}
+          onToggle={onToggleClouds}
+          controller={CLOUDS_CONTROLLER}
+        />
+        <WeatherLayerSubmenu
+          label={t("toolbar.item.precipitation")}
+          showLabel={t("toolbar.item.precipitationShow")}
+          tooltip={t("toolbar.item.precipitationTooltip")}
+          sliderLabel={t("toolbar.item.precipitationTime")}
+          active={precipitationActive}
+          onToggle={onTogglePrecipitation}
+          controller={PRECIPITATION_CONTROLLER}
+        />
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
+/** The plugin animation hooks a {@link WeatherLayerSubmenu} drives. */
+// The subset of the plugin's WeatherLayerController this submenu drives (the
+// activate/deactivate lifecycle is the plugin's, not the menu's). Derived via
+// Pick so it can't drift from the exported type.
+type WeatherControllerHandle = Pick<
+  WeatherLayerController,
+  "getState" | "setFrame" | "togglePlaying" | "subscribe"
+>;
+
+// Stable module-level controllers so each submenu's subscribe effect runs once.
+const CLOUDS_CONTROLLER: WeatherControllerHandle = {
+  getState: getCloudsAnimationState,
+  setFrame: setCloudsFrame,
+  togglePlaying: toggleCloudsPlaying,
+  subscribe: subscribeClouds,
+};
+const PRECIPITATION_CONTROLLER: WeatherControllerHandle = {
+  getState: getPrecipitationAnimationState,
+  setFrame: setPrecipitationFrame,
+  togglePlaying: togglePrecipitationPlaying,
+  subscribe: subscribePrecipitation,
+};
+
+interface WeatherLayerSubmenuProps {
+  label: string;
+  showLabel: string;
+  tooltip: string;
+  sliderLabel: string;
+  active: boolean;
+  onToggle: () => void;
+  controller: WeatherControllerHandle;
+}
+
+/**
+ * A single Weather overlay submenu: an on/off toggle plus a time-scrub animation
+ * (play/pause + a frame slider). Animation state lives in module state in the
+ * plugin, so this mirrors it locally — seeded on mount/open and refreshed via
+ * the controller's subscribe so the slider tracks playback frame by frame.
+ */
+function WeatherLayerSubmenu({
+  label,
+  showLabel,
+  tooltip,
+  sliderLabel,
+  active,
+  onToggle,
+  controller,
+}: WeatherLayerSubmenuProps) {
+  const { t } = useTranslation();
+  const [anim, setAnim] = useState<WeatherAnimationState>(controller.getState);
+
+  useEffect(() => {
+    setAnim(controller.getState());
+    return controller.subscribe(() => setAnim(controller.getState()));
+  }, [controller]);
+
+  // Need at least two frames to animate/scrub; hide the Play + slider otherwise
+  // (a single-frame source can't animate, and startPlaying() would no-op).
+  const showAnimation = active && anim.labels.length > 1;
+
+  return (
+    <DropdownMenuSub
+      onOpenChange={(open: boolean) => {
+        if (open) setAnim(controller.getState());
+      }}
+    >
+      <DropdownMenuSubTrigger title={tooltip}>
+        {label}
+        {active ? " ✓" : ""}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-64">
+        <DropdownMenuItem
+          // onSelect (not onClick) fires for both mouse and keyboard
+          // (Enter/Space); preventDefault keeps the submenu open after toggling.
+          onSelect={(e: Event) => {
+            e.preventDefault();
+            onToggle();
+          }}
+        >
+          {showLabel}
+          {active ? " ✓" : ""}
+        </DropdownMenuItem>
+        {showAnimation && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={(e: Event) => {
+                e.preventDefault();
+                controller.togglePlaying();
+              }}
+            >
+              {anim.playing ? t("toolbar.item.weatherPause") : t("toolbar.item.weatherPlay")}
+            </DropdownMenuItem>
+            {/* Stop key events from reaching the menu's roving-focus/typeahead
+                handlers so the slider responds to arrow keys. */}
+            <div className="px-2 py-1.5" onKeyDown={(e) => e.stopPropagation()}>
+              <SliderRow
+                label={sliderLabel}
+                min={0}
+                max={anim.labels.length - 1}
+                step={1}
+                value={anim.index}
+                format={(v) => anim.labels[Math.round(v)] ?? ""}
+                onPreview={(v) => controller.setFrame(v)}
+                onCommit={() => {}}
+              />
+            </div>
+          </>
+        )}
       </DropdownMenuSubContent>
     </DropdownMenuSub>
   );

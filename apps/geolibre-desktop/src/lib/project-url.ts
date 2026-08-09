@@ -1,5 +1,6 @@
 import { parseProject, type GeoLibreProject } from "@geolibre/core";
 import { normalizeProjectUrl } from "./urls";
+import { WHITEBOX_TOOL_PARAM } from "./whitebox-tool-url";
 
 // Query parameters that carry a `.geolibre.json` project URL deep link. A bare
 // `?https://...` query (no key) is also accepted by `projectUrlFromLocation`.
@@ -19,18 +20,20 @@ export function projectUrlFromLocation(): string | null {
 
   const search = window.location.search;
   const params = new URLSearchParams(search);
+  // A `?tool=` deep link puts the app in Whitebox tool mode, where `url` names a
+  // tool input (e.g. a COG to subset), not a project to load (see
+  // `whitebox-tool-url.ts`). Suppress the project loader so the two features
+  // don't both claim `url` — otherwise the loader would try to parse a raster as
+  // a `.geolibre.json` project and surface an error.
+  if (params.get(WHITEBOX_TOOL_PARAM)?.trim()) return null;
   for (const key of PROJECT_URL_PARAMS) {
     const value = params.get(key);
     const url = normalizeProjectUrl(value);
     if (url) return url;
   }
 
-  const bareQuery = search.startsWith("?")
-    ? safeDecodeURIComponent(search.slice(1)).trim()
-    : "";
-  return /^https?:\/\//i.test(bareQuery)
-    ? normalizeProjectUrl(bareQuery)
-    : null;
+  const bareQuery = search.startsWith("?") ? safeDecodeURIComponent(search.slice(1)).trim() : "";
+  return /^https?:\/\//i.test(bareQuery) ? normalizeProjectUrl(bareQuery) : null;
 }
 
 /**
@@ -75,13 +78,24 @@ export async function fetchProjectFromUrl(
   // A caller-initiated abort (dialog close / unmount) surfaces as an
   // `AbortError`; let it propagate untouched so the caller can ignore it,
   // matching the abort handling in `share-geolibre.ts`.
-  const isAbort = (error: unknown) =>
-    error instanceof DOMException && error.name === "AbortError";
+  const isAbort = (error: unknown) => error instanceof DOMException && error.name === "AbortError";
 
   let response: Response;
   try {
     response = await fetchImpl(projectUrl, {
       headers: { Accept: "application/json, text/plain;q=0.9, */*;q=0.8" },
+      // Always revalidate. A share host may serve the project with a long
+      // freshness lifetime (share.geolibre.app sends `max-age=3600`), and a
+      // shared URL is a *mutable* document: re-sharing overwrites it in place.
+      // With the default cache mode the browser answers from its own copy for
+      // the rest of that window, so recipients keep loading a superseded
+      // project with nothing in the UI to explain it -- and because the body
+      // feeds the plugin trust prompt, a stale copy can keep prompting for a
+      // plugin URL the current project no longer carries. `no-cache` (not
+      // `no-store`) still uses the cache; it just forces a conditional request
+      // first, so an unchanged project comes back as a 304 rather than a
+      // re-download.
+      cache: "no-cache",
       signal,
     });
   } catch (error) {
@@ -96,8 +110,7 @@ export async function fetchProjectFromUrl(
       ? `HTTP ${response.status} ${response.statusText}`
       : `HTTP ${response.status}`;
     throw new Error(
-      `Could not fetch the project from ${projectUrl}: the server responded ` +
-        `with ${status}.`,
+      `Could not fetch the project from ${projectUrl}: the server responded ` + `with ${status}.`,
     );
   }
 
@@ -123,8 +136,7 @@ export async function fetchProjectFromUrl(
     const raw = error instanceof Error ? error.message : String(error);
     const detail = raw.replace(/^Invalid GeoLibre project:\s*/i, "") || raw;
     throw new Error(
-      `The file at ${projectUrl} is not a valid GeoLibre project ` +
-        `(.geolibre.json): ${detail}`,
+      `The file at ${projectUrl} is not a valid GeoLibre project ` + `(.geolibre.json): ${detail}`,
       { cause: error },
     );
   }

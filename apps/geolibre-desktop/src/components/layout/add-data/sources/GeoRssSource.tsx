@@ -79,9 +79,7 @@ export function GeoRssSource() {
 
     const response = await fetch(proxyFeedRequestUrl(sourcePath));
     if (!response.ok) {
-      throw new Error(
-        t("addData.common.requestFailed", { status: response.status }),
-      );
+      throw new Error(t("addData.common.requestFailed", { status: response.status }));
     }
     return {
       sourcePath,
@@ -108,6 +106,7 @@ export function GeoRssSource() {
             feedTitle: result.feedTitle,
             sourceKind: "georss",
           },
+          { geojson: result.features },
         ),
         geojson: result.features,
         sourcePath,
@@ -129,24 +128,12 @@ export function GeoRssSource() {
       useServiceIcon
     >
       <div className="space-y-3">
-        <SampleDataSelect
-          samples={[
-            { label: t("addData.georss.sampleLabel"), value: DEFAULT_GEORSS_URL },
-          ]}
-          onSelect={(url) => {
-            setGeoRssMode("url");
-            setSelectedFile(null);
-            setGeoRssUrl(url);
-          }}
-        />
         <div className="space-y-1.5">
           <Label htmlFor="georss-mode">{t("addData.common.sourceType")}</Label>
           <Select
             id="georss-mode"
             value={georssMode}
-            onChange={(event) =>
-              handleModeChange(event.target.value as GeoRssMode)
-            }
+            onChange={(event) => handleModeChange(event.target.value as GeoRssMode)}
           >
             <option value="url">{t("addData.georss.url")}</option>
             <option value="file">{t("addData.georss.file")}</option>
@@ -156,7 +143,7 @@ export function GeoRssSource() {
         {georssMode === "file" ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="outline" onClick={handleChooseFile}>
-              <FileUp className="mr-2 h-3.5 w-3.5" />
+              <FileUp className="me-2 h-3.5 w-3.5" />
               {t("addData.common.chooseFile")}
             </Button>
             <span className="min-w-0 truncate text-xs text-muted-foreground">
@@ -176,6 +163,14 @@ export function GeoRssSource() {
             />
           </div>
         )}
+        <SampleDataSelect
+          samples={[{ label: t("addData.georss.sampleLabel"), value: DEFAULT_GEORSS_URL }]}
+          onSelect={(url) => {
+            setGeoRssMode("url");
+            setSelectedFile(null);
+            setGeoRssUrl(url);
+          }}
+        />
       </div>
     </AddDataSourceForm>
   );

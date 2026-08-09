@@ -1,8 +1,6 @@
-import type {
-  DuckDbCapability,
-  DuckDbGeoJsonSource,
-} from "@geolibre/processing";
+import type { DuckDbCapability, DuckDbGeoJsonSource } from "@geolibre/processing";
 import type { FeatureCollection } from "geojson";
+import { stripAutoFidColumn } from "./duckdb-geometry";
 import {
   ensureA5Extension,
   ensureDuckDggsExtension,
@@ -27,7 +25,7 @@ export function createDuckDbCapability(): DuckDbCapability {
       const db = await getDatabase();
       const connection = await db.connect();
       try {
-        if (names.includes("spatial")) await ensureSpatialExtension(connection);
+        if (names.includes("spatial")) await ensureSpatialExtension(db, connection);
         if (names.includes("h3")) await ensureH3Extension(connection);
         if (names.includes("a5")) await ensureA5Extension(connection);
         if (names.includes("duck_dggs")) await ensureDuckDggsExtension(connection);
@@ -36,13 +34,16 @@ export function createDuckDbCapability(): DuckDbCapability {
       }
     },
 
-    async registerGeoJson(
-      geojson: FeatureCollection,
-    ): Promise<DuckDbGeoJsonSource> {
+    async registerGeoJson(geojson: FeatureCollection): Promise<DuckDbGeoJsonSource> {
       const db = await getDatabase();
       counter += 1;
       const name = `__geolibre_geojson_${Date.now()}_${counter}.geojson`;
-      await db.registerFileText(name, JSON.stringify(geojson));
+      // Drop any reserved OGC_FID property before ST_Read re-reads the file:
+      // a layer from a GDAL export (e.g. a GeoParquet whose columns include
+      // OGC_FID) carries it as a property, and GDAL's GeoJSON driver adds its
+      // own OGC_FID id column, so the read aborts with a duplicate-column
+      // binder error (issues #499, #944).
+      await db.registerFileText(name, JSON.stringify(stripAutoFidColumn(geojson)));
       return {
         sql: `ST_Read(${quoteSqlString(name)})`,
         async release(): Promise<void> {

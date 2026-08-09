@@ -32,12 +32,15 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
 import {
+  getExternalPluginLoadIssues,
   getPluginManager,
   installPluginArchive,
   installPluginArchiveFromFile,
   listPluginArchivesFromFile,
+  subscribeToExternalPluginLoads,
   uninstallPluginArchiveFromFile,
   upgradeExternalPlugin,
 } from "../../hooks/usePlugins";
@@ -56,12 +59,7 @@ import {
 } from "../../lib/tauri-io";
 import { openExternalLink } from "../../lib/open-external";
 
-type ManageSection =
-  | "all"
-  | "installed"
-  | "not-installed"
-  | "upgradeable"
-  | "settings";
+type ManageSection = "all" | "installed" | "not-installed" | "upgradeable" | "settings";
 
 type RegistryState =
   | { status: "loading" }
@@ -76,8 +74,7 @@ const EMPTY_ENTRIES: PluginRegistryEntry[] = [];
 
 // Module-level store bindings so useSyncExternalStore sees a stable subscribe /
 // snapshot identity and doesn't re-subscribe on every render.
-const subscribeToPluginManager = (listener: () => void) =>
-  getPluginManager().subscribe(listener);
+const subscribeToPluginManager = (listener: () => void) => getPluginManager().subscribe(listener);
 const getPluginManagerVersion = () => getPluginManager().getVersion();
 
 interface ManagePluginsDialogProps {
@@ -91,10 +88,9 @@ export function ManagePluginsDialog({
   onOpenChange,
   mapControllerRef,
 }: ManagePluginsDialogProps) {
+  const { t } = useTranslation();
   const desktopSettings = useDesktopSettingsStore((s) => s.desktopSettings);
-  const setDesktopSettings = useDesktopSettingsStore(
-    (s) => s.setDesktopSettings,
-  );
+  const setDesktopSettings = useDesktopSettingsStore((s) => s.setDesktopSettings);
 
   const [section, setSection] = useState<ManageSection>("all");
   const [registry, setRegistry] = useState<RegistryState>({
@@ -156,15 +152,14 @@ export function ManagePluginsDialog({
       })
       .catch((error: unknown) => {
         if (cancelled) return;
-        const timedOut =
-          error instanceof DOMException && error.name === "AbortError";
+        const timedOut = error instanceof DOMException && error.name === "AbortError";
         setRegistry({
           status: "error",
           message: timedOut
             ? "Plugin registry request timed out. Check your connection and try again."
             : error instanceof Error
               ? error.message
-              : "Could not load the plugin registry.",
+              : t("managePlugins.errorLoadRegistry"),
         });
       });
     return () => {
@@ -190,6 +185,11 @@ export function ManagePluginsDialog({
     }
     return versions;
   }, [managerVersion]);
+  const externalLoadIssues = useSyncExternalStore(
+    subscribeToExternalPluginLoads,
+    getExternalPluginLoadIssues,
+    getExternalPluginLoadIssues,
+  );
 
   const installedSet = useMemo(
     () => new Set(desktopSettings.pluginManifestUrls.map((url) => url.trim())),
@@ -208,11 +208,7 @@ export function ManagePluginsDialog({
   const isUpgradeable = useCallback(
     (entry: PluginRegistryEntry) => {
       const loaded = loadedVersions.get(entry.id);
-      return (
-        isInstalled(entry) &&
-        loaded !== undefined &&
-        isNewerVersion(entry.version, loaded)
-      );
+      return isInstalled(entry) && loaded !== undefined && isNewerVersion(entry.version, loaded);
     },
     [isInstalled, loadedVersions],
   );
@@ -222,8 +218,7 @@ export function ManagePluginsDialog({
   // or failed. Used to show a "Loading…" state instead of a premature
   // "Installed" confirmation.
   const isLoadPending = useCallback(
-    (entry: PluginRegistryEntry) =>
-      isInstalled(entry) && !loadedVersions.has(entry.id),
+    (entry: PluginRegistryEntry) => isInstalled(entry) && !loadedVersions.has(entry.id),
     [isInstalled, loadedVersions],
   );
 
@@ -234,9 +229,7 @@ export function ManagePluginsDialog({
       const current = useDesktopSettingsStore.getState().desktopSettings;
       setDesktopSettings({
         ...current,
-        pluginManifestUrls: mergeStringLists(current.pluginManifestUrls, [
-          url.trim(),
-        ]),
+        pluginManifestUrls: mergeStringLists(current.pluginManifestUrls, [url.trim()]),
       });
     },
     [setDesktopSettings],
@@ -248,9 +241,7 @@ export function ManagePluginsDialog({
       const current = useDesktopSettingsStore.getState().desktopSettings;
       setDesktopSettings({
         ...current,
-        pluginManifestUrls: current.pluginManifestUrls.filter(
-          (entry) => entry.trim() !== trimmed,
-        ),
+        pluginManifestUrls: current.pluginManifestUrls.filter((entry) => entry.trim() !== trimmed),
       });
     },
     [setDesktopSettings],
@@ -265,8 +256,7 @@ export function ManagePluginsDialog({
       } catch (error: unknown) {
         setActionError({
           id: entry.id,
-          message:
-            error instanceof Error ? error.message : "Could not update plugin.",
+          message: error instanceof Error ? error.message : t("managePlugins.errorUpdate"),
         });
       } finally {
         setBusyId(null);
@@ -282,10 +272,9 @@ export function ManagePluginsDialog({
       const current = useDesktopSettingsStore.getState().desktopSettings;
       setDesktopSettings({
         ...current,
-        additionalPluginDirectories: mergeStringLists(
-          current.additionalPluginDirectories,
-          [trimmed],
-        ),
+        additionalPluginDirectories: mergeStringLists(current.additionalPluginDirectories, [
+          trimmed,
+        ]),
       });
       setNewDirectory("");
       setSettingsError(null);
@@ -312,9 +301,7 @@ export function ManagePluginsDialog({
       if (path) addDirectory(path);
     } catch (error) {
       setSettingsError(
-        error instanceof Error
-          ? error.message
-          : "Could not open the directory picker.",
+        error instanceof Error ? error.message : t("managePlugins.errorDirectoryPicker"),
       );
     }
   }, [addDirectory]);
@@ -352,9 +339,7 @@ export function ManagePluginsDialog({
         await refreshWebPlugins();
       }
     } catch (error) {
-      setInstallError(
-        error instanceof Error ? error.message : "Could not install the plugin.",
-      );
+      setInstallError(error instanceof Error ? error.message : t("managePlugins.errorInstall"));
     } finally {
       setInstalling(false);
     }
@@ -368,11 +353,7 @@ export function ManagePluginsDialog({
         await uninstallPluginArchiveFromFile(id, mapControllerRef);
         await refreshWebPlugins();
       } catch (error) {
-        setInstallError(
-          error instanceof Error
-            ? error.message
-            : "Could not uninstall the plugin.",
-        );
+        setInstallError(error instanceof Error ? error.message : t("managePlugins.errorUninstall"));
       }
     },
     [mapControllerRef, refreshWebPlugins],
@@ -382,9 +363,7 @@ export function ManagePluginsDialog({
     const trimmed = newManifestUrl.trim();
     if (!trimmed) return;
     if (!isAllowedPluginManifestUrl(trimmed)) {
-      setSettingsError(
-        "Manifest URLs must use HTTPS, or HTTP on localhost, 127.0.0.1, or [::1].",
-      );
+      setSettingsError("Manifest URLs must use HTTPS, or HTTP on localhost, 127.0.0.1, or [::1].");
       return;
     }
     installUrl(trimmed);
@@ -392,26 +371,25 @@ export function ManagePluginsDialog({
     setSettingsError(null);
   }, [newManifestUrl, installUrl]);
 
-  const entries =
-    registry.status === "ready" ? registry.entries : EMPTY_ENTRIES;
-  const installedCount = useMemo(
-    () => entries.filter(isInstalled).length,
-    [entries, isInstalled],
-  );
+  const entries = registry.status === "ready" ? registry.entries : EMPTY_ENTRIES;
+  const installedCount = useMemo(() => entries.filter(isInstalled).length, [entries, isInstalled]);
   const upgradeableCount = useMemo(
     () => entries.filter(isUpgradeable).length,
     [entries, isUpgradeable],
   );
 
   const sectionItems: Array<{ id: ManageSection; label: string }> = [
-    { id: "all", label: `All (${entries.length})` },
-    { id: "installed", label: `Installed (${installedCount})` },
+    { id: "all", label: t("managePlugins.sectionAll", { total: entries.length }) },
+    { id: "installed", label: t("managePlugins.sectionInstalled", { total: installedCount }) },
     {
       id: "not-installed",
-      label: `Not installed (${entries.length - installedCount})`,
+      label: t("managePlugins.sectionNotInstalled", { total: entries.length - installedCount }),
     },
-    { id: "upgradeable", label: `Upgradeable (${upgradeableCount})` },
-    { id: "settings", label: "Settings" },
+    {
+      id: "upgradeable",
+      label: t("managePlugins.sectionUpgradeable", { total: upgradeableCount }),
+    },
+    { id: "settings", label: t("managePlugins.sectionSettings") },
   ];
 
   const visibleEntries = useMemo(() => {
@@ -421,26 +399,28 @@ export function ManagePluginsDialog({
       [entry.name, entry.id, entry.description, ...(entry.categories ?? [])]
         .filter((field): field is string => Boolean(field))
         .some((field) => field.toLowerCase().includes(term));
-    return entries
-      .filter((entry) => {
-        if (!matches(entry)) return false;
-        switch (section) {
-          case "installed":
-            return isInstalled(entry);
-          case "not-installed":
-            return !isInstalled(entry);
-          case "upgradeable":
-            return isUpgradeable(entry);
-          default:
-            return true;
-        }
-      })
-      // Locale-aware, case-insensitive sort; plugin id breaks name ties.
-      .sort(
-        (a, b) =>
-          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
-          a.id.localeCompare(b.id),
-      );
+    return (
+      entries
+        .filter((entry) => {
+          if (!matches(entry)) return false;
+          switch (section) {
+            case "installed":
+              return isInstalled(entry);
+            case "not-installed":
+              return !isInstalled(entry);
+            case "upgradeable":
+              return isUpgradeable(entry);
+            default:
+              return true;
+          }
+        })
+        // Locale-aware, case-insensitive sort; plugin id breaks name ties.
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+            a.id.localeCompare(b.id),
+        )
+    );
   }, [entries, isInstalled, isUpgradeable, query, section]);
 
   return (
@@ -450,28 +430,29 @@ export function ManagePluginsDialog({
         bodyClassName="overflow-hidden p-0"
       >
         <DialogHeader className="border-b px-6 pb-4 pt-6">
-          <DialogTitle>Manage Plugins</DialogTitle>
+          <DialogTitle>{t("managePlugins.title")}</DialogTitle>
           <DialogDescription>
-            Browse, install, update, and remove external GeoLibre plugins.{" "}
-            Plugins are listed in the{" "}
-            <a
-              href="https://plugins.geolibre.app"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-2 hover:text-primary"
-              onClick={(event) => {
-                event.preventDefault();
-                void openExternalLink("https://plugins.geolibre.app");
+            <Trans
+              i18nKey="managePlugins.description"
+              components={{
+                registryLink: (
+                  <a
+                    href="https://plugins.geolibre.app"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void openExternalLink("https://plugins.geolibre.app");
+                    }}
+                  />
+                ),
               }}
-            >
-              GeoLibre plugin registry
-              <ExternalLink className="h-3 w-3" />
-            </a>
-            .
+            />
           </DialogDescription>
         </DialogHeader>
         <div className="grid min-h-0 grid-cols-1 md:grid-cols-[12rem_1fr]">
-          <nav className="flex gap-1 overflow-x-auto border-b p-3 md:flex-col md:overflow-x-visible md:border-b-0 md:border-r">
+          <nav className="flex gap-1 overflow-x-auto border-b p-3 md:flex-col md:overflow-x-visible md:border-b-0 md:border-e">
             {sectionItems.map((item) => (
               <Button
                 key={item.id}
@@ -518,11 +499,11 @@ export function ManagePluginsDialog({
               <>
                 <div className="flex items-center justify-between gap-3">
                   <div className="relative flex-1">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Search className="pointer-events-none absolute start-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                     <Input
-                      aria-label="Search plugins"
-                      placeholder="Search plugins"
-                      className="pl-8"
+                      aria-label={t("managePlugins.searchAria")}
+                      placeholder={t("managePlugins.searchPlaceholder")}
+                      className="ps-8"
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
                     />
@@ -537,14 +518,14 @@ export function ManagePluginsDialog({
                     <RefreshCw
                       className={`h-3.5 w-3.5 ${registry.status === "loading" ? "animate-spin" : ""}`}
                     />
-                    Refresh
+                    {t("managePlugins.refresh")}
                   </Button>
                 </div>
 
                 {registry.status === "loading" ? (
                   <div className="flex items-center gap-2 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading registry…
+                    {t("managePlugins.loadingRegistry")}
                   </div>
                 ) : null}
 
@@ -553,14 +534,9 @@ export function ManagePluginsDialog({
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <div className="space-y-2">
                       <p>{registry.message}</p>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={refresh}
-                      >
+                      <Button type="button" size="sm" variant="outline" onClick={refresh}>
                         <RefreshCw className="h-3.5 w-3.5" />
-                        Retry
+                        {t("common.retry")}
                       </Button>
                     </div>
                   </div>
@@ -570,20 +546,18 @@ export function ManagePluginsDialog({
                   <div className="flex flex-col items-center gap-2 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                     <Package className="h-5 w-5" />
                     {entries.length === 0
-                      ? "No plugins are listed in the registry."
-                      : "No plugins here."}
+                      ? t("managePlugins.registryEmpty")
+                      : t("managePlugins.noPluginsHere")}
                   </div>
                 ) : null}
 
                 {registry.status === "ready" &&
                   visibleEntries.map((entry) => {
                     const installed = isInstalled(entry);
-                    const compatible = satisfiesMinVersion(
-                      APP_VERSION,
-                      entry.minGeoLibreVersion,
-                    );
+                    const compatible = satisfiesMinVersion(APP_VERSION, entry.minGeoLibreVersion);
                     const updateAvailable = isUpgradeable(entry);
                     const loadPending = isLoadPending(entry);
+                    const loadIssue = externalLoadIssues.get(entry.manifestUrl);
                     return (
                       <div
                         key={entry.id}
@@ -591,9 +565,7 @@ export function ManagePluginsDialog({
                       >
                         <div className="min-w-0 space-y-1">
                           <div className="flex items-center gap-2">
-                            <span className="truncate text-sm font-medium">
-                              {entry.name}
-                            </span>
+                            <span className="truncate text-sm font-medium">{entry.name}</span>
                             <span className="shrink-0 text-xs text-muted-foreground">
                               v{entry.version}
                             </span>
@@ -603,7 +575,9 @@ export function ManagePluginsDialog({
                                 target="_blank"
                                 rel="noreferrer"
                                 className="shrink-0 text-muted-foreground hover:text-foreground"
-                                aria-label={`Open ${entry.name} homepage`}
+                                aria-label={t("managePlugins.openHomepageAria", {
+                                  name: entry.name,
+                                })}
                                 onClick={(event) => {
                                   event.preventDefault();
                                   if (entry.homepage) {
@@ -616,34 +590,38 @@ export function ManagePluginsDialog({
                             ) : null}
                           </div>
                           {entry.description ? (
-                            <p className="text-xs text-muted-foreground">
-                              {entry.description}
-                            </p>
+                            <p className="text-xs text-muted-foreground">{entry.description}</p>
                           ) : null}
                           <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                            {entry.author ? <span>by {entry.author}</span> : null}
+                            {entry.author ? (
+                              <span>{t("managePlugins.byAuthor", { author: entry.author })}</span>
+                            ) : null}
                             {(entry.categories ?? []).map((category) => (
-                              <span
-                                key={category}
-                                className="rounded-full border px-1.5 py-0.5"
-                              >
+                              <span key={category} className="rounded-full border px-1.5 py-0.5">
                                 {category}
                               </span>
                             ))}
                             {updateAvailable ? (
                               <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-amber-600 dark:text-amber-400">
-                                update available
+                                {t("managePlugins.updateAvailable")}
                               </span>
                             ) : null}
                             {!compatible ? (
                               <span className="text-destructive">
-                                requires GeoLibre {entry.minGeoLibreVersion}+
+                                {t("managePlugins.requiresVersion", {
+                                  version: entry.minGeoLibreVersion,
+                                })}
                               </span>
                             ) : null}
                           </div>
                           {actionError?.id === entry.id ? (
+                            <p className="text-[11px] text-destructive">{actionError.message}</p>
+                          ) : null}
+                          {installed && loadIssue ? (
                             <p className="text-[11px] text-destructive">
-                              {actionError.message}
+                              {t("managePlugins.failedToLoad", {
+                                message: loadIssue,
+                              })}
                             </p>
                           ) : null}
                         </div>
@@ -654,29 +632,31 @@ export function ManagePluginsDialog({
                               size="sm"
                               variant="outline"
                               disabled={!compatible}
-                              aria-label={`Install ${entry.name}`}
+                              aria-label={t("managePlugins.installAria", { name: entry.name })}
                               onClick={() => installUrl(entry.manifestUrl)}
                             >
                               <Download className="h-3.5 w-3.5" />
-                              Install
+                              {t("managePlugins.install")}
                             </Button>
                           ) : confirmRemoveId === entry.id ? (
                             <>
                               <span className="text-xs text-muted-foreground">
-                                Remove?
+                                {t("managePlugins.removeConfirm")}
                               </span>
                               <Button
                                 type="button"
                                 size="sm"
                                 variant="outline"
                                 className="text-destructive"
-                                aria-label={`Confirm uninstall ${entry.name}`}
+                                aria-label={t("managePlugins.confirmUninstallAria", {
+                                  name: entry.name,
+                                })}
                                 onClick={() => {
                                   uninstallUrl(entry.manifestUrl);
                                   setConfirmRemoveId(null);
                                 }}
                               >
-                                Uninstall
+                                {t("managePlugins.uninstall")}
                               </Button>
                               <Button
                                 type="button"
@@ -684,7 +664,7 @@ export function ManagePluginsDialog({
                                 variant="ghost"
                                 onClick={() => setConfirmRemoveId(null)}
                               >
-                                Cancel
+                                {t("common.cancel")}
                               </Button>
                             </>
                           ) : (
@@ -695,7 +675,7 @@ export function ManagePluginsDialog({
                                   size="sm"
                                   variant="outline"
                                   disabled={busyId === entry.id}
-                                  aria-label={`Update ${entry.name}`}
+                                  aria-label={t("managePlugins.updateAria", { name: entry.name })}
                                   onClick={() => void handleUpgrade(entry)}
                                 >
                                   {busyId === entry.id ? (
@@ -703,18 +683,23 @@ export function ManagePluginsDialog({
                                   ) : (
                                     <ArrowUpCircle className="h-3.5 w-3.5" />
                                   )}
-                                  Update
+                                  {t("managePlugins.update")}
                                 </Button>
                               ) : null}
-                              {loadPending ? (
+                              {loadIssue ? (
+                                <span className="flex items-center gap-1 text-xs text-destructive">
+                                  <AlertTriangle className="h-3.5 w-3.5" />
+                                  {t("managePlugins.failed")}
+                                </span>
+                              ) : loadPending ? (
                                 <span className="flex items-center gap-1 text-xs text-muted-foreground">
                                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  Loading…
+                                  {t("managePlugins.loading")}
                                 </span>
                               ) : (
                                 <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
                                   <Check className="h-3.5 w-3.5" />
-                                  Installed
+                                  {t("managePlugins.installed")}
                                 </span>
                               )}
                               <Button
@@ -723,7 +708,7 @@ export function ManagePluginsDialog({
                                 variant="ghost"
                                 className="h-8 w-8"
                                 disabled={busyId === entry.id}
-                                aria-label={`Uninstall ${entry.name}`}
+                                aria-label={t("managePlugins.uninstallAria", { name: entry.name })}
                                 onClick={() => {
                                   setActionError(null);
                                   setConfirmRemoveId(entry.id);
@@ -743,7 +728,7 @@ export function ManagePluginsDialog({
         </div>
         <div className="flex justify-end border-t px-6 py-4">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Close
+            {t("common.close")}
           </Button>
         </div>
       </DialogContent>
@@ -792,18 +777,16 @@ function SettingsTab({
   onAddManifestUrl,
   onRemoveManifestUrl,
 }: SettingsTabProps) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-5">
       <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-        GeoLibre always scans its app data plugins directory. Install a packaged
-        plugin (.zip) from a file, or add additional local directories
-        (desktop-only). Manifest URLs (including marketplace installs) are loaded
-        over the network; changes here apply immediately.
+        {t("managePlugins.settingsIntro")}
       </div>
 
       <div className="space-y-3">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Install from file
+          {t("managePlugins.installFromFile")}
         </h4>
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -819,34 +802,25 @@ function SettingsTab({
             ) : (
               <Upload className="h-3.5 w-3.5" />
             )}
-            Choose .zip…
+            {t("managePlugins.chooseZip")}
           </Button>
           <p className="text-xs text-muted-foreground">
             {isTauri()
-              ? "Copy a packaged plugin archive into GeoLibre's plugins directory."
-              : "Load a packaged plugin archive; it is stored in your browser and reloads on your next visit."}
+              ? t("managePlugins.installFromFileHintDesktop")
+              : t("managePlugins.installFromFileHintWeb")}
           </p>
         </div>
-        {installError ? (
-          <p className="text-xs text-destructive">{installError}</p>
-        ) : null}
+        {installError ? <p className="text-xs text-destructive">{installError}</p> : null}
         {installNotice ? (
-          <p className="text-xs text-emerald-600 dark:text-emerald-400">
-            {installNotice}
-          </p>
+          <p className="text-xs text-emerald-600 dark:text-emerald-400">{installNotice}</p>
         ) : null}
         {installedFromFile.length > 0 ? (
           <div className="space-y-2">
             {installedFromFile.map((plugin) => (
-              <div
-                key={plugin.id}
-                className="flex items-center gap-2 rounded-md border p-2"
-              >
+              <div key={plugin.id} className="flex items-center gap-2 rounded-md border p-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-xs font-medium">
-                      {plugin.name}
-                    </span>
+                    <span className="truncate text-xs font-medium">{plugin.name}</span>
                     <span className="shrink-0 text-[11px] text-muted-foreground">
                       v{plugin.version}
                     </span>
@@ -860,7 +834,7 @@ function SettingsTab({
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8 shrink-0"
-                  aria-label={`Uninstall ${plugin.name}`}
+                  aria-label={t("managePlugins.uninstallAria", { name: plugin.name })}
                   onClick={() => onUninstallFromFile(plugin.id)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -873,11 +847,11 @@ function SettingsTab({
 
       <div className="space-y-3">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Local directories
+          {t("managePlugins.localDirectories")}
         </h4>
         <div className="flex items-center gap-2">
           <Input
-            aria-label="Plugin directory"
+            aria-label={t("managePlugins.directoryAria")}
             placeholder="/path/to/geolibre-plugin"
             value={newDirectory}
             onChange={(event) => onNewDirectoryChange(event.target.value)}
@@ -890,7 +864,7 @@ function SettingsTab({
             size="icon"
             variant="ghost"
             className="h-8 w-8 shrink-0"
-            aria-label="Browse plugin directory"
+            aria-label={t("managePlugins.browseDirectoryAria")}
             onClick={onBrowseDirectory}
           >
             <FolderOpen className="h-3.5 w-3.5" />
@@ -903,29 +877,24 @@ function SettingsTab({
             onClick={onAddDirectory}
           >
             <Plus className="h-3.5 w-3.5" />
-            Add
+            {t("common.add")}
           </Button>
         </div>
         {directories.length === 0 ? (
           <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            No additional plugin directories configured.
+            {t("managePlugins.noDirectories")}
           </div>
         ) : (
           <div className="space-y-2">
             {directories.map((directory) => (
-              <div
-                key={directory}
-                className="flex items-center gap-2 rounded-md border p-2"
-              >
-                <span className="min-w-0 flex-1 truncate text-xs">
-                  {directory}
-                </span>
+              <div key={directory} className="flex items-center gap-2 rounded-md border p-2">
+                <span className="min-w-0 flex-1 truncate text-xs">{directory}</span>
                 <Button
                   type="button"
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8 shrink-0"
-                  aria-label={`Remove ${directory}`}
+                  aria-label={t("managePlugins.removeAria", { name: directory })}
                   onClick={() => onRemoveDirectory(directory)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -938,11 +907,11 @@ function SettingsTab({
 
       <div className="space-y-3">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Manifest URLs
+          {t("managePlugins.manifestUrls")}
         </h4>
         <div className="flex items-center gap-2">
           <Input
-            aria-label="Plugin manifest URL"
+            aria-label={t("managePlugins.manifestUrlAria")}
             placeholder="https://example.com/plugin/plugin.json"
             value={newManifestUrl}
             onChange={(event) => onNewManifestUrlChange(event.target.value)}
@@ -958,28 +927,25 @@ function SettingsTab({
             onClick={onAddManifestUrl}
           >
             <Plus className="h-3.5 w-3.5" />
-            Add
+            {t("common.add")}
           </Button>
         </div>
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
         {manifestUrls.length === 0 ? (
           <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            No plugin manifest URLs configured.
+            {t("managePlugins.noManifestUrls")}
           </div>
         ) : (
           <div className="space-y-2">
             {manifestUrls.map((url) => (
-              <div
-                key={url}
-                className="flex items-center gap-2 rounded-md border p-2"
-              >
+              <div key={url} className="flex items-center gap-2 rounded-md border p-2">
                 <span className="min-w-0 flex-1 truncate text-xs">{url}</span>
                 <Button
                   type="button"
                   size="icon"
                   variant="ghost"
                   className="h-8 w-8 shrink-0"
-                  aria-label={`Remove ${url}`}
+                  aria-label={t("managePlugins.removeAria", { name: url })}
                   onClick={() => onRemoveManifestUrl(url)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />

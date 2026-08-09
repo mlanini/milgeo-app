@@ -1,8 +1,4 @@
-import {
-  collapseRightPanel,
-  getRightPanel,
-  openRightPanel,
-} from "@geolibre/plugins";
+import { collapseRightPanel, getRightPanel, openRightPanel } from "@geolibre/plugins";
 import { cn } from "@geolibre/ui";
 import { PanelRight } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -19,6 +15,8 @@ interface SharedSidebarProps {
   side: SharedSide;
   /** Id of the active plugin panel docked with `replace-layers`/`replace-style`. */
   pluginId: string;
+  /** Other enabled panels merged into this same shared rail. */
+  additionalPanelIds?: string[];
   /** The active panel's shared content host (see {@link PluginRightPanel}). */
   pluginContentEl: HTMLElement;
   /** Shared plugin-panel width in px, owned by the shell. */
@@ -38,6 +36,14 @@ interface SharedSidebarProps {
    * state when this clears, matching the standalone panel's behavior.
    */
   forceBuiltinCollapsed: boolean;
+  /**
+   * Start with the built-in panel expanded (and the plugin panel a collapsed
+   * rail entry) instead of the default "plugin is the active workspace" layout.
+   * Used for the Browser panel, which docks here on by default but should not
+   * bury the Layers panel — it starts as a collapsed entry beside expanded
+   * Layers. Only sets the initial state; the user's later toggles win.
+   */
+  initialBuiltinExpanded?: boolean;
   /** Render the built-in panel with controlled collapse. */
   renderBuiltin: (args: {
     collapsed: boolean;
@@ -74,6 +80,7 @@ interface RailEntry {
 export function SharedSidebar({
   side,
   pluginId,
+  additionalPanelIds = [],
   pluginContentEl,
   pluginWidth,
   onPluginWidthChange,
@@ -81,6 +88,7 @@ export function SharedSidebar({
   builtinTitle,
   builtinIcon,
   forceBuiltinCollapsed,
+  initialBuiltinExpanded = false,
   renderBuiltin,
 }: SharedSidebarProps) {
   const { t } = useTranslation();
@@ -88,24 +96,22 @@ export function SharedSidebar({
   // The built-in panel is collapsed by default while the plugin is active; the
   // user opts it in. This resets when the sidebar unmounts (the plugin closes),
   // which is the desired "collapsed by default" behavior on reopen.
-  const [builtinOptedIn, setBuiltinOptedIn] = useState(false);
+  const [builtinOptedIn, setBuiltinOptedIn] = useState(initialBuiltinExpanded);
 
-  const pluginExpanded = activeId === pluginId && !collapsed;
+  const panelIds = [pluginId, ...additionalPanelIds.filter((id) => id !== pluginId)];
+  const pluginExpanded = panelIds.includes(activeId ?? "") && !collapsed;
   // The plugin displaces the built-in panel: one shared surface, one expanded
   // panel at a time. `forceBuiltinCollapsed` gates this too (it only gates, never
   // clears the opt-in, so the panel restores when the trigger lifts).
   const builtinExpanded =
-    builtinVisible &&
-    !pluginExpanded &&
-    builtinOptedIn &&
-    !forceBuiltinCollapsed;
+    builtinVisible && !pluginExpanded && builtinOptedIn && !forceBuiltinCollapsed;
 
   // Switching back to the plugin forgets the built-in opt-in, so a later collapse
   // of the plugin lands on the shared rail (both collapsed) rather than
   // surprising the user by auto-expanding the built-in panel.
-  const expandPlugin = () => {
+  const expandPlugin = (id: string) => {
     setBuiltinOptedIn(false);
-    openRightPanel(pluginId);
+    openRightPanel(id);
   };
   const collapsePlugin = () => collapseRightPanel(pluginId);
   const expandBuiltin = () => {
@@ -115,23 +121,23 @@ export function SharedSidebar({
   };
   const collapseBuiltin = () => setBuiltinOptedIn(false);
 
-  const panel = getRightPanel(pluginId);
-  const pluginIcon =
-    panel?.icon && isImageSource(panel.icon) ? (
-      <img src={panel.icon} alt="" className="h-4 w-4 object-contain" />
-    ) : (
-      <PanelRight className="h-4 w-4" />
-    );
-
-  const entries: RailEntry[] = [
-    {
-      id: pluginId,
-      title: panel?.title ?? pluginId,
-      icon: pluginIcon,
-      active: pluginExpanded,
-      onToggle: pluginExpanded ? collapsePlugin : expandPlugin,
-    },
-  ];
+  const entries: RailEntry[] = panelIds.map((id) => {
+    const panel = getRightPanel(id);
+    const icon =
+      panel?.icon && isImageSource(panel.icon) ? (
+        <img src={panel.icon} alt="" className="h-4 w-4 object-contain" />
+      ) : (
+        <PanelRight className="h-4 w-4" />
+      );
+    const expanded = activeId === id && !collapsed;
+    return {
+      id,
+      title: panel?.title ?? id,
+      icon,
+      active: expanded,
+      onToggle: expanded ? collapsePlugin : () => expandPlugin(id),
+    };
+  });
   if (builtinVisible) {
     entries.push({
       // Namespaced so the built-in entry's React key cannot collide with a plugin
@@ -173,7 +179,7 @@ export function SharedSidebar({
       aria-label={t("sharedRail.label")}
       className={cn(
         "flex w-full shrink-0 items-center gap-1 border-t bg-card px-2 py-1 md:h-auto md:w-11 md:flex-col md:border-t-0 md:px-0 md:py-2",
-        side === "layers" ? "md:border-r" : "md:border-l",
+        side === "layers" ? "md:border-e" : "md:border-s",
       )}
     >
       {entries.map((entry) => (

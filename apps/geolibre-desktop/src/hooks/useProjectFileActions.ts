@@ -1,6 +1,9 @@
 import {
   DEFAULT_PROJECT_NAME,
+  detachProjectCopy,
   projectFromStore,
+  redactProjectCredentials,
+  excludeHiddenFieldsFromProject,
   serializeProject,
   useAppStore,
   type GeoLibreLayer,
@@ -16,14 +19,12 @@ import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createAppAPI, getPluginManager } from "./usePlugins";
 import { pluginManifestUrlsForIds } from "../lib/external-plugins";
-import { useDesktopSettingsStore } from "./useDesktopSettings";
 import {
   browserSaveFallsBackToDownload,
   isAbsoluteLocalPath,
   isHttpUrl,
   isTauri,
   loadDroppedRasterPaths,
-  loadDroppedVectorPaths,
   openArcgisProjectFile,
   openProjectFile,
   openQgisProjectFile,
@@ -31,21 +32,28 @@ import {
   RecentProjectGoneError,
   saveProjectFile,
   saveProjectFileToPath,
+  saveTextFileWithFallback,
 } from "../lib/tauri-io";
+import { buildProjectHtml } from "../lib/html-export";
+import { ensureHtmlFileName, ensureProjectFileName } from "../lib/file-names";
 import { mergeStringLists } from "../lib/string-lists";
+import { fetchProjectFromUrl } from "../lib/project-url";
+import { getShareFetch } from "../lib/share-fetch";
+import { resolveShareBaseUrl } from "../lib/share-geolibre";
+import { shareAuthorizedFetch } from "../lib/share-gallery";
 import { normalizeProjectUrl } from "../lib/urls";
+import { recordExplicitProjectSave } from "../lib/project-history-session";
 import { resolveProjectXyzLayers } from "../lib/xyz-url";
 import {
   importQgisProject,
   materializeQgisRemoteLayers,
   type QgisProjectImportWarning,
 } from "../lib/qgis-project-import";
-import { mapQgisMilxLayers } from "../lib/qgis-milx-layer-mapping";
 import { importArcgisProject, type ArcgisProjectImportWarning } from "../lib/arcgis-project-import";
 import type { MapControllerRef } from "../components/layout/toolbar/constants";
 
-/** A pending "strip env vars before saving?" prompt. */
-export interface EnvStripPrompt {
+/** A pending "strip credentials before saving?" prompt. */
+export interface CredentialStripPrompt {
   count: number;
   resolve: (choice: "strip" | "keep" | "cancel") => void;
 }
@@ -70,27 +78,21 @@ export interface EmbedVectorDataPrompt {
 }
 
 /**
- * A pending "name this project file" prompt, shown when Save As (or a first
- * Save) runs in a browser that can only download under a fixed name.
+ * A pending "name this file" prompt, shown when a save runs in a browser that
+ * can only download under a fixed name. Used by Save As (or a first Save) and by
+ * Export as Interactive HTML; the dialog copy is carried on the prompt so the
+ * same component serves both.
  */
 export interface SaveNamePrompt {
   resolve: (name: string | null) => void;
-}
-
-/**
- * Ensure a user-entered project file name carries a recognized extension,
- * defaulting to `.geolibre.json` when none is present so the downloaded file
- * opens cleanly again later. Falls back to the default project name when blank.
- *
- * @param name - The raw file name the user typed.
- * @returns A sanitized file name ending in a project extension.
- */
-function ensureProjectFileName(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) return `${DEFAULT_PROJECT_NAME}.geolibre.json`;
-  return /\.(geolibre\.json|geolibre|json)$/i.test(trimmed)
-    ? trimmed
-    : `${trimmed}.geolibre.json`;
+  /** Dialog title. */
+  title: string;
+  /** Dialog description, explaining the browser-download behaviour. */
+  description: string;
+  /** Label for the file-name input. */
+  label: string;
+  /** Placeholder for the file-name input. */
+  placeholder: string;
 }
 
 /**
@@ -193,59 +195,6 @@ async function addImportedProjectRaster(
   }
 }
 
-async function hydrateImportedQgisLocalVectors(
-  layers: GeoLibreLayer[],
-  importProjectPath: string,
-): Promise<QgisProjectImportWarning[]> {
-  const warnings: QgisProjectImportWarning[] = [];
-  const candidates = layers.filter(
-    (layer) =>
-      layer.type === "geojson" &&
-      !layer.geojson &&
-      typeof layer.sourcePath === "string" &&
-      layer.sourcePath.length > 0 &&
-      !isHttpUrl(layer.sourcePath),
-  );
-  if (candidates.length === 0) return warnings;
-
-  const byPath = new Map<string, GeoLibreLayer[]>();
-  for (const layer of candidates) {
-    const path = layer.sourcePath as string;
-    const group = byPath.get(path);
-    if (group) group.push(layer);
-    else byPath.set(path, [layer]);
-  }
-
-  await Promise.all(
-    Array.from(byPath, async ([path, sourceLayers]) => {
-      try {
-        const loaded = await loadDroppedVectorPaths([path], { importProjectPath });
-        if (loaded.length === 0) {
-          sourceLayers.forEach((layer) => {
-            warnings.push({ layerName: layer.name, reason: "format" });
-          });
-          return;
-        }
-        for (const layer of sourceLayers) {
-          let match = loaded[0];
-          if (loaded.length > 1) {
-            const named = loaded.find((entry) => entry.name === layer.name);
-            if (named) match = named;
-          }
-          layer.geojson = match.data;
-        }
-      } catch (error) {
-        console.error(`Failed to load imported QGIS vector "${path}"`, error);
-        sourceLayers.forEach((layer) => {
-          warnings.push({ layerName: layer.name, reason: "format" });
-        });
-      }
-    }),
-  );
-
-  return warnings;
-}
-
 /**
  * Bundles every project file action (open from file/URL/recent, save, save as)
  * along with the related dialog state (Open-from-URL, env-var strip prompt, and
@@ -273,17 +222,19 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   const [projectUrl, setProjectUrl] = useState("");
   const [projectUrlError, setProjectUrlError] = useState<string | null>(null);
   const [projectUrlLoading, setProjectUrlLoading] = useState(false);
-  const [envStripPrompt, setEnvStripPrompt] = useState<EnvStripPrompt | null>(
+  const [credentialStripPrompt, setCredentialStripPrompt] = useState<CredentialStripPrompt | null>(
     null,
   );
-  const [embedVectorDataPrompt, setEmbedVectorDataPrompt] =
-    useState<EmbedVectorDataPrompt | null>(null);
-  const [saveNamePrompt, setSaveNamePrompt] = useState<SaveNamePrompt | null>(
+  const [embedVectorDataPrompt, setEmbedVectorDataPrompt] = useState<EmbedVectorDataPrompt | null>(
     null,
   );
+  const [saveNamePrompt, setSaveNamePrompt] = useState<SaveNamePrompt | null>(null);
   const [saveNameInput, setSaveNameInput] = useState("");
   const projectUrlAbortRef = useRef<AbortController | null>(null);
   const recentAbortRef = useRef<AbortController | null>(null);
+  // Separate from projectUrlAbortRef so a gallery open and an Open-from-URL
+  // submit can't abort each other's in-flight fetch.
+  const shareUrlAbortRef = useRef<AbortController | null>(null);
   // Guards against overlapping saves: a second save started while a prompt
   // dialog is open would overwrite the pending prompt and strand the first
   // call's unresolved promise.
@@ -293,17 +244,13 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     const result = await openProjectFile();
     if (result) {
       try {
-        loadProject(
-          await resolveProjectXyzLayers(result.project),
-          result.path,
-          { rememberRecent: isTauri() },
-        );
+        loadProject(await resolveProjectXyzLayers(result.project), result.path, {
+          rememberRecent: isTauri(),
+        });
       } catch (error) {
         console.error("Failed to open project", error);
         setActionError(
-          error instanceof Error
-            ? error.message
-            : t("toolbar.error.couldNotOpenProject"),
+          error instanceof Error ? error.message : t("toolbar.error.couldNotOpenProject"),
         );
       }
     }
@@ -342,12 +289,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
             reason: "browser-local-raster",
           });
         }
-      } else {
-        imported.warnings.push(
-          ...(await hydrateImportedQgisLocalVectors(imported.project.layers, result.path)),
-        );
       }
-      imported.project.layers = mapQgisMilxLayers(imported.project.layers);
       const mapReady = importedProjectMapReady(
         mapControllerRef,
         useAppStore.getState().basemapStyleUrl !== imported.project.basemapStyleUrl,
@@ -529,14 +471,8 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     setProjectUrlError(null);
 
     try {
-      const result = await openRecentProjectFile(
-        normalizedUrl,
-        controller.signal,
-      );
-      const project = await resolveProjectXyzLayers(
-        result.project,
-        controller.signal,
-      );
+      const result = await openRecentProjectFile(normalizedUrl, controller.signal);
+      const project = await resolveProjectXyzLayers(result.project, controller.signal);
       if (controller.signal.aborted) return;
       loadProject(project, result.path);
       setProjectUrl("");
@@ -545,9 +481,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
       if (controller.signal.aborted) return;
       console.error("Failed to open project URL", error);
       setProjectUrlError(
-        error instanceof Error
-          ? error.message
-          : t("toolbar.error.couldNotOpenProjectUrl"),
+        error instanceof Error ? error.message : t("toolbar.error.couldNotOpenProjectUrl"),
       );
     } finally {
       if (projectUrlAbortRef.current === controller) {
@@ -557,7 +491,77 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     }
   };
 
-  const handleOpenRecent = async (path: string) => {
+  // Load a project directly from a known URL (e.g. a Project Gallery card's raw
+  // JSON URL), bypassing the URL-input dialog. Mirrors handleOpenFromUrl's
+  // fetch → resolve → loadProject flow but takes the URL as an argument and
+  // rethrows on failure so the caller (the gallery dialog) can show the error
+  // inline next to the card it came from.
+  //
+  // When `authToken` is set (the user has a share API token), the request to the
+  // share host carries it as a Bearer token so the owner's unlisted and private
+  // projects load too. The token is attached only for the share host (see
+  // shareAuthorizedFetch), never to third-party hosts a project might reference —
+  // so when no share host is configured, the plain fetch is used and the token is
+  // simply not sent anywhere. Token-authenticated opens are not remembered as
+  // recent (path = null), since reopening a private URL on restart would 403
+  // without the header.
+  const [saveTemplateDialogOpen, setSaveTemplateDialogOpen] = useState(false);
+
+  const openProjectFromShareUrl = async (
+    url: string,
+    options: { authToken?: string; asCopy?: boolean } = {},
+  ): Promise<void> => {
+    const normalizedUrl = normalizeProjectUrl(url);
+    if (!normalizedUrl) {
+      throw new Error(t("toolbar.error.invalidProjectUrl"));
+    }
+
+    shareUrlAbortRef.current?.abort();
+    const controller = new AbortController();
+    shareUrlAbortRef.current = controller;
+
+    try {
+      let project: Awaited<ReturnType<typeof resolveProjectXyzLayers>>;
+      // One decision drives both the fetch and whether the URL is remembered: a
+      // token is only actually sent when there is a share host to send it to, and
+      // an unauthenticated open of a public URL should still be remembered.
+      const shareBaseUrl = resolveShareBaseUrl();
+      const shareAuth =
+        options.authToken && shareBaseUrl
+          ? { token: options.authToken, baseUrl: shareBaseUrl }
+          : null;
+      if (shareAuth) {
+        const fetched = await fetchProjectFromUrl(normalizedUrl, {
+          signal: controller.signal,
+          fetchImpl: shareAuthorizedFetch(shareAuth.token, shareAuth.baseUrl, getShareFetch()),
+        });
+        project = await resolveProjectXyzLayers(fetched, controller.signal);
+      } else {
+        const result = await openRecentProjectFile(normalizedUrl, controller.signal);
+        project = await resolveProjectXyzLayers(result.project, controller.signal);
+      }
+
+      if (controller.signal.aborted) return;
+
+      if (options.asCopy) {
+        const detached = detachProjectCopy(project, { nameSuffix: "" });
+        loadProject(detached, null);
+        useAppStore.setState({ isDirty: true });
+      } else {
+        loadProject(project, shareAuth ? null : normalizedUrl);
+      }
+    } finally {
+      if (shareUrlAbortRef.current === controller) {
+        shareUrlAbortRef.current = null;
+      }
+    }
+  };
+
+  // Returns an error message to surface, or null on success/abort. It does not
+  // set the shared `actionError` itself, so each caller can route the failure to
+  // its own surface (the toolbar's modal vs. the Browser panel's inline banner)
+  // now that a single instance is shared across both.
+  const handleOpenRecent = async (path: string): Promise<string | null> => {
     // Cancel any previous in-flight open so rapid clicks cannot race and let a
     // stale fetch win by resolving last.
     recentAbortRef.current?.abort();
@@ -569,36 +573,25 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     try {
       result = await openRecentProjectFile(path, controller.signal);
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return null;
       // Only drop the entry when the project is permanently gone; preserve it
       // for transient failures (network timeout, 5xx, momentary IO error).
       if (error instanceof RecentProjectGoneError) {
         forgetRecentProject(path);
       }
       console.error("Failed to open recent project", error);
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : t("toolbar.error.couldNotOpenRecentProject"),
-      );
-      return;
+      return error instanceof Error ? error.message : t("toolbar.error.couldNotOpenRecentProject");
     }
 
     try {
-      const project = await resolveProjectXyzLayers(
-        result.project,
-        controller.signal,
-      );
-      if (controller.signal.aborted) return;
+      const project = await resolveProjectXyzLayers(result.project, controller.signal);
+      if (controller.signal.aborted) return null;
       loadProject(project, result.path);
+      return null;
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return null;
       console.error("Failed to load recent project", error);
-      setActionError(
-        error instanceof Error
-          ? error.message
-          : t("toolbar.error.couldNotLoadRecentProject"),
-      );
+      return error instanceof Error ? error.message : t("toolbar.error.couldNotLoadRecentProject");
     } finally {
       if (recentAbortRef.current === controller) {
         recentAbortRef.current = null;
@@ -609,16 +602,30 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   // Build the current project from live store + map state and serialize it.
   // Shared by Save/Save As and the Share action so they all capture identical
   // project content (including the current map view and plugin state).
-  const buildCurrentProject = (
-    nameOverride?: string,
-    layersOverride?: GeoLibreLayer[],
-  ) => {
+  const buildCurrentProject = (nameOverride?: string, layersOverride?: GeoLibreLayer[]) => {
     const state = useAppStore.getState();
     const defaultProjectName =
       nameOverride?.trim() || state.projectName.trim() || DEFAULT_PROJECT_NAME;
+    const pluginProjectState = getPluginManager().getProjectState();
+    // Record only the plugin URLs this project actually needs: the ones it
+    // already declared, plus the manifest URLs behind the plugins it uses. A
+    // plugin counts as used when it is active or has stored project state --
+    // `mapControlPositions` is written for every plugin that reports a position,
+    // so it says nothing about use.
+    //
+    // The author's remaining installed URLs are deliberately NOT merged in.
+    // Doing so stamped every share with the full list, so recipients were
+    // prompted to trust and execute third-party code the project never runs
+    // (the prompt is scary by design, and firing it on irrelevant URLs trains
+    // people to click through it), and the shared file disclosed exactly which
+    // plugins the author had installed.
+    const usedPluginIds = new Set([
+      ...pluginProjectState.activePluginIds,
+      ...Object.keys(pluginProjectState.settings ?? {}),
+    ]);
     const pluginManifestUrls = mergeStringLists(
       state.projectPlugins?.manifestUrls ?? [],
-      useDesktopSettingsStore.getState().desktopSettings.pluginManifestUrls,
+      pluginManifestUrlsForIds(usedPluginIds),
     );
     const project = projectFromStore({
       projectName: defaultProjectName,
@@ -627,20 +634,24 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
       basemapVisible: state.basemapVisible,
       basemapOpacity: state.basemapOpacity,
       layers: layersOverride ?? state.layers,
+      selectedLayerId: state.selectedLayerId,
       layerGroups: state.layerGroups,
       preferences: state.preferences,
       plugins: {
-        ...getPluginManager().getProjectState(),
+        ...pluginProjectState,
         manifestUrls: pluginManifestUrls,
       },
       legend: state.legend,
       storymap: state.storymap,
       models: state.models,
+      processingHistory: state.processingHistory,
       widgets: state.widgets,
       dashboardColumns: state.dashboardColumns,
       mapLayout: state.mapLayout,
       secondaryMapViews: state.secondaryMapViews,
       primaryMapLabel: state.primaryMapLabel,
+      styleLibrary: state.projectStyleLibrary,
+      comments: state.comments,
       metadata: state.metadata,
     });
     return {
@@ -653,17 +664,18 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     };
   };
 
-  // Ask whether to strip environment variables before writing the file. The
-  // promise resolves when the user picks an option in the dialog.
-  const askStripEnvVars = (count: number) =>
+  // Ask whether to strip credentials (environment variables, geocoder keys,
+  // layer tokens) before writing the file. The promise resolves when the user
+  // picks an option in the dialog.
+  const askStripCredentials = (count: number) =>
     new Promise<"strip" | "keep" | "cancel">((resolve) => {
-      setEnvStripPrompt({ count, resolve });
+      setCredentialStripPrompt({ count, resolve });
     });
 
-  const resolveEnvStripPrompt = (choice: "strip" | "keep" | "cancel") => {
+  const resolveCredentialStripPrompt = (choice: "strip" | "keep" | "cancel") => {
     // Resolve outside the state updater (updaters must be side-effect free).
-    envStripPrompt?.resolve(choice);
-    setEnvStripPrompt(null);
+    credentialStripPrompt?.resolve(choice);
+    setCredentialStripPrompt(null);
   };
 
   // Ask whether to embed local vector layers' data in the saved file. Resolves
@@ -673,9 +685,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
       setEmbedVectorDataPrompt({ count, bytes, desktop, resolve });
     });
 
-  const resolveEmbedVectorDataPrompt = (
-    choice: "embed" | "noembed" | "cancel",
-  ) => {
+  const resolveEmbedVectorDataPrompt = (choice: "embed" | "noembed" | "cancel") => {
     embedVectorDataPrompt?.resolve(choice);
     setEmbedVectorDataPrompt(null);
   };
@@ -696,13 +706,9 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     // layer it doesn't cover — e.g. one added while the save dialog was open —
     // so a late addition still gets its data instead of being dropped.
     const embeddable = new Map(prebuilt);
-    const uncovered = prebuilt
-      ? layers.filter((layer) => !prebuilt.has(layer.id))
-      : layers;
+    const uncovered = prebuilt ? layers.filter((layer) => !prebuilt.has(layer.id)) : layers;
     if (uncovered.length > 0) {
-      for (const [id, collection] of await materializeEmbeddableVectorLayers(
-        uncovered,
-      )) {
+      for (const [id, collection] of await materializeEmbeddableVectorLayers(uncovered)) {
         embeddable.set(id, collection);
       }
     }
@@ -744,14 +750,10 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   // reload from disk on reopen, so the prompt offers Embed or Save file
   // references. Returns the layers override to serialize, an empty result to use
   // the live layers as-is, or "cancel" to abort the save.
-  const resolveLayersForSave = async (): Promise<
-    { layers?: GeoLibreLayer[] } | "cancel"
-  > => {
+  const resolveLayersForSave = async (): Promise<{ layers?: GeoLibreLayer[] } | "cancel"> => {
     const state = useAppStore.getState();
     const embeddable = await materializeEmbeddableVectorLayers(state.layers);
-    const localFileLayers = isTauri()
-      ? state.layers.filter(isReloadableLocalFileLayer)
-      : [];
+    const localFileLayers = isTauri() ? state.layers.filter(isReloadableLocalFileLayer) : [];
     if (embeddable.size === 0 && localFileLayers.length === 0) return {};
 
     const count = embeddable.size + localFileLayers.length;
@@ -762,10 +764,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     if (choice === "embed") {
       // Reuse the map already materialized for the size estimate.
       return {
-        layers: await buildEmbeddedLayers(
-          useAppStore.getState().layers,
-          embeddable,
-        ),
+        layers: await buildEmbeddedLayers(useAppStore.getState().layers, embeddable),
       };
     }
 
@@ -809,13 +808,15 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     return buildCurrentProject(nameOverride, layers);
   };
 
-  // Ask the user to name the project file. Used only when saving falls back to
-  // a browser download (no File System Access picker), where the name is the
-  // only thing the user can control. Resolves with the name, or null if cancelled.
-  const askSaveName = (defaultName: string) =>
+  // Ask the user to name the file. Used only when saving falls back to a browser
+  // download (no File System Access picker), where the name is the only thing
+  // the user can control. The caller supplies the dialog copy so the same prompt
+  // serves both project saves and HTML exports. Resolves with the name, or null
+  // if cancelled.
+  const askSaveName = (defaultName: string, labels: Omit<SaveNamePrompt, "resolve">) =>
     new Promise<string | null>((resolve) => {
       setSaveNameInput(defaultName);
-      setSaveNamePrompt({ resolve });
+      setSaveNamePrompt({ resolve, ...labels });
     });
 
   const submitSaveNamePrompt = (event?: FormEvent<HTMLFormElement>) => {
@@ -831,45 +832,49 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     setSaveNameInput("");
   };
 
-  const runSaveProject = async (options?: {
-    saveAs?: boolean;
-  }): Promise<boolean> => {
+  const runSaveProject = async (options?: { saveAs?: boolean }): Promise<boolean> => {
     // Offer to embed local vector data (or, on desktop, save file references)
     // first, so the serialized content below reflects the user's choice.
     const layersForSave = await resolveLayersForSave();
     if (layersForSave === "cancel") return false;
-    const { project, defaultProjectName, content, projectPath } =
-      buildCurrentProject(undefined, layersForSave.layers);
-    // Env vars (possibly API keys) are serialized in plain text. If any are set,
-    // offer to strip them from the saved file before writing.
+    const { project, defaultProjectName, content, projectPath } = buildCurrentProject(
+      undefined,
+      layersForSave.layers,
+    );
+    // Credentials are serialized in plain text for a local project that needs
+    // them. Make keeping them an explicit choice and use the same central
+    // redaction pass as every external egress.
     let contentToSave = content;
-    const envVarCount = (project.preferences.environmentVariables ?? []).filter(
-      (variable) => variable.key.trim(),
-    ).length;
-    if (envVarCount > 0) {
-      const choice = await askStripEnvVars(envVarCount);
+    const projectToEgress = excludeHiddenFieldsFromProject(project);
+    const redacted = redactProjectCredentials(projectToEgress);
+    if (redacted.redactedPaths.length > 0) {
+      const choice = await askStripCredentials(redacted.redactedCount);
       if (choice === "cancel") return false;
       if (choice === "strip") {
-        contentToSave = serializeProject({
-          ...project,
-          preferences: { ...project.preferences, environmentVariables: [] },
-        });
+        contentToSave = serializeProject(redacted.project);
+      } else {
+        contentToSave = serializeProject(projectToEgress);
       }
+    } else {
+      contentToSave = serializeProject(projectToEgress);
     }
     // Projects opened from a URL have no writable path, so both Save and
     // Save As fall back to the save dialog for them.
-    const existingLocalPath =
-      projectPath && !isHttpUrl(projectPath) ? projectPath : null;
+    const existingLocalPath = projectPath && !isHttpUrl(projectPath) ? projectPath : null;
     // Browsers without the File System Access picker (Firefox, Safari) can only
     // download under a fixed name, so Save As (and a first Save) would otherwise
     // reuse a default name — exactly the bug users hit. Prompt for the name so
     // they can choose it; later in-place Saves reuse the chosen name silently.
     let saveName = `${defaultProjectName}.geolibre.json`;
     const promptForName =
-      browserSaveFallsBackToDownload() &&
-      (options?.saveAs === true || !existingLocalPath);
+      browserSaveFallsBackToDownload() && (options?.saveAs === true || !existingLocalPath);
     if (promptForName) {
-      const chosen = await askSaveName(saveName);
+      const chosen = await askSaveName(saveName, {
+        title: t("toolbar.item.saveProjectAsTitle"),
+        description: t("toolbar.item.saveProjectAsDesc"),
+        label: t("toolbar.item.saveProjectFileName"),
+        placeholder: t("toolbar.item.saveProjectFileNamePlaceholder"),
+      });
       if (chosen === null) return false;
       saveName = ensureProjectFileName(chosen);
     }
@@ -885,9 +890,7 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     } catch (error) {
       console.error("Failed to save project", error);
       setActionError(
-        error instanceof Error
-          ? error.message
-          : t("toolbar.error.couldNotSaveProject"),
+        error instanceof Error ? error.message : t("toolbar.error.couldNotSaveProject"),
       );
       return false;
     }
@@ -899,13 +902,12 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
       openedAt: new Date().toISOString(),
     });
     markSaved();
+    recordExplicitProjectSave();
     return true;
   };
 
   // Serialize saves so overlapping invocations cannot clobber a pending prompt.
-  const saveProject = async (options?: {
-    saveAs?: boolean;
-  }): Promise<boolean> => {
+  const saveProject = async (options?: { saveAs?: boolean }): Promise<boolean> => {
     if (isSavingRef.current) return false;
     isSavingRef.current = true;
     try {
@@ -918,6 +920,75 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
   const handleSave = () => saveProject();
   const handleSaveAs = () => saveProject({ saveAs: true });
 
+  // Export the current project as a standalone interactive HTML page (#821).
+  // Shares saveProject's guard so a double-click can't open two save dialogs.
+  const handleExportHtml = async (): Promise<boolean> => {
+    if (isSavingRef.current) return false;
+    isSavingRef.current = true;
+    try {
+      // Derive the default file name from the project name in the store first,
+      // without materializing embedded data, so the prompt can appear right away
+      // and a cancel discards no work. This snapshot is passed to
+      // buildEmbeddedProject as the name override below, so the file-name slug
+      // and the HTML title stay consistent even if the project is renamed while
+      // the name prompt is open.
+      const projectName = useAppStore.getState().projectName.trim() || DEFAULT_PROJECT_NAME;
+      const slug =
+        projectName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "geolibre-map";
+      // Browsers without the File System Access save picker (Firefox, Safari)
+      // would otherwise download immediately under the generated name, with no
+      // chance to rename the file (issue #991). Prompt for the name first;
+      // desktop and Chromium hosts get a native save dialog from
+      // saveTextFileWithFallback below instead.
+      let defaultName = `${slug}.html`;
+      if (browserSaveFallsBackToDownload()) {
+        const chosen = await askSaveName(defaultName, {
+          title: t("toolbar.item.exportHtmlAsTitle"),
+          description: t("toolbar.item.exportHtmlAsDesc"),
+          label: t("toolbar.item.exportHtmlFileName"),
+          placeholder: t("toolbar.item.exportHtmlFileNamePlaceholder"),
+        });
+        if (chosen === null) return false;
+        defaultName = ensureHtmlFileName(chosen, slug);
+      }
+      // Only now embed local vector data (self-contained, like Share): this can
+      // be costly on a project with many local layers, so it runs after the user
+      // has committed to the export rather than before the prompt. Reuse the
+      // name snapshot so the title matches the slug computed above. Credentials
+      // serve no purpose in a static viewer and are removed inside
+      // buildProjectHtml, which runs the central redaction pass.
+      const { project, defaultProjectName } = await buildEmbeddedProject(projectName);
+      const html = buildProjectHtml({
+        project,
+        title: defaultProjectName,
+      });
+      // Returns null when the user cancels the save dialog; report that as a
+      // no-op rather than a successful export.
+      const savedPath = await saveTextFileWithFallback(html, {
+        defaultName,
+        filters: [{ name: t("toolbar.item.htmlFile"), extensions: ["html"] }],
+        browserTypes: [
+          {
+            description: t("toolbar.item.htmlFile"),
+            accept: { "text/html": [".html"] },
+          },
+        ],
+        mimeType: "text/html",
+      });
+      return savedPath !== null;
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : t("toolbar.error.couldNotExportHtml"),
+      );
+      return false;
+    } finally {
+      isSavingRef.current = false;
+    }
+  };
+
   // Open-change handler for the Open-from-URL dialog; aborts an in-flight fetch
   // and resets the form when the dialog closes.
   const handleProjectUrlDialogOpenChange = (open: boolean) => {
@@ -929,6 +1000,13 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
       setProjectUrlError(null);
       setProjectUrlLoading(false);
     }
+  };
+
+  const handleDuplicate = () => {
+    const { project } = buildCurrentProject();
+    const duplicated = detachProjectCopy(project, { nameSuffix: "(copy)" });
+    loadProject(duplicated, null);
+    useAppStore.setState({ isDirty: true });
   };
 
   return {
@@ -946,8 +1024,12 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     projectUrlError,
     setProjectUrlError,
     projectUrlLoading,
-    envStripPrompt,
-    resolveEnvStripPrompt,
+    saveTemplateDialogOpen,
+    setSaveTemplateDialogOpen,
+    handleDuplicate,
+    handleSaveAsTemplate: () => setSaveTemplateDialogOpen(true),
+    credentialStripPrompt,
+    resolveCredentialStripPrompt,
     embedVectorDataPrompt,
     resolveEmbedVectorDataPrompt,
     saveNamePrompt,
@@ -959,10 +1041,19 @@ export function useProjectFileActions(mapControllerRef: MapControllerRef) {
     handleImportQgisProject,
     handleImportArcgisProject,
     handleOpenFromUrl,
+    openProjectFromShareUrl,
     handleOpenRecent,
     buildCurrentProject,
     buildEmbeddedProject,
     handleSave,
     handleSaveAs,
+    handleExportHtml,
   };
 }
+
+/**
+ * The handlers and state returned by {@link useProjectFileActions}. Exported so
+ * a single hoisted instance can be shared as a prop across the toolbar and the
+ * Browser panel (two instances don't coordinate their in-flight open aborts).
+ */
+export type ProjectFileActions = ReturnType<typeof useProjectFileActions>;

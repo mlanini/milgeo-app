@@ -1,11 +1,14 @@
+import { isIpadDesktopUserAgent } from "@geolibre/core";
+
 /**
  * Whether the app is running on a mobile operating system (Android or iOS).
  *
  * This is distinct from a narrow *viewport* (see `useIsMobileViewport`): a
  * desktop window resized small is narrow but not mobile. Mobile platforms cannot
- * run the bundled Python sidecar or spawn local helper processes (Whitebox,
- * rasterio, format conversion, AI segmentation, the Martin tile server), so the
- * UI uses this to hide those tools instead of presenting them and failing.
+ * run the bundled Python sidecar or spawn local helper processes (rasterio,
+ * format conversion, AI segmentation, the Martin tile server), so the UI uses
+ * this to hide those tools instead of presenting them and failing. WebAssembly-
+ * backed tools (the Whitebox toolbox) run in the browser and stay available.
  *
  * Detection is user-agent based so it needs no extra Tauri plugin or Rust/
  * capability wiring (the Tauri Android webview reports an "Android" UA). iPadOS
@@ -22,15 +25,12 @@
 const MOBILE_UA_PATTERN = /Android|iPhone|iPad|iPod/i;
 
 export function isMobile(
-  userAgent: string = typeof navigator !== "undefined"
-    ? navigator.userAgent
-    : "",
-  maxTouchPoints: number = typeof navigator !== "undefined"
-    ? navigator.maxTouchPoints
-    : 0,
+  userAgent: string = typeof navigator !== "undefined" ? navigator.userAgent : "",
+  maxTouchPoints: number = typeof navigator !== "undefined" ? navigator.maxTouchPoints : 0,
 ): boolean {
   if (MOBILE_UA_PATTERN.test(userAgent)) return true;
-  // iPadOS 13+ requests desktop sites by default and spoofs a macOS UA; a real
-  // Mac reports maxTouchPoints 0/1, an iPad reports >1.
-  return /Macintosh/.test(userAgent) && maxTouchPoints > 1;
+  // iPadOS 13+ requests desktop sites by default and spoofs a macOS UA. Shared
+  // with @geolibre/plugins' Earth Engine availability check so a future
+  // correction to the heuristic lands in both.
+  return isIpadDesktopUserAgent(userAgent, maxTouchPoints);
 }

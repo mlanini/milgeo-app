@@ -148,17 +148,11 @@ const closeSwipeSelectMenu = () => {
     });
 };
 
-const syncSwipeSelectProxy = (
-  select: HTMLSelectElement,
-  button: HTMLButtonElement,
-) => {
+const syncSwipeSelectProxy = (select: HTMLSelectElement, button: HTMLButtonElement) => {
   button.textContent = select.options[select.selectedIndex]?.text ?? "";
 };
 
-const openSwipeSelectMenu = (
-  select: HTMLSelectElement,
-  button: HTMLButtonElement,
-) => {
+const openSwipeSelectMenu = (select: HTMLSelectElement, button: HTMLButtonElement) => {
   closeSwipeSelectMenu();
   syncSwipeSelectProxy(select, button);
 
@@ -190,9 +184,7 @@ const openSwipeSelectMenu = (
     menu.appendChild(item);
   });
 
-  const items = Array.from(
-    menu.querySelectorAll<HTMLButtonElement>("button"),
-  );
+  const items = Array.from(menu.querySelectorAll<HTMLButtonElement>("button"));
   menu.addEventListener("keydown", (event) => {
     const current = items.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === "ArrowDown") {
@@ -251,20 +243,20 @@ const enhanceSwipeSelect = (select: HTMLSelectElement) => {
 
 const enhanceSwipeSelects = () => {
   document
-    .querySelectorAll<HTMLSelectElement>(
-      ".swipe-control-panel .swipe-control-select",
-    )
+    .querySelectorAll<HTMLSelectElement>(".swipe-control-panel .swipe-control-select")
     .forEach(enhanceSwipeSelect);
 };
 
 let swipeEnhanceFrame: number | null = null;
 
+// English fallback for the grouped base layer, used until the controller
+// publishes the translated label through the layer-label bridge.
+const SWIPE_BASEMAP_LABEL = "Background";
+
 const getSwipeLayerLabel = (layerId: string): string => {
-  if (layerId === "__basemap__") return "Basemap";
-  return (
-    (window as GeoLibreLayerLabelWindow).__GEOLIBRE_LAYER_LABELS__?.[layerId] ??
-    layerId
-  );
+  const labels = (window as GeoLibreLayerLabelWindow).__GEOLIBRE_LAYER_LABELS__;
+  if (layerId === "__basemap__") return labels?.[layerId] ?? SWIPE_BASEMAP_LABEL;
+  return labels?.[layerId] ?? layerId;
 };
 
 const syncSwipeLayerLabels = () => {
@@ -282,8 +274,7 @@ const syncSwipeLayerLabels = () => {
       if (!label) return;
 
       const displayName = getSwipeLayerLabel(layerId);
-      const title =
-        layerId === "__basemap__" ? "Basemap" : `${displayName} (${layerId})`;
+      const title = layerId === "__basemap__" ? displayName : `${displayName} (${layerId})`;
       if (label.textContent !== displayName) {
         label.textContent = displayName;
       }
@@ -309,10 +300,7 @@ const scheduleEnhanceSwipePanel = () => {
 if (typeof document !== "undefined") {
   document.addEventListener("click", closeSwipeSelectMenu);
   window.addEventListener("resize", closeSwipeSelectMenu);
-  window.addEventListener(
-    "geolibre-layer-labels-change",
-    scheduleEnhanceSwipePanel,
-  );
+  window.addEventListener("geolibre-layer-labels-change", scheduleEnhanceSwipePanel);
   window.addEventListener(
     "scroll",
     (event) => {

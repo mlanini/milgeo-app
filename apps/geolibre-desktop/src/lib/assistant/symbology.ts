@@ -1,6 +1,5 @@
 import {
-  createEqualIntervalBreaks,
-  createQuantileBreaks,
+  createGraduatedClassBreaks,
   interpolateRampColors,
   type GeoLibreLayer,
   type LayerStyle,
@@ -41,14 +40,10 @@ function graduatedStops(
   scheme: "equal-interval" | "quantile",
   colorRamp: string,
 ): VectorStyleStop[] {
-  const breaks =
-    scheme === "quantile"
-      ? createQuantileBreaks(values, classCount)
-      : createEqualIntervalBreaks(
-          Math.min(...values),
-          Math.max(...values),
-          classCount,
-        );
+  // Class lower bounds, matching the Style panel: the top class is open-ended
+  // above rather than ending at the maximum (see createGraduatedClassBreaks).
+  // Duplicate breaks collapse, so size the ramp off the breaks, not the count.
+  const breaks = createGraduatedClassBreaks(values, classCount, scheme);
   const colors = interpolateRampColors(colorRamp, breaks.length);
   return breaks.map((value, index) => ({
     value,
@@ -57,10 +52,7 @@ function graduatedStops(
 }
 
 /** Build categorized color stops, one per distinct value (capped). */
-function categorizedStops(
-  values: unknown[],
-  colorRamp: string,
-): VectorStyleStop[] {
+function categorizedStops(values: unknown[], colorRamp: string): VectorStyleStop[] {
   // Cap categories so a high-cardinality field can't produce a giant legend.
   const MAX_CATEGORIES = 24;
   const distinct: string[] = [];
@@ -98,16 +90,12 @@ export function buildSymbologyStyle(
   const colorRamp = request.colorRamp?.trim() || "viridis";
   const values = propertyValues(layer, request.property);
   if (values.length === 0) {
-    throw new Error(
-      `Property "${request.property}" has no values on layer "${layer.name}".`,
-    );
+    throw new Error(`Property "${request.property}" has no values on layer "${layer.name}".`);
   }
 
   if (request.mode === "graduated") {
     const numbers = values
-      .map((value) =>
-        typeof value === "number" ? value : Number.parseFloat(String(value)),
-      )
+      .map((value) => (typeof value === "number" ? value : Number.parseFloat(String(value))))
       .filter((value) => Number.isFinite(value));
     if (numbers.length < 2) {
       throw new Error(
@@ -116,10 +104,7 @@ export function buildSymbologyStyle(
     }
     // Cap classes by the number of values too, so we never ask for more breaks
     // than the data supports (which would yield duplicate/empty color stops).
-    const classCount = Math.max(
-      2,
-      Math.min(request.classCount ?? 5, 12, numbers.length),
-    );
+    const classCount = Math.max(2, Math.min(request.classCount ?? 5, 12, numbers.length));
     const scheme = request.scheme ?? "equal-interval";
     return {
       vectorStyleMode: "graduated",

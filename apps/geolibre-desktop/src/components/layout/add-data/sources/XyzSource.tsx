@@ -6,14 +6,10 @@ import {
   registerXyzTileProtocol,
   resolveXyzTileUrlTemplate,
 } from "../../../../lib/xyz-url";
+import { buildXyzLayer } from "../apply-service";
 import { DEFAULT_XYZ_URL } from "../constants";
-import { createBaseLayer } from "../helpers";
 import { ServiceLibrarySection } from "../ServiceLibrarySection";
-import {
-  serviceFieldBoolean,
-  serviceFieldString,
-  type ServiceFields,
-} from "../service-library";
+import { serviceFieldBoolean, serviceFieldString, type ServiceFields } from "../service-library";
 import { AddDataSourceForm, SampleDataSelect, useAddDataSource } from "../shared";
 
 export function XyzSource() {
@@ -43,21 +39,12 @@ export function XyzSource() {
       ? await resolveXyzTileUrlTemplate(xyzUrl)
       : createXyzTileUrlTemplate(xyzUrl);
     source.addAndClose(
-      createBaseLayer(
+      buildXyzLayer({
         name,
-        "xyz",
-        {
-          type: "raster",
-          tiles: [tileUrl.renderUrl],
-          tileSize: Number(xyzTileSize) || 256,
-          url: tileUrl.originalUrl,
-        },
-        {
-          originalUrl: xyzShortUrl ? tileUrl.originalUrl : undefined,
-          resolvedUrl: tileUrl.redirected ? tileUrl.url : undefined,
-          sourceKind: "xyz-url",
-        },
-      ),
+        tileUrl,
+        tileSize: xyzTileSize,
+        shortUrl: xyzShortUrl,
+      }),
     );
   });
 
@@ -72,12 +59,6 @@ export function XyzSource() {
       submitDisabled={source.isSubmitting}
     >
       <div className="space-y-3">
-        <SampleDataSelect
-          samples={[
-            { label: t("addData.xyz.sampleLabel"), value: { url: DEFAULT_XYZ_URL } },
-          ]}
-          onSelect={applyFields}
-        />
         <ServiceLibrarySection
           kind="xyz"
           layerName={source.layerName}
@@ -93,9 +74,7 @@ export function XyzSource() {
             <Input
               id="xyz-url"
               placeholder={
-                xyzShortUrl
-                  ? t("addData.xyz.shortUrlPlaceholder")
-                  : t("addData.xyz.urlPlaceholder")
+                xyzShortUrl ? t("addData.xyz.shortUrlPlaceholder") : t("addData.xyz.urlPlaceholder")
               }
               value={xyzUrl}
               onChange={(event) => setXyzUrl(event.target.value)}
@@ -119,6 +98,10 @@ export function XyzSource() {
           />
           {t("addData.xyz.shortUrl")}
         </label>
+        <SampleDataSelect
+          samples={[{ label: t("addData.xyz.sampleLabel"), value: { url: DEFAULT_XYZ_URL } }]}
+          onSelect={applyFields}
+        />
       </div>
     </AddDataSourceForm>
   );

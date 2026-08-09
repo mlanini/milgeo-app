@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import i18next from "i18next";
+import { IS_MAS_BUILD } from "./build-flags";
 import { isTauri } from "./tauri-io";
 
 export interface MartinBinaryInfo {
@@ -48,7 +50,7 @@ export interface MartinSourceSummary {
 }
 
 export async function ensureMartinBinary(): Promise<MartinBinaryInfo> {
-  assertTauri();
+  assertMartinAllowed();
   return invoke<MartinBinaryInfo>("ensure_martin_binary");
 }
 
@@ -56,7 +58,7 @@ export async function startMartinServer(options: {
   connectionString: string;
   defaultSrid?: string;
 }): Promise<MartinServerInfo> {
-  assertTauri();
+  assertMartinAllowed();
   return invoke<MartinServerInfo>("start_martin_server", {
     connectionString: options.connectionString,
     defaultSrid: options.defaultSrid?.trim() || null,
@@ -64,13 +66,14 @@ export async function startMartinServer(options: {
 }
 
 export async function stopMartinServer(): Promise<void> {
-  assertTauri();
+  // Nothing to stop in the Mac App Store build (the server cannot be
+  // started); a silent no-op keeps callers' cleanup paths from throwing.
+  if (IS_MAS_BUILD) return;
+  assertMartinAllowed();
   await invoke("stop_martin_server");
 }
 
-export async function fetchMartinCatalog(
-  server: MartinServerInfo,
-): Promise<MartinSourceSummary[]> {
+export async function fetchMartinCatalog(server: MartinServerInfo): Promise<MartinSourceSummary[]> {
   const response = await fetch(`${server.baseUrl}/catalog`);
   if (!response.ok) {
     throw new Error(`Martin catalog request failed with status ${response.status}.`);
@@ -98,14 +101,16 @@ export async function fetchMartinTileJson(
   return (await response.json()) as MartinTileJson;
 }
 
-export function martinTileJsonUrl(
-  server: MartinServerInfo,
-  sourceId: string,
-): string {
+export function martinTileJsonUrl(server: MartinServerInfo, sourceId: string): string {
   return `${server.baseUrl}/${encodeURIComponent(sourceId)}`;
 }
 
-function assertTauri(): void {
+function assertMartinAllowed(): void {
+  // The Mac App Store build cannot download or spawn the martin tile server
+  // (App Sandbox), so fail here before invoking the stubbed Tauri command.
+  if (IS_MAS_BUILD) {
+    throw new Error(i18next.t("masBuild.unavailable"));
+  }
   if (!isTauri()) {
     throw new Error("PostgreSQL layers require GeoLibre Desktop.");
   }
@@ -113,8 +118,5 @@ function assertTauri(): void {
 
 function isVectorTileContentType(contentType: string): boolean {
   const normalized = contentType.toLowerCase();
-  return (
-    normalized.includes("protobuf") ||
-    normalized.includes("mapbox-vector-tile")
-  );
+  return normalized.includes("protobuf") || normalized.includes("mapbox-vector-tile");
 }

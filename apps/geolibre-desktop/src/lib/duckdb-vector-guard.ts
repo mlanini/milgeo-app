@@ -7,16 +7,12 @@
  * `node --test` without pulling the WASM engine into the bundle/test.
  */
 
-/**
- * Sources whose feature (row) count reaches this threshold prompt a
- * confirmation before {@link loadDuckDbVectorFile} materializes every row as a
- * GeoJSON Feature in memory — each row is JSON-parsed and turned into its own
- * object, so a multi-million-row file can exhaust browser memory or wedge the
- * tab. This is the DuckDB ingestion counterpart to `OSM_PBF_SIZE_WARN_BYTES`
- * (`osm-pbf-loader.ts`); unlike a raw byte size it is accurate for compressed
- * formats like GeoParquet, where a small file can hold millions of rows.
- */
-export const DUCKDB_VECTOR_FEATURE_WARN_COUNT = 500_000;
+import { DUCKDB_VECTOR_FEATURE_WARN_COUNT, DUCKDB_VECTOR_ROUTE_BYTES } from "@geolibre/core";
+
+// Both thresholds live in `@geolibre/core` so the desktop loaders here and the
+// Add Vector Layer panel (`@geolibre/plugins`) switch strategy at the same
+// numbers; re-exported so callers keep importing them from the guard module.
+export { DUCKDB_VECTOR_FEATURE_WARN_COUNT, DUCKDB_VECTOR_ROUTE_BYTES };
 
 /** Details passed to {@link DuckDbVectorLoadOptions.onLargeDataset}. */
 export interface LargeVectorDataset {
@@ -38,6 +34,33 @@ export interface DuckDbVectorLoadOptions {
    * single-pass (the extra `COUNT(*)` is only run when a guard is attached).
    */
   onLargeDataset?: (dataset: LargeVectorDataset) => boolean | Promise<boolean>;
+  /**
+   * Read a specific OGR layer from a multi-layer source (e.g. a CAD DWG with
+   * several layers) by passing its name to `ST_Read(..., layer=...)`. When
+   * omitted, `ST_Read` reads the first layer, matching its default. Ignored for
+   * Parquet sources, which have no layer concept.
+   *
+   * Note: this selects which geometry is read, not which layer's CRS is
+   * discovered — `readSourceCrs` always inspects the first layer. Callers that
+   * need a non-first layer's CRS must supply {@link overrideSourceCrs}.
+   */
+  layer?: string;
+  /**
+   * Treat the source geometry as this CRS (an `AUTHORITY:CODE` string such as
+   * `EPSG:26915`) and reproject it to WGS84, overriding any CRS read from the
+   * file. Used for formats that carry no CRS metadata of their own (CAD
+   * DXF/DWG), where the user supplies the coordinate system. A blank value
+   * falls back to the file's own CRS.
+   */
+  overrideSourceCrs?: string;
+  /**
+   * Skip the KML/KMZ `<Model>` (COLLADA→GLB) conversion, returning only the
+   * vector features. Set by callers that discard models anyway — e.g. re-reading
+   * a referenced (not embedded) local layer's features on project reopen — so
+   * they don't pay for the expensive conversion (or a remote-mesh fetch) they
+   * never use.
+   */
+  skipModels?: boolean;
 }
 
 /**
@@ -68,4 +91,16 @@ export async function confirmLargeDataset(
   if (dataset.featureCount < DUCKDB_VECTOR_FEATURE_WARN_COUNT) return;
   const proceed = await onLargeDataset(dataset);
   if (!proceed) throw new VectorLoadCancelledError();
+}
+
+/**
+ * Whether a file of this size should skip the in-memory JavaScript readers and
+ * stream through DuckDB instead. An unknown size (undefined) reads as "small",
+ * so a failed `stat` leaves the existing behaviour untouched rather than
+ * diverting every file to DuckDB on a metadata hiccup.
+ *
+ * @see DUCKDB_VECTOR_ROUTE_BYTES
+ */
+export function shouldRouteToDuckDb(sizeBytes: number | undefined): boolean {
+  return sizeBytes !== undefined && sizeBytes >= DUCKDB_VECTOR_ROUTE_BYTES;
 }
