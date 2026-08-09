@@ -590,6 +590,8 @@ function pwaPlugin(): Plugin[] {
     // MapLibre core (~13 MB) and its feature-plugin chunks. The map boots from
     // its first runtime fetch and is CacheFirst-cached thereafter.
     "**/maplibre-*",
+    // Cesium is a large lazy chunk and must not be precached.
+    "**/Cesium-*",
     "**/duckdb-*",
     "**/pglite-*",
     "**/earth-engine-browser-*",
