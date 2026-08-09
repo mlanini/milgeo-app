@@ -32,7 +32,10 @@ import {
   maplibreMapillaryPlugin,
   maplibreReverseGeocodePlugin,
   maplibreStreetViewPlugin,
+  SWIPE_PLUGIN_ID,
   maplibreSwipePlugin,
+  isTimeSliderIdle,
+  TIME_SLIDER_PLUGIN_ID,
   maplibreTimeSliderPlugin,
   maplibreUsgsLidarPlugin,
   PluginManager,
@@ -87,6 +90,7 @@ import {
   readVectorFileWithSidecars,
   saveTextFileWithFallback,
 } from "../lib/tauri-io";
+import { shouldCloseTimeSliderDock } from "../lib/time-slider-dock";
 import { useDesktopSettingsStore } from "./useDesktopSettings";
 import { useFileNamePrompt } from "./useFileNamePrompt";
 import { milgeoPlugin } from "../plugins/milgeo-plugin";
@@ -394,6 +398,69 @@ export function useExternalPluginsReady(
     () => externalPluginsLoaded,
     () => externalPluginsLoaded,
   );
+}
+
+export interface ProjectPluginTrustState {
+  pendingUrls: string[];
+  trust: () => void;
+  dismiss: () => void;
+}
+
+// This branch already auto-loads project manifest URLs through
+// ensureExternalPluginsLoadedWithSettings, so there is no extra trust gate.
+export function useProjectPluginTrust(): ProjectPluginTrustState {
+  return {
+    pendingUrls: [],
+    trust: () => {},
+    dismiss: () => {},
+  };
+}
+
+/**
+ * Keep Layer Swipe and split view mutually exclusive: when the grid turns
+ * multi-pane, disable swipe so the two comparison modes do not overlap.
+ */
+export function useSwipeSplitViewExclusivity(
+  mapControllerRef: RefObject<MapController | null>,
+): void {
+  const paneCount = useAppStore((state) => state.mapLayout.rows * state.mapLayout.cols);
+
+  useEffect(() => {
+    if (paneCount <= 1 || !manager.isActive(SWIPE_PLUGIN_ID)) return;
+    const before = JSON.stringify(projectPluginStateSnapshot());
+    try {
+      manager.toggle(SWIPE_PLUGIN_ID, createAppAPI(mapControllerRef));
+    } catch (error) {
+      reportPluginError(SWIPE_PLUGIN_ID, "toggle", error);
+      return;
+    }
+    persistProjectPluginState(before);
+  }, [paneCount, mapControllerRef]);
+}
+
+/**
+ * Auto-close the Time Slider when it has nothing left to drive.
+ */
+export function useTimeSliderAutoClose(
+  mapControllerRef: RefObject<MapController | null>,
+): void {
+  useEffect(() => {
+    const check = () => {
+      if (!shouldCloseTimeSliderDock(manager.isActive(TIME_SLIDER_PLUGIN_ID), isTimeSliderIdle)) {
+        return;
+      }
+      const before = JSON.stringify(projectPluginStateSnapshot());
+      try {
+        manager.deactivate(TIME_SLIDER_PLUGIN_ID, createAppAPI(mapControllerRef));
+      } catch (error) {
+        reportPluginError(TIME_SLIDER_PLUGIN_ID, "toggle", error);
+        return;
+      }
+      persistProjectPluginState(before);
+    };
+    check();
+    return useAppStore.subscribe(check);
+  }, [mapControllerRef]);
 }
 
 // Manifest URLs for plugins baked into the build under public/plugins/<id>/.

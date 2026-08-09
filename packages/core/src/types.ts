@@ -910,6 +910,9 @@ export interface ProcessingModel {
   steps: ProcessingModelStep[];
 }
 
+/** Upper bound on persisted processing-history entries (oldest are dropped). */
+export const MAX_PROCESSING_HISTORY = 100;
+
 /** Column-count bounds for the Dashboard panel's widget grid. */
 export const MIN_DASHBOARD_COLUMNS = 1;
 export const MAX_DASHBOARD_COLUMNS = 6;
