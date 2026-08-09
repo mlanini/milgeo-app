@@ -1,45 +1,13 @@
 {
   "name": "@geolibre/embed",
   "version": "2.5.0",
-  "description": "Typed client for GeoLibre's iframe embed API",
-  "keywords": [
-    "embed",
-    "geolibre",
-    "gis",
-    "iframe",
-    "map",
-    "maplibre",
-    "postmessage"
-  ],
-  "homepage": "https://geolibre.app/user-guide/embedding/",
-  "bugs": "https://github.com/opengeos/GeoLibre/issues",
-  "license": "MIT",
-  "author": "Qiusheng Wu",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/opengeos/GeoLibre",
-    "directory": "packages/embed"
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
+  "private": true,
   "type": "module",
   "sideEffects": false,
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "prepack": "npm run build"
+    ".": "./src/index.ts"
   },
   "devDependencies": {
     "typescript": "^7.0.2"
