@@ -257,6 +257,7 @@ export {
   runWhiteboxToolWasm,
   whiteboxWasmAvailable,
   listWhiteboxWasmTools,
+  listWhiteboxWasmTools as listGeolibreWasmTools,
   listWasmToolManifests,
   manifestScalarDefaults,
   mergeWasmToolManifests,

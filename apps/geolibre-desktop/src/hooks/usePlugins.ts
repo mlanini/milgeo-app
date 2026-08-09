@@ -1,5 +1,6 @@
 import { DEFAULT_LAYER_STYLE, type GeoLibreLayer, useAppStore } from "@geolibre/core";
 import {
+  buildSelectorTimeBinding,
   maplibreAnnotationsPlugin,
   maplibreBasemapControlPlugin,
   maplibreComponentsPlugin,
@@ -54,6 +55,7 @@ import {
   openFloatingPanel,
   closeFloatingPanel,
   getOpenFloatingPanels,
+  type TemporalLayerAdapter,
 } from "@geolibre/plugins";
 import type { MapController } from "@geolibre/map";
 import type {
@@ -436,6 +438,47 @@ export function useSwipeSplitViewExclusivity(
     }
     persistProjectPluginState(before);
   }, [paneCount, mapControllerRef]);
+}
+
+export function bindTemporalLayer(
+  layerId: string,
+  adapter: TemporalLayerAdapter,
+  mapControllerRef?: RefObject<MapController | null>,
+): boolean {
+  const binding = buildSelectorTimeBinding(
+    adapter.dimension ?? "time",
+    adapter.getTimeValues(),
+    {
+      granularity: adapter.granularity,
+      displayUnits: adapter.displayUnits,
+    },
+  );
+  if (!binding) return false;
+
+  const store = useAppStore.getState();
+  const layer = store.layers.find((item) => item.id === layerId);
+  if (!layer) return false;
+
+  store.updateLayer(layerId, {
+    metadata: { ...layer.metadata, timeBinding: binding },
+    timeFilter: undefined,
+  });
+  activateTimeSliderForBinding(mapControllerRef);
+  return true;
+}
+
+export function activateTimeSliderForBinding(
+  mapControllerRef?: RefObject<MapController | null>,
+): void {
+  if (manager.isActive(TIME_SLIDER_PLUGIN_ID)) return;
+  const before = JSON.stringify(projectPluginStateSnapshot());
+  try {
+    manager.activate(TIME_SLIDER_PLUGIN_ID, createAppAPI(mapControllerRef));
+  } catch (error) {
+    reportPluginError(TIME_SLIDER_PLUGIN_ID, "toggle", error);
+    return;
+  }
+  persistProjectPluginState(before);
 }
 
 /**
