@@ -26,25 +26,18 @@ export function useMapClick(
 ) {
   const activeRef = useRef(false);
   const callbackRef = useRef(onPick);
+  const attachedMapRef = useRef<ReturnType<MapController["getMap"]> | null>(null);
+  const handlerRef = useRef<((e: MapMouseEvent) => void) | null>(null);
   callbackRef.current = onPick;
 
-  const enable = useCallback(() => {
+  const ensureHandlerAttached = useCallback(() => {
     const map = mapControllerRef.current?.getMap();
-    if (!map || activeRef.current) return;
-    activeRef.current = true;
-    map.getCanvas().style.cursor = "crosshair";
-  }, [mapControllerRef]);
+    if (!map) return false;
+    if (attachedMapRef.current === map) return true;
 
-  const disable = useCallback(() => {
-    const map = mapControllerRef.current?.getMap();
-    if (!map) return;
-    activeRef.current = false;
-    map.getCanvas().style.cursor = "";
-  }, [mapControllerRef]);
-
-  useEffect(() => {
-    const map = mapControllerRef.current?.getMap();
-    if (!map) return;
+    if (attachedMapRef.current && handlerRef.current) {
+      attachedMapRef.current.off("click", handlerRef.current);
+    }
 
     const handler = (e: MapMouseEvent) => {
       if (!activeRef.current) return;
@@ -54,12 +47,37 @@ export function useMapClick(
     };
 
     map.on("click", handler);
+    handlerRef.current = handler;
+    attachedMapRef.current = map;
+    return true;
+  }, [mapControllerRef, oneShot]);
+
+  const enable = useCallback(() => {
+    if (!ensureHandlerAttached() || activeRef.current) return;
+    const map = attachedMapRef.current;
+    if (!map) return;
+    activeRef.current = true;
+    map.getCanvas().style.cursor = "crosshair";
+  }, [ensureHandlerAttached]);
+
+  const disable = useCallback(() => {
+    const map = attachedMapRef.current ?? mapControllerRef.current?.getMap();
+    if (!map) return;
+    activeRef.current = false;
+    map.getCanvas().style.cursor = "";
+  }, [mapControllerRef]);
+
+  useEffect(() => {
+    ensureHandlerAttached();
     return () => {
-      map.off("click", handler);
+      if (attachedMapRef.current && handlerRef.current) {
+        attachedMapRef.current.off("click", handlerRef.current);
+      }
+      handlerRef.current = null;
+      attachedMapRef.current = null;
       disable();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [disable, ensureHandlerAttached]);
 
   return { enable, disable };
 }
