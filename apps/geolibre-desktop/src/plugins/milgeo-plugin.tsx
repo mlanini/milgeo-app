@@ -1,8 +1,9 @@
 import type { GeoLibreAppAPI, GeoLibrePlugin } from "@geolibre/plugins";
+import type { MapController } from "@geolibre/map";
 import type { FeatureCollection, LineString } from "geojson";
+import { useMemo, type RefObject } from "react";
 import { createRoot } from "react-dom/client";
 import { MilLayerPanel } from "../components/panels/MilLayerPanel";
-import { useMapControllerRef } from "../contexts/map-controller-context";
 
 export const MILGEO_PLUGIN_ID = "milgeo-workspace";
 
@@ -34,7 +35,16 @@ function buildSampleSillage(center: { lng: number; lat: number }): FeatureCollec
 }
 
 function MilGeoWorkspacePanelContent({ app }: { app: GeoLibreAppAPI }) {
-  const mapControllerRef = useMapControllerRef();
+  // The panel renders into its own React root (see `render()` below), which
+  // is not part of the main app's React tree, so a React Context provided by
+  // the host (e.g. a MapController context) can never reach it. The MilGeo
+  // panels only ever call `.getMap()` on this ref, so a lightweight adapter
+  // over the public `GeoLibreAppAPI.getMap()` is enough - no need for the
+  // host's internal MapController instance.
+  const mapControllerRef: RefObject<MapController | null> = useMemo(
+    () => ({ current: { getMap: () => app.getMap?.() ?? null } as MapController }),
+    [app],
+  );
 
   const handleCreateSillage = () => {
     const map = app.getMap?.();
