@@ -70,8 +70,8 @@ export interface CreateProjectOptions {
 
 export function createDefaultMapView(): MapViewState {
   return {
-    center: [-100, 40],
-    zoom: 2,
+    center: [8.181318, 46.862932],
+    zoom: 4.5,
     bearing: 0,
     pitch: 0,
   };

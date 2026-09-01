@@ -1284,7 +1284,7 @@ export const DEFAULT_PROJECT_PREFERENCES: ProjectPreferences = {
     maxZoom: 24,
     maxPitch: 85,
     renderWorldCopies: true,
-    projection: "globe",
+    projection: "mercator",
     ellipsoidId: "earth",
     scaleUnit: "metric",
   },
