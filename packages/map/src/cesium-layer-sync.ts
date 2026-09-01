@@ -1,5 +1,6 @@
 import { resolveThreeDTilesRequestHeaders, type GeoLibreLayer } from "@geolibre/core";
 import type { Cesium3DTileset, DataSource, ImageryLayer, Viewer } from "cesium";
+import ms from "milsymbol";
 
 // Reconciles the store's `GeoLibreLayer[]` onto a Cesium globe, mirroring what
 // MapController.syncLayers does for MapLibre. M3 covers the layer kinds where
@@ -14,10 +15,13 @@ import type { Cesium3DTileset, DataSource, ImageryLayer, Viewer } from "cesium";
 
 type CesiumNs = typeof import("cesium");
 
+ms.setStandard("APP6");
+const MilSymbol = ms.Symbol;
+
 /** Layer kinds this pass renders on the globe. */
 const IMAGERY_TYPES = new Set(["raster", "xyz", "wms", "wmts"]);
 
-type EntryKind = "imagery" | "geojson" | "3dtiles";
+type EntryKind = "imagery" | "geojson" | "3dtiles" | "mil-symbol";
 
 interface LayerEntry {
   kind: EntryKind;
@@ -44,18 +48,91 @@ function tilesetUrl(layer: GeoLibreLayer): string | undefined {
   return str(layer.source.url) ?? str(layer.sourcePath);
 }
 
+interface ParsedMilSymbolItem {
+  id: string;
+  name: string;
+  SIDC: string;
+  lon: number;
+  lat: number;
+  uniqueDesignation?: string;
+}
+
+interface ParsedMilSymbolLayerSource {
+  symbols: ParsedMilSymbolItem[];
+  symbolSize: number;
+}
+
+function parseNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function parseMilSymbolItem(raw: unknown): ParsedMilSymbolItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const sidc = parseString(record.SIDC);
+  const lon = parseNumber(record.lon);
+  const lat = parseNumber(record.lat);
+  if (!sidc || lon === null || lat === null) return null;
+  return {
+    id: parseString(record.id) ?? crypto.randomUUID(),
+    name: parseString(record.name) ?? "Symbol",
+    SIDC: sidc,
+    lon,
+    lat,
+    uniqueDesignation: parseString(record.uniqueDesignation),
+  };
+}
+
+function parseMilSymbolLayerSource(source: Record<string, unknown>): ParsedMilSymbolLayerSource {
+  const symbolSize = parseNumber(source.symbolSize) ?? 38;
+  const rawSymbols = Array.isArray(source.symbols) ? source.symbols : [];
+  const symbols = rawSymbols
+    .map((item) => parseMilSymbolItem(item))
+    .filter((item): item is ParsedMilSymbolItem => item !== null);
+  if (symbols.length > 0) return { symbols, symbolSize };
+  const legacy = parseMilSymbolItem(source);
+  return { symbols: legacy ? [legacy] : [], symbolSize };
+}
+
+function milSymbolIconDataUrl(sidc: string, size: number): string | null {
+  try {
+    const symbol = new MilSymbol(sidc, {
+      size,
+      outlineColor: "white",
+      outlineWidth: 6,
+      infoFields: true,
+    });
+    if (!symbol.isValid()) return null;
+    return symbol.toDataURL();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whether the globe can render this layer *kind* at all (regardless of whether
  * its data has loaded yet). Exported so the UI can flag "2D only" layers on a
  * globe pane. See the module header for the supported kinds.
  */
 export function isCesiumSupportedLayerType(layer: GeoLibreLayer): boolean {
-  return layer.type === "geojson" || layer.type === "3d-tiles" || IMAGERY_TYPES.has(layer.type);
+  return (
+    layer.type === "geojson" ||
+    layer.type === "3d-tiles" ||
+    layer.type === "mil-symbol" ||
+    IMAGERY_TYPES.has(layer.type)
+  );
 }
 
 /** Whether this layer can render on the globe now (kind supported + data ready). */
 function isSupported(layer: GeoLibreLayer): boolean {
   if (!isCesiumSupportedLayerType(layer)) return false;
+  if (layer.type === "mil-symbol") {
+    return parseMilSymbolLayerSource(layer.source).symbols.length > 0;
+  }
   if (layer.type === "geojson") return Boolean(layer.geojson?.features?.length);
   if (layer.type === "3d-tiles") return Boolean(tilesetUrl(layer));
   // Mirror createImagery's real capability: WMS builds from source.url, but
@@ -64,6 +141,7 @@ function isSupported(layer: GeoLibreLayer): boolean {
 }
 
 function entryKind(layer: GeoLibreLayer): EntryKind {
+  if (layer.type === "mil-symbol") return "mil-symbol";
   if (layer.type === "geojson") return "geojson";
   if (layer.type === "3d-tiles") return "3dtiles";
   return "imagery";
@@ -92,6 +170,8 @@ function needsRebuild(prev: GeoLibreLayer, next: GeoLibreLayer): boolean {
   switch (entryKind(next)) {
     case "geojson":
       return prev.geojson !== next.geojson || styleSignature(prev) !== styleSignature(next);
+    case "mil-symbol":
+      return prev.source !== next.source;
     case "imagery":
       return (
         firstTile(prev) !== firstTile(next) ||
@@ -202,6 +282,7 @@ export class CesiumLayerSync {
     this.entries.set(layer.id, entry);
     if (kind === "imagery") this.createImagery(entry);
     else if (kind === "geojson") void this.createGeoJson(entry);
+    else if (kind === "mil-symbol") void this.createMilSymbol(entry);
     else void this.createTileset(entry);
   }
 
@@ -283,6 +364,55 @@ export class CesiumLayerSync {
     }
   }
 
+  private async createMilSymbol(entry: LayerEntry): Promise<void> {
+    const { Cesium, viewer } = this;
+    const parsed = parseMilSymbolLayerSource(entry.layer.source);
+    if (parsed.symbols.length === 0) return;
+    try {
+      const dataSource = new Cesium.CustomDataSource(entry.layer.name);
+      for (const symbol of parsed.symbols) {
+        const image = milSymbolIconDataUrl(symbol.SIDC, parsed.symbolSize);
+        if (!image) continue;
+        dataSource.entities.add({
+          id: symbol.id,
+          name: symbol.name,
+          position: Cesium.Cartesian3.fromDegrees(symbol.lon, symbol.lat),
+          billboard: {
+            image,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            scale: 1,
+          },
+          label: symbol.uniqueDesignation
+            ? {
+                text: symbol.uniqueDesignation,
+                font: "12px sans-serif",
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                fillColor: Cesium.Color.WHITE,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2,
+                pixelOffset: new Cesium.Cartesian2(0, 22),
+                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              }
+            : undefined,
+        });
+      }
+      if (entry.cancelled) return;
+      await viewer.dataSources.add(dataSource);
+      if (entry.cancelled) {
+        viewer.dataSources.remove(dataSource, true);
+        return;
+      }
+      entry.handle = dataSource;
+      this.applyAppearance(entry);
+    } catch {
+      // Best-effort, like other globe layer kinds.
+    }
+  }
+
   private async createTileset(entry: LayerEntry): Promise<void> {
     const { Cesium, viewer } = this;
     const layer = entry.layer;
@@ -333,8 +463,27 @@ export class CesiumLayerSync {
     } else if (entry.kind === "geojson") {
       (handle as DataSource).show = layer.visible;
       this.applyGeoJsonStyle(entry);
+    } else if (entry.kind === "mil-symbol") {
+      (handle as DataSource).show = layer.visible;
+      this.applyMilSymbolStyle(entry);
     } else {
       (handle as Cesium3DTileset).show = layer.visible;
+    }
+  }
+
+  private applyMilSymbolStyle(entry: LayerEntry): void {
+    const dataSource = entry.handle as DataSource | null;
+    if (!dataSource) return;
+    const opacity = entry.layer.opacity;
+    const { Cesium } = this;
+    const color = Cesium.Color.WHITE.withAlpha(opacity);
+    for (const feature of dataSource.entities.values) {
+      if (feature.billboard) {
+        feature.billboard.color = new Cesium.ConstantProperty(color);
+      }
+      if (feature.label) {
+        feature.label.fillColor = new Cesium.ConstantProperty(color);
+      }
     }
   }
 
@@ -385,7 +534,7 @@ export class CesiumLayerSync {
     if (!handle) return;
     if (entry.kind === "imagery") {
       this.viewer.imageryLayers.remove(handle as ImageryLayer, true);
-    } else if (entry.kind === "geojson") {
+    } else if (entry.kind === "geojson" || entry.kind === "mil-symbol") {
       this.viewer.dataSources.remove(handle as DataSource, true);
     } else {
       this.viewer.scene.primitives.remove(handle as Cesium3DTileset);

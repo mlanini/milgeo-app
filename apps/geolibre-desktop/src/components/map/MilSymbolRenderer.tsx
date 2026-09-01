@@ -172,15 +172,15 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
     source: SYM_SOURCE_ID,
     layout: {
       "icon-image":              ["get", "symbolKey"],
-      "icon-rotate":             ["to-number", ["get", "direction"], 0],
-      "icon-rotation-alignment": "viewport",
-      "icon-pitch-alignment":    "viewport",
+      "icon-rotate":             ["coalesce", ["get", "direction"], 0],
+      "icon-rotation-alignment": "map",
+      "icon-pitch-alignment":    "map",
       "icon-size":               1,
       "icon-allow-overlap":      true,
       "icon-ignore-placement":   true,
     },
     paint: {
-      "icon-opacity": ["to-number", ["get", "opacity"], 1],
+      "icon-opacity": ["coalesce", ["get", "opacity"], 1],
     },
   });
 }
