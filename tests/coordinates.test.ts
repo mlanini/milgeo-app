@@ -56,6 +56,17 @@ describe("parseLatLon — DDM", () => {
   });
 });
 
+describe("parseLatLon — Swiss grids", () => {
+  it("parses LV95 easting/northing", () => {
+    // Swiss false-origin reference near Bern.
+    assertClose(parseLatLon("2600000, 1200000"), 46.951, 7.439, 0.02);
+  });
+
+  it("parses LV03 easting/northing", () => {
+    assertClose(parseLatLon("600000 200000"), 46.951, 7.439, 0.02);
+  });
+});
+
 describe("parseLatLon — rejection", () => {
   it("returns null for empty input", () => {
     assert.equal(parseLatLon(""), null);
@@ -69,6 +80,11 @@ describe("parseLatLon — rejection", () => {
   it("returns null for out-of-range coordinates", () => {
     assert.equal(parseLatLon("200, 300"), null);
     assert.equal(parseLatLon(`95°00'00"N, 0°00'00"W`), null);
+  });
+
+  it("returns null for incomplete Swiss grid pairs", () => {
+    assert.equal(parseLatLon("2600000"), null);
+    assert.equal(parseLatLon("2600000, not-a-number"), null);
   });
 
   it("returns null when both halves name the same axis", () => {

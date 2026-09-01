@@ -11,6 +11,7 @@ import {
   useCallback,
   useMemo,
   useEffect,
+  useRef,
 } from "react";
 import { DEFAULT_LAYER_STYLE, useAppStore, type GeoLibreLayer } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
@@ -18,13 +19,16 @@ import ms from "milsymbol";
 import {
   Check,
   Crosshair,
+  Download,
   MapPin,
   Pencil,
+  Upload,
   X,
 } from "lucide-react";
 import type { MapController } from "@geolibre/map";
 import type { MilAffiliation } from "@geolibre/core";
 import { useMapClick } from "../../hooks/useMapClick";
+import { useMilLayerStore } from "../../hooks/useMilLayerStore";
 import { OrbatPanel } from "./OrbatPanel";
 import { MilTacticalGraphicsTab } from "./MilTacticalGraphicsTab";
 import { MilSymbolEditor, type MilSymbolPatch } from "./MilSymbolEditor";
@@ -41,9 +45,24 @@ import {
   serializeMilSymbolLayerSource,
   type MilSymbolLayerItem,
 } from "../../lib/milsymbol-layer-source";
+import {
+  parseAnyMilFormatFromBytesForStore,
+  type StoreImportResult,
+} from "../../lib/milsymbol-import-to-store";
+import {
+  exportToMilX,
+  exportToMilXlyz,
+} from "../../lib/milsymbol-export-formats";
+import {
+  parseMilGraphicLayerSource,
+  serializeMilGraphicLayerSource,
+  type MilGraphicLayerItem,
+} from "../../lib/milgraphic-layer-source";
 
 const MilSymbol = ms.Symbol;
 const CATALOG_ICON = 32;
+const TACTICAL_LAYER_ID = "mil-tactical-graphics-layer";
+const TACTICAL_LAYER_NAME = "Grafiche tattiche";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -547,7 +566,165 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
 // ─── MAIN PANEL ───────────────────────────────────────────────────────────────
 
 export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
+  const layers = useAppStore((s) => s.layers);
+  const addLayer = useAppStore((s) => s.addLayer);
+  const updateLayer = useAppStore((s) => s.updateLayer);
+  const addOrbatUnit = useMilLayerStore((s) => s.addOrbatUnit);
+  const updateOrbatUnit = useMilLayerStore((s) => s.updateOrbatUnit);
+
   const [tab, setTab] = useState<TabId>("catalog");
+  const [notice, setNotice] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const milLayers = useMemo(
+    () => layers.filter((layer) => layer.type === "mil-symbol" || layer.type === "mil-graphic"),
+    [layers],
+  );
+
+  const applyImportedStoreData = useCallback((result: StoreImportResult) => {
+    const symbolIdMap = new Map<string, string>();
+
+    for (const importedLayer of result.layers) {
+      if (importedLayer.symbols.length > 0) {
+        const symbolLayerId = crypto.randomUUID();
+        const symbols: MilSymbolLayerItem[] = importedLayer.symbols.map((symbol) => {
+          const symbolId = symbol.id || crypto.randomUUID();
+          symbolIdMap.set(symbol.id, symbolId);
+          return {
+            id: symbolId,
+            name: symbol.name,
+            SIDC: symbol.sidc,
+            lon: symbol.lon,
+            lat: symbol.lat,
+            affiliation: affiliationFromSidc(symbol.sidc),
+            uniqueDesignation: symbol.uniqueDesignation,
+            higherFormation: symbol.higherFormation,
+            staffComments: symbol.staffComments,
+            additionalInformation: symbol.additionalInformation,
+            dtg: symbol.dtg,
+            altitudeDepth: symbol.altitudeDepth,
+            direction: symbol.direction,
+            quantity: symbol.quantity,
+            iffSif: symbol.iffSif,
+            speed: symbol.speed,
+            typeStr: symbol.typeStr,
+            reinforcedReduced: symbol.reinforcedReduced,
+            combatEffectiveness: symbol.combatEffectiveness,
+            evaluationRating: symbol.evaluationRating,
+          };
+        });
+
+        addLayer({
+          id: symbolLayerId,
+          name: importedLayer.name,
+          type: "mil-symbol",
+          visible: importedLayer.visible,
+          opacity: importedLayer.opacity,
+          style: { ...DEFAULT_LAYER_STYLE },
+          metadata: { milgeoManaged: true },
+          source: serializeMilSymbolLayerSource(symbols, DEFAULT_MIL_SYMBOL_SIZE_PX),
+        });
+      }
+    }
+
+    const importedGraphics: MilGraphicLayerItem[] = result.layers.flatMap((layer) =>
+      layer.graphics.map((graphic) => ({
+        id: graphic.id || crypto.randomUUID(),
+        name: graphic.name,
+        SIDC: graphic.sidc,
+        geometryType: graphic.geometryType,
+        coordinates: graphic.coordinates.map(([lon, lat]) => [lon, lat] as [number, number]),
+        affiliation: affiliationFromSidc(graphic.sidc),
+        uniqueDesignation: graphic.uniqueDesignation,
+        additionalInfo: graphic.additionalInformation,
+      })),
+    );
+
+    if (importedGraphics.length > 0) {
+      const tacticalLayer = layers.find(
+        (layer) =>
+          layer.type === "mil-graphic" &&
+          (layer.id === TACTICAL_LAYER_ID
+            || (layer.metadata.milgeoManaged === true && layer.metadata.tacticalCollection === true)),
+      );
+
+      if (tacticalLayer) {
+        const existing = parseMilGraphicLayerSource(tacticalLayer.source).graphics;
+        updateLayer(tacticalLayer.id, {
+          source: serializeMilGraphicLayerSource([...existing, ...importedGraphics]) as unknown as Record<string, unknown>,
+        });
+      } else {
+        addLayer({
+          id: TACTICAL_LAYER_ID,
+          name: TACTICAL_LAYER_NAME,
+          type: "mil-graphic",
+          visible: true,
+          opacity: 1,
+          style: { ...DEFAULT_LAYER_STYLE },
+          metadata: { milgeoManaged: true, tacticalCollection: true },
+          source: serializeMilGraphicLayerSource(importedGraphics) as unknown as Record<string, unknown>,
+        });
+      }
+    }
+
+    if (result.orbat.length > 0) {
+      const unitIdMap = new Map<string, string>();
+      for (const unit of result.orbat) {
+        const mappedSymbolId = unit.symbolId ? symbolIdMap.get(unit.symbolId) ?? unit.symbolId : undefined;
+        const created = addOrbatUnit({
+          name: unit.name,
+          sidc: unit.sidc,
+          parentId: null,
+          symbolId: mappedSymbolId,
+          remarks: unit.remarks,
+        });
+        unitIdMap.set(unit.id, created.id);
+      }
+
+      for (const unit of result.orbat) {
+        const createdId = unitIdMap.get(unit.id);
+        if (!createdId) continue;
+        updateOrbatUnit(createdId, {
+          parentId: unit.parentId ? unitIdMap.get(unit.parentId) ?? null : null,
+        });
+      }
+    }
+  }, [addLayer, addOrbatUnit, layers, updateLayer, updateOrbatUnit]);
+
+  const handleImportFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const sourceName = file.name
+        .replace(/\.orbat\.json$/i, "")
+        .replace(/\.milsymb\.json$/i, "")
+        .replace(/\.milxlyz$/i, "")
+        .replace(/\.(milxly|milx|json)$/i, "");
+      const bytes = await file.arrayBuffer();
+      const parsed = parseAnyMilFormatFromBytesForStore(bytes, file.name, sourceName);
+      applyImportedStoreData(parsed);
+      const symbolCount = parsed.layers.reduce((acc, layer) => acc + layer.symbols.length, 0);
+      const graphicCount = parsed.layers.reduce((acc, layer) => acc + layer.graphics.length, 0);
+      setNotice(`Import completato: ${symbolCount} simboli, ${graphicCount} grafiche, ${parsed.orbat.length} unità ORBAT.`);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Import militare non riuscito";
+      setNotice(`Errore import: ${message}`);
+    }
+  }, [applyImportedStoreData]);
+
+  const handleExportMilX = useCallback(() => {
+    exportToMilX(milLayers, "milgeo-export");
+    setNotice("Export MILXLY completato.");
+  }, [milLayers]);
+
+  const handleExportMilXlyz = useCallback(() => {
+    exportToMilXlyz(milLayers, "milgeo-export");
+    setNotice("Export MILXLYZ completato.");
+  }, [milLayers]);
 
   const tabCls = (t: TabId) =>
     cn(
@@ -559,6 +736,45 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
 
   return (
     <div className="flex flex-col h-full bg-background text-foreground text-sm">
+      <div className="flex items-center gap-1 border-b px-2 py-1.5">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".orbat.json,.milsymb.json,.milxly,.milx,.milxlyz,.json,.xml"
+          className="hidden"
+          onChange={handleImportFile}
+        />
+        <button
+          className="inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] hover:bg-muted"
+          onClick={() => fileInputRef.current?.click()}
+          title="Importa ORBAT, MilSymb, MILXLY o MILXLYZ"
+        >
+          <Upload size={12} /> Importa
+        </button>
+        <button
+          className="inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] hover:bg-muted disabled:opacity-50"
+          onClick={handleExportMilX}
+          disabled={milLayers.length === 0}
+          title="Esporta MILXLY"
+        >
+          <Download size={12} /> MILXLY
+        </button>
+        <button
+          className="inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] hover:bg-muted disabled:opacity-50"
+          onClick={handleExportMilXlyz}
+          disabled={milLayers.length === 0}
+          title="Esporta MILXLYZ"
+        >
+          <Download size={12} /> MILXLYZ
+        </button>
+      </div>
+
+      {notice && (
+        <div className="border-b bg-muted/20 px-3 py-1.5 text-[11px] text-muted-foreground">
+          {notice}
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex border-b">
         <button className={tabCls("catalog")} onClick={() => setTab("catalog")}>Catalogo</button>

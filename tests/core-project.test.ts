@@ -1080,3 +1080,76 @@ describe("annotation layer persistence", () => {
     assert.equal(head?.properties?.annotationId, "a1");
   });
 });
+
+describe("field collection persistence", () => {
+  it("round-trips schema, geometry, and collected features for offline reopen", () => {
+    const layerId = "field-observations";
+    const project = projectFromStore({
+      projectName: "Field Session",
+      mapView: { center: [0, 0], zoom: 2, bearing: 0, pitch: 0 },
+      basemapStyleUrl: DEFAULT_BASEMAP,
+      basemapVisible: true,
+      basemapOpacity: 1,
+      layers: [
+        geojsonLayer({
+          id: layerId,
+          name: "Field Observations",
+          metadata: {
+            fieldCollection: true,
+            collectionGeometry: "point",
+            collectionSchema: {
+              fields: [
+                { id: "name", label: "Name", type: "text", required: true },
+                {
+                  id: "status",
+                  label: "Status",
+                  type: "choice",
+                  required: false,
+                  options: ["open", "closed"],
+                },
+              ],
+            },
+          },
+          geojson: {
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                properties: {
+                  __collection: true,
+                  __photo: "data:image/png;base64,AAAA",
+                  name: "Checkpoint Alpha",
+                  status: "open",
+                },
+                geometry: { type: "Point", coordinates: [7.42, 46.95] },
+              },
+            ],
+          },
+        }),
+      ],
+      preferences: createEmptyProject().preferences,
+      metadata: {},
+    });
+
+    const reopened = parseProject(serializeProject(project));
+    const layer = reopened.layers.find((candidate) => candidate.id === layerId);
+    assert.ok(layer);
+    assert.equal(layer.metadata.fieldCollection, true);
+    assert.equal(layer.metadata.collectionGeometry, "point");
+    assert.deepEqual(layer.metadata.collectionSchema, {
+      fields: [
+        { id: "name", label: "Name", type: "text", required: true },
+        {
+          id: "status",
+          label: "Status",
+          type: "choice",
+          required: false,
+          options: ["open", "closed"],
+        },
+      ],
+    });
+    assert.equal(layer.geojson?.features.length, 1);
+    assert.equal(layer.geojson?.features[0]?.properties?.name, "Checkpoint Alpha");
+    assert.equal(layer.geojson?.features[0]?.properties?.status, "open");
+  });
+});

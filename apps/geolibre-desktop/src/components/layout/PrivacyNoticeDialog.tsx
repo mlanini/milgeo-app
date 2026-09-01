@@ -77,7 +77,7 @@ your device:
   references. Stored locally (browser localStorage / Tauri app data
   directory). Not transmitted externally.
 
-• Imported files – GeoJSON, KML, MilX (.milxly), KADAS MilSymb (.milsymb.json),
+• Imported files – GeoJSON, KML, MilX (.milxly/.milxlyz), KADAS MilSymb (.milsymb.json),
   and ORBAT (.orbat.json) files you open are read exclusively in-memory on
   your device.
 

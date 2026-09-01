@@ -17,11 +17,12 @@ import type {
   MilSymbolLayerSource,
   MilGraphicLayerSource,
 } from "@geolibre/core";
+import { strToU8, zipSync } from "fflate";
 
 // ─── Shared download helper ───────────────────────────────────────────────────
 
 function downloadBlob(
-  content: string,
+  content: string | Uint8Array,
   mimeType: string,
   filename: string,
 ): void {
@@ -294,6 +295,17 @@ export function exportToMilX(
   layers: GeoLibreLayer[],
   filename?: string,
 ): void {
+  const xml = buildMilXDocument(layers, filename);
+  downloadBlob(xml, "application/xml", `${filename ?? "milgeo-export"}.milxly`);
+}
+
+/**
+ * Build a MilX XML document from the selected mil layers.
+ */
+export function buildMilXDocument(
+  layers: GeoLibreLayer[],
+  filename?: string,
+): string {
   const graphicElements: string[] = [];
 
   for (const layer of layers) {
@@ -310,7 +322,7 @@ export function exportToMilX(
 
   const layerName = filename ?? "MilGeo Export";
 
-  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+  return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <MilXDocument_Layer xmlns="${MILX_NS}">
   <MssLibraryVersionTag>${MILX_LIBRARY_VERSION}</MssLibraryVersionTag>
   <MilXLayer>
@@ -323,6 +335,19 @@ ${graphicElements.join("\n")}
   <CoordSystemType>WGS84</CoordSystemType>
   <SymbolSize>${MILX_SYMBOL_SIZE}</SymbolSize>
 </MilXDocument_Layer>`;
+}
 
-  downloadBlob(xml, "application/xml", `${filename ?? "milgeo-export"}.milxly`);
+/**
+ * Export mil layers as a `.milxlyz` archive containing one `.milxly` entry.
+ */
+export function exportToMilXlyz(
+  layers: GeoLibreLayer[],
+  filename?: string,
+): void {
+  const stem = (filename ?? "milgeo-export").trim() || "milgeo-export";
+  const xml = buildMilXDocument(layers, stem);
+  const zipped = zipSync({
+    [`${stem}.milxly`]: strToU8(xml),
+  }, { level: 6 });
+  downloadBlob(zipped, "application/zip", `${stem}.milxlyz`);
 }

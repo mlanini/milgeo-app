@@ -14,6 +14,7 @@
  */
 
 import type { MilLayer, MilSymbolItem, MilGraphicItem, OrbatUnit, MilGeometryType } from "@geolibre/core";
+import { strFromU8, unzipSync } from "fflate";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -52,6 +53,12 @@ function validCoord(lon: unknown, lat: unknown): [number, number] | null {
 export interface StoreImportResult {
   layers: MilLayer[];
   orbat: OrbatUnit[];
+}
+
+const MAX_MILX_ARCHIVE_BYTES = 25 * 1024 * 1024;
+
+function asBytes(data: ArrayBuffer | Uint8Array): Uint8Array {
+  return data instanceof Uint8Array ? data : new Uint8Array(data);
 }
 
 // ─── ORBAT JSON ───────────────────────────────────────────────────────────────
@@ -398,6 +405,55 @@ export function parseMilXForStore(
   return { layers: resultLayers, orbat: [] };
 }
 
+/**
+ * Parse a zipped MilX layer archive (`.milxlyz`) and extract the first
+ * `.milxly` or `.milx` document inside.
+ */
+export function parseMilXArchiveForStore(
+  archive: ArrayBuffer | Uint8Array,
+  filename?: string,
+  sourceName?: string,
+): StoreImportResult {
+  const bytes = asBytes(archive);
+  if (bytes.byteLength > MAX_MILX_ARCHIVE_BYTES) {
+    throw new Error("MilX archive is too large to import safely.");
+  }
+
+  let entries: Record<string, Uint8Array>;
+  try {
+    let expanded = 0;
+    entries = unzipSync(bytes, {
+      filter(entry) {
+        if (entry.originalSize > MAX_MILX_ARCHIVE_BYTES) {
+          throw new Error("MilX archive is too large to import safely.");
+        }
+        expanded += entry.originalSize;
+        if (expanded > MAX_MILX_ARCHIVE_BYTES) {
+          throw new Error("MilX archive is too large to import safely.");
+        }
+        return /\.(milxly|milx)$/i.test(entry.name);
+      },
+    });
+  } catch (error) {
+    if (error instanceof Error && /too large to import safely/i.test(error.message)) {
+      throw error;
+    }
+    throw new Error("Invalid MilX archive: ZIP parse error");
+  }
+
+  const names = Object.keys(entries)
+    .filter((name) => /\.(milxly|milx)$/i.test(name))
+    .sort((a, b) => a.localeCompare(b));
+  if (names.length === 0) {
+    throw new Error("Invalid MilX archive: no .milxly/.milx document found");
+  }
+
+  const preferredName = names.find((name) => name.toLowerCase().endsWith(".milxly")) ?? names[0];
+  const xml = strFromU8(entries[preferredName]);
+  const layerName = sourceName ?? filename?.replace(/\.milxlyz$/i, "") ?? preferredName;
+  return parseMilXForStore(xml, layerName);
+}
+
 // ─── Auto-detect dispatcher ───────────────────────────────────────────────────
 
 /**
@@ -458,6 +514,24 @@ export function parseAnyMilFormatForStore(
 
   throw new Error(
     `Unrecognised file format: ${filename}. ` +
-      "Expected .milgeo.json, .orbat.json, .milsymb.json, or .milxly",
+      "Expected .milgeo.json, .orbat.json, .milsymb.json, .milxlyz, or .milxly",
   );
+}
+
+/**
+ * Byte-oriented dispatcher for imports. Needed for zipped `.milxlyz` where
+ * `File.text()` cannot be used directly.
+ */
+export function parseAnyMilFormatFromBytesForStore(
+  data: ArrayBuffer | Uint8Array,
+  filename: string,
+  sourceName?: string,
+): StoreImportResult {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".milxlyz")) {
+    return parseMilXArchiveForStore(data, filename, sourceName);
+  }
+
+  const text = new TextDecoder().decode(asBytes(data));
+  return parseAnyMilFormatForStore(text, filename, sourceName);
 }

@@ -3,6 +3,18 @@
 Date: 2026-08-05
 Scope: full clean-room refactor on top of newest GeoLibre architecture while preserving MilGeo domain features and Render deployment.
 
+## 2026-09-01 Direction update
+
+- Terrain analysis is the first implementation priority.
+- Coordinate support must include LV03 and LV95.
+- Line-of-sight is accepted as beta and must be part of the unified height-profile workflow.
+- MILX interoperability requires full export and bidirectional mapping.
+- MILX interoperability excludes cartouche import or export in this release.
+- Print templates are neutral NATO-like and include only title and classification metadata.
+- Classification is restricted to UNCLASSIFIED, RESTRICTED, CONFIDENTIAL, SECRET, TOP SECRET.
+- SitaWare SDL is excluded until trustworthy public format documentation is available.
+- Delivery target remains web on Render and desktop.
+
 ## 1. Objectives
 
 - Re-base the web app on the latest GeoLibre architecture and package boundaries.
@@ -28,12 +40,12 @@ Scope: full clean-room refactor on top of newest GeoLibre architecture while pre
 ### Phase B - Functional parity implementation
 
 - Deliver KADAS-equivalent capabilities in prioritized slices:
+  - Terrain and line-of-sight workflows first
+  - Measurement, coordinates, and geodetic tools (including LV03 and LV95)
   - Redlining and annotation workflows
-  - Measurement and geodetic tools
-  - Terrain and line-of-sight workflows
   - GPS/GPX workflows
   - Grids (UTM/MGRS) and multi-view/3D
-  - Printing and export/import (KML/GPKG)
+  - Printing and export/import (KML/GPKG and MILXLY/MILXLYZ, without cartouche)
   - Online/offline switching and templates
 
 ### Phase C - Stabilization and deployment hardening
@@ -64,4 +76,4 @@ A refactor increment is done when all are true:
 1. Build parity matrix with explicit status per feature.
 2. Wire task board to matrix IDs.
 3. Add Render-specific quality gates to CI.
-4. Start with redlining+measurement parity slice.
+4. Start with terrain+height-profile+LOS beta parity slice.

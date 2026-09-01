@@ -22,6 +22,11 @@ describe("geodesicDistanceMeters", () => {
   it("returns zero for identical coordinates", () => {
     assert.equal(geodesicDistanceMeters([12.3, 45.6], [12.3, 45.6]), 0);
   });
+
+  it("handles short paths that cross the antimeridian", () => {
+    // 0.2° at the equator across +/-180 should stay a short arc (~22 km).
+    close(geodesicDistanceMeters([179.9, 0], [-179.9, 0]), 22_239, 2_000);
+  });
 });
 
 describe("pathDistanceMeters", () => {
@@ -48,6 +53,12 @@ describe("initialBearingDegrees", () => {
   it("is ~0 degrees when heading due north", () => {
     close(initialBearingDegrees([0, 0], [0, 1]), 0, 0.5);
   });
+
+  it("returns a finite azimuth for near-polar tracks", () => {
+    const az = initialBearingDegrees([10, 80], [20, 82]);
+    assert.ok(Number.isFinite(az));
+    assert.ok(az >= 0 && az < 360);
+  });
 });
 
 describe("midpointLngLat", () => {
@@ -63,5 +74,11 @@ describe("midpointLngLat", () => {
     assert.ok(Number.isFinite(lat));
     assert.ok(lon >= -180 && lon <= 180);
     assert.ok(lat >= -90 && lat <= 90);
+  });
+
+  it("keeps longitude normalized when midpoint crosses the antimeridian", () => {
+    const [lon, lat] = midpointLngLat([179, 10], [-179, 10]);
+    assert.ok(Number.isFinite(lon) && Number.isFinite(lat));
+    assert.ok(lon >= -180 && lon <= 180);
   });
 });

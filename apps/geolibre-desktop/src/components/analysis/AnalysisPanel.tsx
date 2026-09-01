@@ -15,7 +15,6 @@ import {
   Compass,
   Database,
   Download,
-  Eye,
   Layers,
   MapPin,
   Mountain,
@@ -32,6 +31,7 @@ import {
   type ChangeEvent,
   type RefObject,
 } from "react";
+import { isEditableTarget } from "../../lib/commands";
 import {
   formatArea,
   formatBearing,
@@ -76,12 +76,144 @@ async function fetchSidecarUrl(
 
 type DrawMode = "none" | "point" | "line" | "polygon" | "rectangle";
 
+type TerrainToolId = "slope" | "hillshade" | "viewshed";
+type TerrainPresetId =
+  | "slope-recon"
+  | "slope-mobility"
+  | "slope-planning"
+  | "hillshade-day"
+  | "hillshade-low-sun"
+  | "hillshade-contrast"
+  | "viewshed-checkpoint"
+  | "viewshed-watch"
+  | "viewshed-sector";
+
+interface TerrainPresetDef {
+  id: TerrainPresetId;
+  label: string;
+  description: string;
+  maxAreaKm2: number;
+  /** Viewshed-only radius around the observer click. */
+  radiusKm?: number;
+}
+
 interface ToolDef {
   id: string;
   label: string;
   icon: typeof Ruler;
   drawMode: DrawMode;
   description: string;
+}
+
+const TERRAIN_PRESETS: Record<TerrainToolId, TerrainPresetDef[]> = {
+  slope: [
+    {
+      id: "slope-recon",
+      label: "Recon (fast)",
+      description: "Fast slope snapshot for a small area of operations.",
+      maxAreaKm2: 1_500,
+    },
+    {
+      id: "slope-mobility",
+      label: "Mobility",
+      description: "Balanced detail for route and mobility planning.",
+      maxAreaKm2: 3_500,
+    },
+    {
+      id: "slope-planning",
+      label: "Planning",
+      description: "Broader area planning with longer runtime.",
+      maxAreaKm2: 6_000,
+    },
+  ],
+  hillshade: [
+    {
+      id: "hillshade-day",
+      label: "Daylight relief",
+      description: "General daytime terrain readability.",
+      maxAreaKm2: 1_500,
+    },
+    {
+      id: "hillshade-low-sun",
+      label: "Low sun",
+      description: "Enhanced ridgeline and micro-relief visibility.",
+      maxAreaKm2: 3_500,
+    },
+    {
+      id: "hillshade-contrast",
+      label: "High contrast",
+      description: "Strong relief contrast for briefing products.",
+      maxAreaKm2: 6_000,
+    },
+  ],
+  viewshed: [
+    {
+      id: "viewshed-checkpoint",
+      label: "Checkpoint",
+      description: "Short-range observer check around a fixed position.",
+      maxAreaKm2: 800,
+      radiusKm: 8,
+    },
+    {
+      id: "viewshed-watch",
+      label: "Watchtower",
+      description: "Medium-range watch coverage for local defense.",
+      maxAreaKm2: 2_000,
+      radiusKm: 15,
+    },
+    {
+      id: "viewshed-sector",
+      label: "Sector coverage",
+      description: "Wider surveillance footprint with higher compute load.",
+      maxAreaKm2: 4_500,
+      radiusKm: 25,
+    },
+  ],
+};
+
+const TERRAIN_HARD_MAX_AREA_KM2 = 12_000;
+
+function lonDeltaDegrees(latDeg: number, km: number): number {
+  const cosLat = Math.cos((latDeg * Math.PI) / 180);
+  // Near poles, avoid exploding degrees due to cos(lat) ~ 0.
+  const safeCos = Math.max(0.1, Math.abs(cosLat));
+  return km / (111.32 * safeCos);
+}
+
+function latDeltaDegrees(km: number): number {
+  return km / 110.574;
+}
+
+function expandPointToBbox(point: LonLat, radiusKm: number): {
+  west: number;
+  east: number;
+  south: number;
+  north: number;
+} {
+  const [lon, lat] = point;
+  const dLat = latDeltaDegrees(radiusKm);
+  const dLon = lonDeltaDegrees(lat, radiusKm);
+  return {
+    west: lon - dLon,
+    east: lon + dLon,
+    south: lat - dLat,
+    north: lat + dLat,
+  };
+}
+
+function bboxAreaKm2(bbox: {
+  west: number;
+  east: number;
+  south: number;
+  north: number;
+}): number {
+  const midLat = (bbox.south + bbox.north) / 2;
+  const widthM = haversineDistance([bbox.west, midLat], [bbox.east, midLat]);
+  const heightM = haversineDistance(
+    [(bbox.west + bbox.east) / 2, bbox.south],
+    [(bbox.west + bbox.east) / 2, bbox.north],
+  );
+  return (widthM * heightM) / 1_000_000;
 }
 
 const TOOLS: ToolDef[] = [
@@ -108,18 +240,11 @@ const TOOLS: ToolDef[] = [
   },
   {
     id: "profile",
-    label: "Elevation Profile",
+    label: "Elevation Profile + LOS (beta)",
     icon: TrendingUp,
     drawMode: "line",
-    description: "Draw a transect line and plot the elevation profile along it.",
-  },
-  {
-    id: "los",
-    label: "Line of Sight",
-    icon: Eye,
-    drawMode: "line",
     description:
-      "Check visibility between observer (first click) and target (last click) along a transect.",
+      "Draw a transect line and plot the elevation profile. Optionally enable beta line-of-sight overlay.",
   },
   {
     id: "minmax",
@@ -177,6 +302,8 @@ interface AnalysisResult {
   profilePoints?: LonLat[];
   profileElevations?: number[];
   losVisible?: boolean[];
+  losObserverHeightM?: number;
+  losTargetHeightM?: number;
   // Min/Max
   elevStats?: ReturnType<typeof elevationStats>;
   // Ephemeris
@@ -522,6 +649,16 @@ export function AnalysisPanel({
   );
   // Profile sample count
   const [profileSamples, setProfileSamples] = useState(64);
+  const [profileLosEnabled, setProfileLosEnabled] = useState(false);
+  const [losObserverHeightM, setLosObserverHeightM] = useState(1.8);
+  const [losTargetHeightM, setLosTargetHeightM] = useState(0);
+  const [terrainPresetByTool, setTerrainPresetByTool] = useState<
+    Record<TerrainToolId, TerrainPresetId>
+  >({
+    slope: "slope-mobility",
+    hillshade: "hillshade-day",
+    viewshed: "viewshed-watch",
+  });
   const [demPickerOpen, setDemPickerOpen] = useState(false);
   // Local file path input (only used inside DEM picker, before save)
   const [localDtmDraft, setLocalDtmDraft] = useState("");
@@ -542,9 +679,28 @@ export function AnalysisPanel({
   }, [open, demSource, localDtmData, localDtmPath]);
 
   const selectedTool = useMemo(
-    () => TOOLS.find((t) => t.id === selectedToolId)!,
+    () => TOOLS.find((t) => t.id === selectedToolId) ?? TOOLS[0],
     [selectedToolId],
   );
+
+  const terrainPreset = useMemo(() => {
+    if (
+      selectedTool.id !== "slope" &&
+      selectedTool.id !== "hillshade" &&
+      selectedTool.id !== "viewshed"
+    ) {
+      return null;
+    }
+    const toolId = selectedTool.id as TerrainToolId;
+    const presets = TERRAIN_PRESETS[toolId];
+    const presetId = terrainPresetByTool[toolId];
+    return presets.find((p) => p.id === presetId) ?? presets[0];
+  }, [selectedTool.id, terrainPresetByTool]);
+
+  useEffect(() => {
+    if (TOOLS.some((t) => t.id === selectedToolId)) return;
+    setSelectedToolId(TOOLS[0].id);
+  }, [selectedToolId]);
 
   // ─── Reset when tool changes ────────────────────────────────────────────────
   useEffect(() => {
@@ -678,8 +834,8 @@ export function AnalysisPanel({
         return;
       }
 
-      // ─ Elevation profile ─────────────────────────────────────────────────────
-      if (id === "profile" || id === "los") {
+      // ─ Elevation profile (+ optional LOS beta) ─────────────────────────────
+      if (id === "profile") {
         if (drawnCoords.length < 2) {
           setResult({ toolId: id, error: "Draw at least 2 points." });
           setRunState("error");
@@ -701,9 +857,13 @@ export function AnalysisPanel({
         const elevations = elevSamples.map((s) => s.elevationM ?? NaN);
 
         let losVisible: boolean[] | undefined;
-        if (id === "los") {
+        if (profileLosEnabled) {
           const validElevs = elevations.map((e) => (Number.isFinite(e) ? e : 0));
-          losVisible = lineOfSight(validElevs);
+          losVisible = lineOfSight(
+            validElevs,
+            losObserverHeightM,
+            losTargetHeightM,
+          );
         }
 
         setStoredElevations(elevations);
@@ -711,8 +871,10 @@ export function AnalysisPanel({
         setResult({
           toolId: id,
           profilePoints: elevSamples.map((s) => [s.lon, s.lat]),
-          profileElevations: distances,
+          profileElevations: elevations,
           losVisible,
+          losObserverHeightM: profileLosEnabled ? losObserverHeightM : undefined,
+          losTargetHeightM: profileLosEnabled ? losTargetHeightM : undefined,
         });
         setRunState("done");
         return;
@@ -779,17 +941,81 @@ export function AnalysisPanel({
           return;
         }
 
-        // Derive bounding box from drawn coords
-        const lons = drawnCoords.map((c) => c[0]);
-        const lats = drawnCoords.map((c) => c[1]);
-        const bbox = {
-          west: Math.min(...lons),
-          east: Math.max(...lons),
-          south: Math.min(...lats),
-          north: Math.max(...lats),
-        };
+        const selectedPreset = terrainPreset;
+        if (!selectedPreset) {
+          setResult({
+            toolId: id,
+            error: "No terrain preset selected.",
+          });
+          setRunState("error");
+          return;
+        }
 
-        setProgress(useLocalDtm ? "Reading local DEM…" : "Requesting DEM from OpenTopography…");
+        // Derive bounding box from drawn coords; viewshed uses a preset radius
+        // around the observer point for a guided, predictable workflow.
+        let bbox: { west: number; east: number; south: number; north: number };
+        if (id === "viewshed") {
+          const observer = drawnCoords[0];
+          const radiusKm = selectedPreset.radiusKm ?? 15;
+          bbox = expandPointToBbox(observer, radiusKm);
+        } else {
+          const lons = drawnCoords.map((c) => c[0]);
+          const lats = drawnCoords.map((c) => c[1]);
+          bbox = {
+            west: Math.min(...lons),
+            east: Math.max(...lons),
+            south: Math.min(...lats),
+            north: Math.max(...lats),
+          };
+        }
+
+        const areaKm2 = bboxAreaKm2(bbox);
+        if (!Number.isFinite(areaKm2) || areaKm2 <= 0) {
+          setResult({
+            toolId: id,
+            error:
+              "Invalid analysis area. Draw a wider area or pick a different terrain preset.",
+          });
+          setRunState("error");
+          return;
+        }
+        if (areaKm2 > TERRAIN_HARD_MAX_AREA_KM2) {
+          setResult({
+            toolId: id,
+            error:
+              `Selected area is too large (${areaKm2.toFixed(0)} km2). ` +
+              `Hard limit is ${TERRAIN_HARD_MAX_AREA_KM2.toLocaleString()} km2. ` +
+              "Reduce the area or split the task into smaller tiles.",
+          });
+          setRunState("error");
+          return;
+        }
+        if (areaKm2 > selectedPreset.maxAreaKm2) {
+          setResult({
+            toolId: id,
+            error:
+              `Preset \"${selectedPreset.label}\" recommends up to ${selectedPreset.maxAreaKm2.toLocaleString()} km2 ` +
+              `(${areaKm2.toFixed(0)} km2 selected). Choose a broader preset or reduce the area for better performance.`,
+          });
+          setRunState("error");
+          return;
+        }
+        if (!useLocalDtm && areaKm2 > 4_000) {
+          setResult({
+            toolId: id,
+            error:
+              `Online DEM request is heavy for ${areaKm2.toFixed(0)} km2. ` +
+              "Prefer Local DTM mode or split the AOI to avoid timeout.",
+          });
+          setRunState("error");
+          return;
+        }
+
+        setProgress(
+          useLocalDtm
+            ? `Reading local DEM (${selectedPreset.label})…`
+            : `Requesting DEM from OpenTopography (${selectedPreset.label})…`,
+        );
 
         try {
           const demUrl = `https://portal.opentopography.org/API/globaldem?demtype=SRTMGL1&south=${bbox.south}&north=${bbox.north}&west=${bbox.west}&east=${bbox.east}&outputFormat=GTiff&API_Key=${apiKey}`;
@@ -841,7 +1067,20 @@ export function AnalysisPanel({
       });
       setRunState("error");
     }
-  }, [selectedTool, drawnCoords, ephDate, profileSamples, desktopSettings, demSource, localDtmData, localDtmPath]);
+  }, [
+    selectedTool,
+    terrainPreset,
+    drawnCoords,
+    ephDate,
+    profileSamples,
+    profileLosEnabled,
+    losObserverHeightM,
+    losTargetHeightM,
+    desktopSettings,
+    demSource,
+    localDtmData,
+    localDtmPath,
+  ]);
 
   // Extra state for elevation profile
   const [storedElevations, setStoredElevations] = useState<number[]>([]);
@@ -882,6 +1121,44 @@ export function AnalysisPanel({
     !isLoading &&
     (selectedTool.drawMode === "none" ||
       drawnCoords.length >= (selectedTool.drawMode === "point" ? 1 : 2));
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+      if (isLoading) return;
+
+      if (event.key === "Escape" && (isDrawMode || hasDraw)) {
+        event.preventDefault();
+        handleClearDraw();
+        return;
+      }
+
+      if (event.key === "Enter" && !event.altKey && !event.shiftKey) {
+        if (event.ctrlKey || event.metaKey) {
+          if (!canRun) return;
+          event.preventDefault();
+          void handleRunAnalysis();
+          return;
+        }
+        if (isDrawMode) {
+          event.preventDefault();
+          handleFinishDraw();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    open,
+    isLoading,
+    isDrawMode,
+    hasDraw,
+    canRun,
+    handleClearDraw,
+    handleFinishDraw,
+    handleRunAnalysis,
+  ]);
 
   return (
     <div
@@ -1006,23 +1283,95 @@ export function AnalysisPanel({
             )}
 
             {/* Profile sample count */}
-            {(selectedTool.id === "profile" || selectedTool.id === "los") && (
-              <div className="flex items-center gap-2">
-                <Label className="text-[11px] whitespace-nowrap">Samples</Label>
-                <Input
-                  type="number"
-                  min={10}
-                  max={200}
-                  value={profileSamples}
-                  onChange={(e) =>
-                    setProfileSamples(
-                      Math.max(10, Math.min(200, Number(e.target.value))),
-                    )
-                  }
-                  className="h-7 w-20 text-xs"
-                />
+            {selectedTool.id === "profile" && (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <Label className="text-[11px] whitespace-nowrap">Samples</Label>
+                  <Input
+                    type="number"
+                    min={10}
+                    max={200}
+                    value={profileSamples}
+                    onChange={(e) =>
+                      setProfileSamples(
+                        Math.max(10, Math.min(200, Number(e.target.value))),
+                      )
+                    }
+                    className="h-7 w-20 text-xs"
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-[11px]">
+                  <input
+                    type="checkbox"
+                    checked={profileLosEnabled}
+                    onChange={(e) => setProfileLosEnabled(e.target.checked)}
+                    className="accent-primary"
+                  />
+                  Enable line-of-sight overlay (beta)
+                </label>
+                {profileLosEnabled && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-[11px] whitespace-nowrap">Observer h (m)</Label>
+                      <Input
+                        type="number"
+                        step={0.1}
+                        value={losObserverHeightM}
+                        onChange={(e) => setLosObserverHeightM(Number(e.target.value) || 0)}
+                        className="h-7 text-xs"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label className="text-[11px] whitespace-nowrap">Target h (m)</Label>
+                      <Input
+                        type="number"
+                        step={0.1}
+                        value={losTargetHeightM}
+                        onChange={(e) => setLosTargetHeightM(Number(e.target.value) || 0)}
+                        className="h-7 text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
+
+            {/* Terrain preset controls */}
+            {(selectedTool.id === "slope" ||
+              selectedTool.id === "hillshade" ||
+              selectedTool.id === "viewshed") &&
+              terrainPreset && (
+                <div className="flex flex-col gap-1.5 rounded border bg-muted/30 p-2">
+                  <Label className="text-[11px]">Guided preset</Label>
+                  <select
+                    value={terrainPreset.id}
+                    onChange={(e) => {
+                      const toolId = selectedTool.id as TerrainToolId;
+                      const next = e.target.value as TerrainPresetId;
+                      setTerrainPresetByTool((prev) => ({
+                        ...prev,
+                        [toolId]: next,
+                      }));
+                    }}
+                    className="h-7 rounded border bg-background px-2 text-xs"
+                  >
+                    {TERRAIN_PRESETS[selectedTool.id as TerrainToolId].map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    {terrainPreset.description}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Recommended area: up to {terrainPreset.maxAreaKm2.toLocaleString()} km2.
+                    {terrainPreset.radiusKm
+                      ? ` Viewshed radius: ${terrainPreset.radiusKm} km from observer.`
+                      : ""}
+                  </p>
+                </div>
+              )}
 
             {/* Run button */}
             {(canRun || selectedTool.id === "ephemeris") && (
@@ -1064,7 +1413,7 @@ export function AnalysisPanel({
       {/* Drawing overlay hint */}
       {isDrawMode && (
         <div className="shrink-0 border-t bg-primary/5 px-3 py-1.5 text-center text-[11px] text-primary">
-          Drawing active — click on the map to add points
+          Drawing active - click to add points. Enter finishes, Esc clears, Ctrl/Cmd+Enter runs.
         </div>
       )}
 

@@ -1,15 +1,18 @@
 /**
- * A tolerant parser for free-text geographic coordinates pasted into the Set
- * View dialog. It recognizes the three notations field workers and GIS users
- * commonly copy from external sources and returns signed decimal degrees:
+ * A tolerant parser for free-text coordinates pasted into the Set View dialog
+ * (and place search). It recognizes the most common notations field workers
+ * and GIS users copy from external sources and returns signed decimal degrees:
  *
  * - Decimal degrees (DD):              `51.5074, -0.1278`  ·  `35.475317 -97.514272`
  * - Degrees, minutes, seconds (DMS):   `51°30'26"N, 0°07'39"W`
  * - Degrees and decimal minutes (DDM): `51°30.44'N, 0°07.65'W`
+ * - Swiss LV03/LV95 projected pairs:   `600000 200000`  ·  `2600000, 1200000`
  *
  * Kept separate from the React component so the parsing can be unit tested in
  * isolation.
  */
+
+import { looksLikeLv03, looksLikeLv95, lv03ToWgs84, lv95ToWgs84 } from "./swiss-grid";
 
 /** A parsed geographic coordinate as signed decimal degrees. */
 export interface LatLon {
@@ -29,6 +32,30 @@ const HEMISPHERE: Record<string, { axis: "lat" | "lon"; sign: 1 | -1 }> = {
 interface Component {
   value: number;
   axis: "lat" | "lon" | null;
+}
+
+function parseSwissGridPair(input: string): LatLon | null {
+  const tokens = input
+    .trim()
+    .split(/[\s,;]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (tokens.length !== 2) return null;
+
+  const a = Number(tokens[0]);
+  const b = Number(tokens[1]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+
+  // Swiss projected coordinates are entered as easting/northing.
+  if (looksLikeLv95(a, b)) {
+    const { lon, lat } = lv95ToWgs84(a, b);
+    return { lon, lat };
+  }
+  if (looksLikeLv03(a, b)) {
+    const { lon, lat } = lv03ToWgs84(a, b);
+    return { lon, lat };
+  }
+  return null;
 }
 
 /**
@@ -80,6 +107,11 @@ function parseComponent(raw: string): Component | null {
 export function parseLatLon(input: string): LatLon | null {
   const text = input.trim();
   if (!text) return null;
+
+  // Swiss-grid numeric pairs have no hemisphere letters and would otherwise be
+  // rejected as out-of-range DD values.
+  const swiss = parseSwissGridPair(text);
+  if (swiss) return swiss;
 
   const hasHemisphere = /[NSEW]/i.test(text);
   // Only hemisphere-suffix notation (e.g. `51.5N`) is recognized; prefix

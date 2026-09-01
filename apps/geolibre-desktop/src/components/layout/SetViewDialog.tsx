@@ -16,9 +16,10 @@ import {
 import type { MapController } from "@geolibre/map";
 import type { ParseKeys } from "i18next";
 import { ChevronDown, ClipboardPaste, Info } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { parseLatLon } from "../../lib/coordinates";
+import { lv03ToWgs84, lv95ToWgs84, wgs84ToLv03, wgs84ToLv95 } from "../../lib/swiss-grid";
 import {
   type DdmAxis,
   type DmsAxis,
@@ -36,10 +37,11 @@ interface SetViewDialogProps {
 
 /**
  * How the center coordinate is entered by hand: decimal degrees, degrees/
- * minutes/seconds, or degrees/decimal-minutes. The smart-paste box above the
- * toggle accepts all three regardless of this choice.
+ * minutes/seconds, degrees/decimal-minutes, or Swiss LV03/LV95 projected
+ * coordinates. The smart-paste box above the toggle accepts all supported
+ * formats regardless of this choice.
  */
-type CoordFormat = "dd" | "dms" | "ddm";
+type CoordFormat = "dd" | "dms" | "ddm" | "lv03" | "lv95";
 
 /** The five editable camera fields, kept as strings so inputs can be cleared. */
 interface ViewFields {
@@ -62,6 +64,11 @@ interface DdmFields {
   lat: DdmAxis;
 }
 
+interface SwissFields {
+  easting: string;
+  northing: string;
+}
+
 const EMPTY_FIELDS: ViewFields = {
   longitude: "",
   latitude: "",
@@ -78,6 +85,11 @@ const EMPTY_DMS: DmsFields = {
 const EMPTY_DDM: DdmFields = {
   lon: { deg: "", min: "", dir: "E" },
   lat: { deg: "", min: "", dir: "N" },
+};
+
+const EMPTY_SWISS: SwissFields = {
+  easting: "",
+  northing: "",
 };
 
 /** Round a value for display so prefilled fields aren't 15-digit floats. */
@@ -97,9 +109,11 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
   const [fields, setFields] = useState<ViewFields>(EMPTY_FIELDS);
   const [dms, setDms] = useState<DmsFields>(EMPTY_DMS);
   const [ddm, setDdm] = useState<DdmFields>(EMPTY_DDM);
+  const [lv03, setLv03] = useState<SwissFields>(EMPTY_SWISS);
+  const [lv95, setLv95] = useState<SwissFields>(EMPTY_SWISS);
   const [format, setFormat] = useState<CoordFormat>("dd");
   const [error, setError] = useState<string | null>(null);
-  // The smart-paste box: a full coordinate string in DD/DMS/DDM that fills the
+  // The smart-paste box: a full coordinate string in any supported format that fills the
   // precise fields below only when the user runs it with "Process input" (or
   // Enter), so the parse is an explicit, verifiable step rather than something
   // that mutates the fields on every keystroke (#828).
@@ -117,7 +131,7 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
 
   // Fill all three center representations from one decimal lon/lat, so the value
   // is in place whichever format the user switches to or submits in.
-  const fillFromDecimal = (lon: number, lat: number) => {
+  const fillFromDecimal = useCallback((lon: number, lat: number) => {
     setFields((current) => ({
       ...current,
       longitude: Number.isFinite(lon) ? round(lon, 6) : "",
@@ -131,10 +145,20 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
       lon: decimalToDdmAxis(lon, "lon"),
       lat: decimalToDdmAxis(lat, "lat"),
     });
-  };
+    const asLv03 = Number.isFinite(lon) && Number.isFinite(lat) ? wgs84ToLv03(lon, lat) : null;
+    const asLv95 = Number.isFinite(lon) && Number.isFinite(lat) ? wgs84ToLv95(lon, lat) : null;
+    setLv03({
+      easting: asLv03 ? round(asLv03.easting, 2) : "",
+      northing: asLv03 ? round(asLv03.northing, 2) : "",
+    });
+    setLv95({
+      easting: asLv95 ? round(asLv95.easting, 2) : "",
+      northing: asLv95 ? round(asLv95.northing, 2) : "",
+    });
+  }, []);
 
   // Seed every coordinate representation from the live camera whenever the
-  // dialog opens, so switching DD/DMS/DDM shows the same point either way.
+  // dialog opens, so switching formats always shows the same point.
   useEffect(() => {
     if (!open) return;
     const view = mapControllerRef.current?.readView();
@@ -147,14 +171,7 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
       pitch: round(view.pitch, 1),
       bearing: round(view.bearing, 1),
     });
-    setDms({
-      lon: decimalToDmsAxis(longitude, "lon"),
-      lat: decimalToDmsAxis(latitude, "lat"),
-    });
-    setDdm({
-      lon: decimalToDdmAxis(longitude, "lon"),
-      lat: decimalToDdmAxis(latitude, "lat"),
-    });
+    fillFromDecimal(longitude, latitude);
     // Reopen with a clean slate: everything else is reseeded, so reset the
     // format too rather than carrying over the last session's DD/DMS/DDM choice.
     setFormat("dd");
@@ -162,7 +179,7 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
     setPaste("");
     setPasteStatus("idle");
     setPasteOpen(false);
-  }, [open, mapControllerRef]);
+  }, [open, mapControllerRef, fillFromDecimal]);
 
   // Editing the longitude/latitude by hand dismisses a stale Process
   // confirmation/warning, since those shown values no longer came from the paste
@@ -189,6 +206,15 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
     }));
   };
 
+  const updateSwiss = (kind: "lv03" | "lv95", key: keyof SwissFields) => (value: string) => {
+    setPasteStatus("idle");
+    if (kind === "lv03") {
+      setLv03((current) => ({ ...current, [key]: value }));
+    } else {
+      setLv95((current) => ({ ...current, [key]: value }));
+    }
+  };
+
   // The center as decimal lon/lat read from whichever format is active. A blank
   // field becomes NaN (not 0, since Number("") is 0), and the DMS/DDM helpers
   // return NaN for out-of-range parts, both caught by the finite check on submit.
@@ -203,10 +229,23 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
         lat: dmsAxisToDecimal(dms.lat, "lat"),
       };
     }
-    return {
-      lon: ddmAxisToDecimal(ddm.lon, "lon"),
-      lat: ddmAxisToDecimal(ddm.lat, "lat"),
-    };
+    if (format === "ddm") {
+      return {
+        lon: ddmAxisToDecimal(ddm.lon, "lon"),
+        lat: ddmAxisToDecimal(ddm.lat, "lat"),
+      };
+    }
+    const parsePair = (pair: SwissFields): { easting: number; northing: number } => ({
+      easting: pair.easting.trim() === "" ? Number.NaN : Number(pair.easting),
+      northing: pair.northing.trim() === "" ? Number.NaN : Number(pair.northing),
+    });
+    const swissPair = format === "lv95" ? parsePair(lv95) : parsePair(lv03);
+    if (!Number.isFinite(swissPair.easting) || !Number.isFinite(swissPair.northing)) {
+      return { lon: Number.NaN, lat: Number.NaN };
+    }
+    return format === "lv95"
+      ? lv95ToWgs84(swissPair.easting, swissPair.northing)
+      : lv03ToWgs84(swissPair.easting, swissPair.northing);
   };
 
   // Switching format converts the current center across so no entry is lost: an
@@ -226,10 +265,22 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
         lon: decimalToDmsAxis(lon, "lon"),
         lat: decimalToDmsAxis(lat, "lat"),
       });
-    } else {
+    } else if (next === "ddm") {
       setDdm({
         lon: decimalToDdmAxis(lon, "lon"),
         lat: decimalToDdmAxis(lat, "lat"),
+      });
+    } else if (next === "lv03") {
+      const projected = Number.isFinite(lon) && Number.isFinite(lat) ? wgs84ToLv03(lon, lat) : null;
+      setLv03({
+        easting: projected ? round(projected.easting, 2) : "",
+        northing: projected ? round(projected.northing, 2) : "",
+      });
+    } else {
+      const projected = Number.isFinite(lon) && Number.isFinite(lat) ? wgs84ToLv95(lon, lat) : null;
+      setLv95({
+        easting: projected ? round(projected.easting, 2) : "",
+        northing: projected ? round(projected.northing, 2) : "",
       });
     }
     setError(null);
@@ -244,7 +295,7 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
   };
 
   // The "Process input" action (button or Enter in the box): parse on demand and
-  // fill the DD, DMS, and DDM fields so the result shows in whichever format is
+  // fill all coordinate representations so the result shows in whichever format is
   // active, confirming inline without closing the dialog so a novice can verify
   // it before going. Unrecognized text is left in place and flagged below.
   const handleProcess = () => {
@@ -387,6 +438,36 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
     );
   };
 
+  const swissRow = (kind: "lv03" | "lv95") => {
+    const value = kind === "lv03" ? lv03 : lv95;
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor={`set-view-${kind}-easting`}>{t("toolbar.setView.easting")}</Label>
+          <Input
+            id={`set-view-${kind}-easting`}
+            type="number"
+            inputMode="decimal"
+            step="any"
+            value={value.easting}
+            onChange={(event) => updateSwiss(kind, "easting")(event.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`set-view-${kind}-northing`}>{t("toolbar.setView.northing")}</Label>
+          <Input
+            id={`set-view-${kind}-northing`}
+            type="number"
+            inputMode="decimal"
+            step="any"
+            value={value.northing}
+            onChange={(event) => updateSwiss(kind, "northing")(event.target.value)}
+          />
+        </div>
+      </div>
+    );
+  };
+
   /** One DDM axis row: degrees / decimal-minutes inputs plus a hemisphere. */
   const ddmAxisRow = (
     axis: keyof DdmFields,
@@ -454,8 +535,38 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
           invalid) before handleSubmit ever runs. We do our own thorough,
           localized validation below, so let that be the single source of
           truth. */}
-        <form className="space-y-5" noValidate onSubmit={handleSubmit}>
-          {/* Segment A: coordinates, with a DD/DMS/DDM manual-entry toggle. */}
+        <form
+          className="space-y-5"
+          noValidate
+          onSubmit={handleSubmit}
+          onKeyDown={(event) => {
+            // Operator shortcuts local to this dialog:
+            // - Ctrl/Cmd+Enter submits from any field.
+            // - Alt+1..5 switches the active coordinate representation.
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.requestSubmit();
+              return;
+            }
+            if (!event.altKey || event.ctrlKey || event.metaKey) return;
+            const next: CoordFormat | null =
+              event.key === "1"
+                ? "dd"
+                : event.key === "2"
+                  ? "dms"
+                  : event.key === "3"
+                    ? "ddm"
+                    : event.key === "4"
+                      ? "lv03"
+                      : event.key === "5"
+                        ? "lv95"
+                        : null;
+            if (!next) return;
+            event.preventDefault();
+            changeFormat(next);
+          }}
+        >
+          {/* Segment A: coordinates, with a single active manual-entry format. */}
           <section className="space-y-3">
             <SectionHeading>{t("toolbar.setView.sectionCoordinates")}</SectionHeading>
             {/* Smart paste sits behind a clearly labeled, always-visible toggle
@@ -560,13 +671,15 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
             <div
               role="radiogroup"
               aria-labelledby="set-view-format-label"
-              className="grid grid-cols-3 gap-1 rounded-md border border-input p-1"
+              className="grid grid-cols-5 gap-1 rounded-md border border-input p-1"
             >
               {(
                 [
                   ["dd", "toolbar.setView.formatDdShort", "toolbar.setView.formatDd"],
                   ["dms", "toolbar.setView.formatDmsShort", "toolbar.setView.formatDms"],
                   ["ddm", "toolbar.setView.formatDdmShort", "toolbar.setView.formatDdm"],
+                  ["lv03", "toolbar.setView.formatLv03Short", "toolbar.setView.formatLv03"],
+                  ["lv95", "toolbar.setView.formatLv95Short", "toolbar.setView.formatLv95"],
                 ] as const
               ).map(([value, shortKey, fullKey]) => (
                 <label
@@ -609,11 +722,15 @@ export function SetViewDialog({ open, onOpenChange, mapControllerRef }: SetViewD
                 {dmsAxisRow("lon", "toolbar.setView.longitude", 180, ["E", "W"])}
                 {dmsAxisRow("lat", "toolbar.setView.latitude", 90, ["N", "S"])}
               </div>
-            ) : (
+            ) : format === "ddm" ? (
               <div className="space-y-3">
                 {ddmAxisRow("lon", "toolbar.setView.longitude", 180, ["E", "W"])}
                 {ddmAxisRow("lat", "toolbar.setView.latitude", 90, ["N", "S"])}
               </div>
+            ) : format === "lv03" ? (
+              swissRow("lv03")
+            ) : (
+              swissRow("lv95")
             )}
           </section>
 

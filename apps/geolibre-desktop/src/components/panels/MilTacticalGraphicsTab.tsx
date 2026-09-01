@@ -13,6 +13,7 @@ import {
   odinDisplaySidc,
   type TacticalCatalogEntry,
 } from "../../lib/mil-tactical-catalog";
+import { isEditableTarget } from "../../lib/commands";
 import {
   parseMilGraphicLayerSource,
   serializeMilGraphicLayerSource,
@@ -531,6 +532,46 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     updateTacticalGraphics([...tacticalGraphics, graphicItem]);
     cancelDrawing();
   }, [affiliation, cancelDrawing, designation, selected, tacticalGraphics, updateTacticalGraphics]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "z" && drawing) {
+        event.preventDefault();
+        undoLastVertex();
+        return;
+      }
+
+      if (event.key === "Enter" && drawing && selected) {
+        if (drawnPointsRef.current.length >= minPoints(selected)) {
+          event.preventDefault();
+          finishDrawing();
+        }
+        return;
+      }
+
+      if (event.key !== "Escape") return;
+      if (drawing) {
+        event.preventDefault();
+        cancelDrawing();
+        return;
+      }
+
+      if (vertexPickTarget || appendVertexLayerId || editingLayerId) {
+        event.preventDefault();
+        setVertexPickTarget(null);
+        setAppendVertexLayerId(null);
+        setEditingLayerId(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [appendVertexLayerId, cancelDrawing, drawing, editingLayerId, finishDrawing, selected, undoLastVertex, vertexPickTarget]);
 
   // Right-click while drawing → finish (if enough vertices) or cancel
   useEffect(() => {

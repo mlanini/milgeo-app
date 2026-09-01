@@ -41,9 +41,11 @@ import {
 import {
   appendFeature,
   buildGeometryFeature,
-  buildPropertiesWithForm,
+  buildProperties,
   buildSchema,
   collectionMetadata,
+  getCollectionTemplateById,
+  getCollectionTemplates,
   type CollectionSchema,
   drawPreview,
   emptyFeatureCollection,
@@ -88,6 +90,8 @@ interface DraftField {
 function newDraftField(id: number): DraftField {
   return { id, label: "", type: "text", required: false, optionsText: "" };
 }
+
+type TemplateMode = "online-standard" | "offline-field";
 
 function formatLatLng(lng: number, lat: number): string {
   return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
@@ -161,6 +165,8 @@ export function FieldCollectionDialog({
   const [layerName, setLayerName] = useState("");
   const [geometry, setGeometry] = useState<GeometryType>("point");
   const [drafts, setDrafts] = useState<DraftField[]>([]);
+  const [templateMode, setTemplateMode] = useState<TemplateMode>("online-standard");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
 
   // Capture state. `pending` holds the captured coordinate(s) awaiting attributes.
   const [pending, setPending] = useState<Vertex[] | null>(null);
@@ -189,6 +195,7 @@ export function FieldCollectionDialog({
   // Per-instance monotonic id for draft-field React keys.
   const draftIdRef = useRef(0);
   const makeDraft = useCallback(() => newDraftField((draftIdRef.current += 1)), []);
+  const collectionTemplates = useMemo(() => getCollectionTemplates(), []);
   // Mirrors `vertices` so the map double-click handler can finish synchronously.
   const verticesRef = useRef<Vertex[]>([]);
   // Bumped on each GPS request and on any other capture, so a slow GPS fix that
@@ -243,10 +250,13 @@ export function FieldCollectionDialog({
       return;
     }
     const first = collectionLayers[0]?.id ?? "";
+    const offlinePreferred = typeof navigator !== "undefined" && navigator.onLine === false;
     setLayerId(first);
     setLayerName("");
     setGeometry("point");
     setDrafts(first ? [] : [makeDraft()]);
+    setTemplateMode(offlinePreferred ? "offline-field" : "online-standard");
+    setSelectedTemplateId("");
     setPending(null);
     setValues({});
     setPhoto(null);
@@ -572,11 +582,27 @@ export function FieldCollectionDialog({
     setNotice(null);
   }, [drafts, layerName, geometry, addGeoJsonLayer, updateLayer, t]);
 
+  const handleApplyTemplate = useCallback((templateId: string) => {
+    const template = getCollectionTemplateById(templateId);
+    if (!template) return;
+    setLayerName(template.layerName);
+    setGeometry(template.geometry);
+    const nextDrafts = template.fields.map((field) => ({
+      id: (draftIdRef.current += 1),
+      label: field.label,
+      type: field.type,
+      required: field.required === true,
+      optionsText: field.optionsText ?? "",
+    }));
+    setDrafts(nextDrafts.length > 0 ? nextDrafts : [makeDraft()]);
+    setNotice(null);
+  }, [makeDraft]);
+
   const handleSave = useCallback(() => {
     if (!activeLayer || !schema || !pending) return;
     // Fields hidden by a visibility expression never block a save, so the
     // schema's own required/type checks run against the visible subset only.
-    const candidate = buildPropertiesWithForm(schema, values, attributeForm);
+    const candidate = buildProperties(schema, values);
     const visibleSchema: CollectionSchema = {
       fields: schema.fields.filter((field) => {
         const config = getAttributeFormField(attributeForm, field.key);
@@ -596,7 +622,7 @@ export function FieldCollectionDialog({
     }
     const extra: Record<string, unknown> = {};
     if (photo) extra[PHOTO_PROPERTY] = photo;
-    const props = buildPropertiesWithForm(schema, values, attributeForm, extra);
+    const props = buildProperties(schema, values, extra);
     const feature = buildGeometryFeature(activeGeometry, pending, props);
 
     const current = useAppStore.getState().layers.find((l) => l.id === activeLayer.id);
@@ -745,6 +771,12 @@ export function FieldCollectionDialog({
                   drafts={drafts}
                   onDrafts={setDrafts}
                   newDraft={makeDraft}
+                  templateMode={templateMode}
+                  onTemplateMode={setTemplateMode}
+                  selectedTemplateId={selectedTemplateId}
+                  onSelectedTemplateId={setSelectedTemplateId}
+                  templates={collectionTemplates}
+                  onApplyTemplate={handleApplyTemplate}
                   onCreate={handleCreateLayer}
                 />
               ) : (
@@ -899,6 +931,15 @@ interface SetupStepProps {
   drafts: DraftField[];
   onDrafts: (next: DraftField[]) => void;
   newDraft: () => DraftField;
+  templateMode: TemplateMode;
+  onTemplateMode: (mode: TemplateMode) => void;
+  selectedTemplateId: string;
+  onSelectedTemplateId: (id: string) => void;
+  templates: readonly {
+    id: string;
+    name: string;
+  }[];
+  onApplyTemplate: (id: string) => void;
   onCreate: () => void;
 }
 
@@ -910,6 +951,12 @@ function SetupStep({
   drafts,
   onDrafts,
   newDraft,
+  templateMode,
+  onTemplateMode,
+  selectedTemplateId,
+  onSelectedTemplateId,
+  templates,
+  onApplyTemplate,
   onCreate,
 }: SetupStepProps) {
   const { t } = useTranslation();
@@ -918,6 +965,48 @@ function SetupStep({
 
   return (
     <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor="fc-template-mode">{t("fieldCollection.templateMode")}</Label>
+        <Select
+          id="fc-template-mode"
+          value={templateMode}
+          onChange={(e) => onTemplateMode(e.target.value as TemplateMode)}
+        >
+          <option value="online-standard">{t("fieldCollection.templateModeOnline")}</option>
+          <option value="offline-field">{t("fieldCollection.templateModeOffline")}</option>
+        </Select>
+      </div>
+
+      {templateMode === "offline-field" && (
+        <div className="space-y-1.5 rounded-md border p-2">
+          <Label htmlFor="fc-template-picker">{t("fieldCollection.offlineTemplate")}</Label>
+          <div className="flex items-center gap-2">
+            <Select
+              id="fc-template-picker"
+              value={selectedTemplateId}
+              onChange={(e) => onSelectedTemplateId(e.target.value)}
+              className="flex-1"
+            >
+              <option value="">{t("fieldCollection.offlineTemplatePlaceholder")}</option>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => selectedTemplateId && onApplyTemplate(selectedTemplateId)}
+              disabled={!selectedTemplateId}
+            >
+              {t("fieldCollection.applyTemplate")}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-1.5">
         <Label htmlFor="fc-layer-name">{t("fieldCollection.layerName")}</Label>
         <Input
@@ -1064,7 +1153,7 @@ function CaptureStep({
   // Candidate properties for visibility expressions, computed once per render
   // instead of per field (visibility updates live as the user types).
   const candidateProps = useMemo(
-    () => (attributeForm ? buildPropertiesWithForm(schema, values, attributeForm) : null),
+    () => (attributeForm ? buildProperties(schema, values) : null),
     [schema, values, attributeForm],
   );
 
