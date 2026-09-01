@@ -15,7 +15,7 @@
 
 import type { GeoLibreLayer, MilAffiliation } from "@geolibre/core";
 import { DEFAULT_LAYER_STYLE } from "@geolibre/core";
-import ms from "milsymbol";
+import ms from "./milsymbol-runtime";
 
 const MilSymbol = ms.Symbol;
 

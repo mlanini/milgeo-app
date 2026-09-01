@@ -44,6 +44,11 @@ export function createMilGeoPlugin(): GeoLibrePlugin {
   let shouldOpenAfterActivate = true;
   let isPanelOpen = false;
 
+  function clearPanelContent(): void {
+    panelContentCleanup?.();
+    panelContentCleanup = undefined;
+  }
+
   return {
     id: MILGEO_PLUGIN_ID,
     name: "MilGeo workspace",
@@ -64,14 +69,22 @@ export function createMilGeoPlugin(): GeoLibrePlugin {
           isPanelOpen = false;
           shouldOpenAfterActivate = false;
         },
-        render(container) {
-          panelContentCleanup?.();
+        render(container: HTMLElement) {
+          clearPanelContent();
           const root = createRoot(container);
           root.render(<MilGeoWorkspacePanelContent app={app} />);
-          panelContentCleanup = () => root.unmount();
+          let disposed = false;
+          const cleanupCurrentRoot = () => {
+            if (disposed) return;
+            disposed = true;
+            root.unmount();
+            if (panelContentCleanup === cleanupCurrentRoot) {
+              panelContentCleanup = undefined;
+            }
+          };
+          panelContentCleanup = cleanupCurrentRoot;
           return () => {
-            panelContentCleanup?.();
-            panelContentCleanup = undefined;
+            cleanupCurrentRoot();
           };
         },
       });
@@ -80,8 +93,7 @@ export function createMilGeoPlugin(): GeoLibrePlugin {
       }
     },
     deactivate(app: GeoLibreAppAPI) {
-      panelContentCleanup?.();
-      panelContentCleanup = undefined;
+      clearPanelContent();
       unregisterPanel?.();
       unregisterPanel = undefined;
       shouldOpenAfterActivate = false;

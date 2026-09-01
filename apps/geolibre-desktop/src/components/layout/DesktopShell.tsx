@@ -772,7 +772,9 @@ export function DesktopShell({
   useEffect(() => {
     const host = pluginContentEl;
     if (layoutOptions.viewer) {
-      host.replaceChildren();
+      // Avoid force-clearing when a panel cleanup tears down a React subtree:
+      // removing children too early can race React unmount and throw
+      // "removeChild ... not a child" from react-dom internals.
       return;
     }
     if (!activePanelId || !activePanel) return;
@@ -788,7 +790,9 @@ export function DesktopShell({
       } catch (error) {
         console.error(`Right panel "${activePanelId}" cleanup threw.`, error);
       }
-      host.replaceChildren();
+      // Only hard-clear if the panel provided no cleanup; panels that mount
+      // React internally should own their unmount lifecycle.
+      if (!cleanup) host.replaceChildren();
     };
     // `activePanel` is intentionally narrowed to `activePanel?.render`:
     // getRightPanel returns a fresh clone each call, so the whole object would

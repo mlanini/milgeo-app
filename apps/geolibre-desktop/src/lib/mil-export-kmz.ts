@@ -9,7 +9,7 @@
  * Requires the `fflate` library (already in the dependency tree via milsymbol).
  * Falls back to a KML-only download if fflate is not available.
  */
-import ms from "milsymbol";
+import ms from "./milsymbol-runtime";
 import type { MilLayer, MilSymbolItem } from "@geolibre/core";
 
 const MilSymbol = ms.Symbol;

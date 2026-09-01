@@ -1,11 +1,8 @@
 import { useCallback } from "react";
-import ms from "milsymbol";
+import ms from "../lib/milsymbol-runtime";
 import type { SymbolOptions } from "milsymbol";
 
 const MilSymbol = ms.Symbol;
-
-// Initialise milsymbol to APP-6D standard once at module load.
-ms.setStandard("APP6");
 
 /**
  * useMilSymbol

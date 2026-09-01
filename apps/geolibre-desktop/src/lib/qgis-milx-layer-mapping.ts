@@ -10,7 +10,7 @@ import type {
   Point,
   Polygon,
 } from "geojson";
-import ms from "milsymbol";
+import ms from "./milsymbol-runtime";
 import {
   DEFAULT_MIL_SYMBOL_SIZE_PX,
   serializeMilSymbolLayerSource,

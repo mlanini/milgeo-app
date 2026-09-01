@@ -23,7 +23,7 @@ import maplibregl from "maplibre-gl";
 import type { GeoJSONSource } from "maplibre-gl";
 import type { MapController } from "@geolibre/map";
 import { useAppStore } from "@geolibre/core";
-import ms from "milsymbol";
+import ms from "../../lib/milsymbol-runtime";
 import type { SymbolOptions } from "milsymbol";
 import type { FeatureCollection, Feature, Point } from "geojson";
 import type {

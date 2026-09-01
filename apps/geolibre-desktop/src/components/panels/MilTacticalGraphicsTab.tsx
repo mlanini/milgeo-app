@@ -3,7 +3,7 @@ import type { GeoLibreLayer, MilAffiliation, MilGraphicLayerSource } from "@geol
 import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
 import type { MapController } from "@geolibre/map";
-import ms from "milsymbol";
+import ms from "../../lib/milsymbol-runtime";
 import type { Feature, FeatureCollection, LineString, Point, Polygon } from "geojson";
 import { Crosshair, Eye, EyeOff, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMapClick } from "../../hooks/useMapClick";

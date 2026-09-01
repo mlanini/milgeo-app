@@ -11,7 +11,7 @@
  * The editor calls `onSave(patch)` when the user confirms.
  */
 import { useState, useMemo } from "react";
-import ms from "milsymbol";
+import ms from "../../lib/milsymbol-runtime";
 import { cn } from "@geolibre/ui";
 import type { MilSymbolItem } from "@geolibre/core";
 import {

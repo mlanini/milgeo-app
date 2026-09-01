@@ -84,7 +84,9 @@ function FloatingPanelCard({ id, initialOffset }: { id: string; initialOffset: n
       } catch (error) {
         console.error(`Floating panel "${id}" cleanup threw.`, error);
       }
-      container.replaceChildren();
+      // Let panel-provided cleanup unmount its own subtree first (especially
+      // React roots); force-clearing can trigger removeChild races.
+      if (!cleanup) container.replaceChildren();
     };
     // `panel` is intentionally narrowed to `panel?.render`: getFloatingPanel
     // returns a fresh clone each call, so the whole object would re-run this

@@ -12,7 +12,7 @@ import {
 } from "@geolibre/core";
 import { strFromU8, unzipSync } from "fflate";
 import type { FeatureCollection } from "geojson";
-import ms from "milsymbol";
+import ms from "./milsymbol-runtime";
 import {
   serializeMilSymbolLayerSource,
   type MilSymbolLayerItem,

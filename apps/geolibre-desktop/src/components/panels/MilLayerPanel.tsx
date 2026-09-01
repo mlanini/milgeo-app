@@ -15,7 +15,7 @@ import {
 } from "react";
 import { DEFAULT_LAYER_STYLE, useAppStore, type GeoLibreLayer } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
-import ms from "milsymbol";
+import ms from "../../lib/milsymbol-runtime";
 import {
   Check,
   Crosshair,

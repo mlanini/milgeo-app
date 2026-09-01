@@ -13,7 +13,7 @@
  */
 import { useState, useMemo, useCallback } from "react";
 import maplibregl from "maplibre-gl";
-import ms from "milsymbol";
+import ms from "../../lib/milsymbol-runtime";
 import { cn } from "@geolibre/ui";
 import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
 import type { MilAffiliation, OrbatUnit } from "@geolibre/core";

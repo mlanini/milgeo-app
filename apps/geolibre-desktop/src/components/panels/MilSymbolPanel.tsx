@@ -9,7 +9,7 @@ import type { GeoLibreLayer, MilAffiliation, MilSymbolLayerSource, MilGraphicLay
 import { DEFAULT_LAYER_STYLE } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
 import type { MapController } from "@geolibre/map";
-import ms from "milsymbol";
+import ms from "../../lib/milsymbol-runtime";
 import {
   Search,
   Shield,
