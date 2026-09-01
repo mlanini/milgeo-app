@@ -139,7 +139,7 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
     source: SYM_SOURCE_ID,
     layout: {
       "icon-image":              ["get", "symbolKey"],
-      "icon-rotate":             ["get", "direction"],
+      "icon-rotate":             ["to-number", ["get", "direction"], 0],
       "icon-rotation-alignment": "viewport",
       "icon-pitch-alignment":    "viewport",
       "icon-size":               1,
@@ -147,7 +147,7 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
       "icon-ignore-placement":   true,
     },
     paint: {
-      "icon-opacity": ["coalesce", ["get", "opacity"], 1],
+      "icon-opacity": ["to-number", ["get", "opacity"], 1],
     },
   });
 }
@@ -243,9 +243,25 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
 
     for (const layer of symbols) {
       const parsed = parseMilSymbolLayerSource(layer.source);
-      const layerSize = parsed.symbolSize || SYMBOL_SIZE;
+      const layerSize =
+        typeof parsed.symbolSize === "number" &&
+        Number.isFinite(parsed.symbolSize) &&
+        parsed.symbolSize > 0
+          ? parsed.symbolSize
+          : SYMBOL_SIZE;
+      const layerOpacity =
+        typeof layer.opacity === "number" && Number.isFinite(layer.opacity)
+          ? Math.max(0, Math.min(1, layer.opacity))
+          : 1;
 
       for (const symbol of parsed.symbols) {
+        if (!Number.isFinite(symbol.lon) || !Number.isFinite(symbol.lat)) {
+          continue;
+        }
+        const direction =
+          typeof symbol.direction === "number" && Number.isFinite(symbol.direction)
+            ? symbol.direction
+            : 0;
         const opts: SymbolOptions = {
           size:              layerSize,
           infoFields:        true,
@@ -275,8 +291,8 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
           properties: {
             id:        symbol.id,
             symbolKey: key,
-            direction: symbol.direction ?? 0,
-            opacity:   layer.opacity,
+            direction,
+            opacity:   layerOpacity,
           },
         });
       }

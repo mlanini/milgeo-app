@@ -60,7 +60,6 @@ import {
 } from "@geolibre/ui";
 import {
   Bug,
-  Check,
   CircleHelp,
   Database,
   FolderOpen,
@@ -73,7 +72,6 @@ import {
   Puzzle,
   RefreshCw,
   Save,
-  Shield,
   SlidersHorizontal,
   Sun,
   Wrench,
@@ -114,12 +112,6 @@ interface TopToolbarProps {
   compact?: boolean;
   diagnosticsErrorCount: number;
   mapControllerRef: React.RefObject<MapController | null>;
-  milGeoOpen?: boolean;
-  milSymbolModuleEnabled?: boolean;
-  dtmAnalysisModuleEnabled?: boolean;
-  onToggleMilGeo?: () => void;
-  onToggleMilSymbolModule?: () => void;
-  onToggleDtmAnalysisModule?: () => void;
   showLabels?: boolean;
   showProjectInfo?: boolean;
   themeMode: ThemeMode;
@@ -180,12 +172,6 @@ export function TopToolbar({
   compact = false,
   diagnosticsErrorCount,
   mapControllerRef,
-  milGeoOpen = false,
-  milSymbolModuleEnabled = true,
-  dtmAnalysisModuleEnabled = true,
-  onToggleMilGeo,
-  onToggleMilSymbolModule,
-  onToggleDtmAnalysisModule,
   showLabels = true,
   showProjectInfo = true,
   themeMode,
@@ -587,45 +573,6 @@ export function TopToolbar({
             onSelect={clearRecentProjects}
           >
             Clear Recent Projects
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            className={cn(
-              toolbarButtonClass,
-              milGeoOpen && "bg-primary/10 text-primary",
-            )}
-            variant="ghost"
-            size={toolbarButtonSize}
-            aria-label="MilGeo"
-            aria-pressed={milGeoOpen}
-          >
-            <Shield className={toolbarIconClassName} />
-            {renderToolbarLabel("MilGeo")}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-72">
-          <DropdownMenuLabel>MilGeo</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onToggleMilGeo}>
-            <span className="mr-2 inline-flex w-4 justify-center">
-              {milGeoOpen ? <Check className="h-3.5 w-3.5" /> : null}
-            </span>
-            Workspace panel
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onToggleMilSymbolModule}>
-            <span className="mr-2 inline-flex w-4 justify-center">
-              {milSymbolModuleEnabled ? <Check className="h-3.5 w-3.5" /> : null}
-            </span>
-            APP-6(D) catalog and layers
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onToggleDtmAnalysisModule}>
-            <span className="mr-2 inline-flex w-4 justify-center">
-              {dtmAnalysisModuleEnabled ? <Check className="h-3.5 w-3.5" /> : null}
-            </span>
-            Analysis tools
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

@@ -48,7 +48,7 @@ export function createMilGeoPlugin(): GeoLibrePlugin {
     id: MILGEO_PLUGIN_ID,
     name: "MilGeo workspace",
     version: "1.0.0",
-    activeByDefault: false,
+    activeByDefault: true,
     activate(app: GeoLibreAppAPI) {
       if (unregisterPanel) return;
       unregisterPanel = app.registerRightPanel?.({
@@ -103,3 +103,16 @@ export function createMilGeoPlugin(): GeoLibrePlugin {
 }
 
 export const milgeoPlugin = createMilGeoPlugin();
+
+/**
+ * Keep MilGeo workspace side effects aligned with plugin active state.
+ * Needed because activeByDefault plugins are marked active before an app API
+ * exists, so their activate() hook is not called automatically on startup.
+ */
+export function restoreMilGeoWorkspacePlugin(app: GeoLibreAppAPI, active: boolean): void {
+  if (active) {
+    milgeoPlugin.activate(app);
+    return;
+  }
+  milgeoPlugin.deactivate(app);
+}

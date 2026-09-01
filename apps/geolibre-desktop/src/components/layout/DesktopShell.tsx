@@ -174,6 +174,7 @@ import { ProjectHistoryDialog } from "./ProjectHistoryDialog";
 import { ProjectRecoveryDialog } from "./ProjectRecoveryDialog";
 import { StatusBar } from "./StatusBar";
 import { TopToolbar } from "./TopToolbar";
+import { MILGEO_PLUGIN_ID, restoreMilGeoWorkspacePlugin } from "../../plugins/milgeo-plugin";
 import type { LayoutOptions } from "../../hooks/useLayoutOptions";
 import type { ThemeMode } from "../../hooks/useThemeMode";
 import type { ProjectUrlLoadState } from "../../hooks/useProjectUrlLoader";
@@ -1184,6 +1185,10 @@ export function DesktopShell({
       appAPI,
       pluginManager.isActive(EFFECTS_PLUGIN_ID),
       useAppStore.getState().projectPlugins?.settings?.[EFFECTS_PLUGIN_ID],
+    );
+    restoreMilGeoWorkspacePlugin(
+      appAPI,
+      pluginManager.isActive(MILGEO_PLUGIN_ID),
     );
     // The sun simulation reads/writes native map layers, so it must re-bind to
     // the (possibly new) map instance after a map re-init or basemap change.
