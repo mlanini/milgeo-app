@@ -27,8 +27,9 @@ function MilGeoWorkspacePanelContent({ app }: { app: GeoLibreAppAPI }) {
       <div className="rounded-md border bg-background/80 p-3 text-xs">
         <div className="font-semibold">MilGeo workspace</div>
         <p className="mt-1 text-muted-foreground">
-          This plugin hosts the military symbol workspace as a decoupled GeoLibre
-          extension.
+          This workspace panel is a work in progress. It is intended to provide a
+          convenient interface for managing MilSymbol layers and their contents, but it is not yet
+          feature-complete. Please report any issues or suggestions to the project maintainers.
         </p>
       </div>
       <div className="min-h-0 flex-1 rounded-md border bg-background/80 p-2">
