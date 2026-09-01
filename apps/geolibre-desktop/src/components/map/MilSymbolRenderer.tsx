@@ -130,6 +130,32 @@ function buildMilSymbolImageData(
   }
 }
 
+function ensureSymbolImage(
+  map: maplibregl.Map,
+  key: string,
+  sidc: string,
+  options: SymbolOptions,
+  pixelRatio: number,
+): void {
+  if (map.hasImage(key)) return;
+  let data = buildMilSymbolImageData(sidc, options, pixelRatio);
+  if (!data) {
+    const fallbackOpts: SymbolOptions = {
+      size: options.size,
+      outlineColor: "white",
+      outlineWidth: 6,
+    };
+    data = buildMilSymbolImageData(sidc, fallbackOpts, pixelRatio);
+  }
+  // Avoid repeated styleimagemissing/render-error loops when SIDC is invalid.
+  if (!data) data = new ImageData(2, 2);
+  try {
+    map.addImage(key, data, { pixelRatio });
+  } catch {
+    // style reload race: a later sync/style event will retry.
+  }
+}
+
 /**
  * Create the MapLibre source + icon symbol layer.
  * Called once on first use, and again after any style.load that wipes sources.
@@ -215,20 +241,14 @@ export default function MilSymbolRenderer({
       if (map.hasImage(e.id)) return;
       const entry = symbolCacheRef.current.get(e.id);
       if (!entry) return;
-      let data = buildMilSymbolImageData(entry.sidc, entry.options, PIXEL_RATIO);
-      if (!data) {
-        const fallbackOpts: SymbolOptions = {
-          size: entry.options.size,
-          outlineColor: "white",
-          outlineWidth: 6,
-        };
-        data = buildMilSymbolImageData(entry.sidc, fallbackOpts, PIXEL_RATIO);
-      }
-      if (data) map.addImage(e.id, data, { pixelRatio: PIXEL_RATIO });
+      ensureSymbolImage(map, e.id, entry.sidc, entry.options, PIXEL_RATIO);
     };
 
     // After a basemap style reload all sources/layers are cleared — recreate.
     const onStyleLoad = () => {
+      for (const [key, entry] of symbolCacheRef.current.entries()) {
+        ensureSymbolImage(map, key, entry.sidc, entry.options, PIXEL_RATIO);
+      }
       if (!map.getSource(SYM_SOURCE_ID)) {
         addSymbolLayers(map, lastFcRef.current);
       }
@@ -294,6 +314,9 @@ export default function MilSymbolRenderer({
         const cleanedOpts = cleanSymbolOptions(opts);
         const key = makeSymbolKey(symbol.SIDC, cleanedOpts);
         symbolCacheRef.current.set(key, { sidc: symbol.SIDC, options: cleanedOpts });
+        if (map.isStyleLoaded()) {
+          ensureSymbolImage(map, key, symbol.SIDC, cleanedOpts, PIXEL_RATIO);
+        }
 
         features.push({
           type: "Feature",
