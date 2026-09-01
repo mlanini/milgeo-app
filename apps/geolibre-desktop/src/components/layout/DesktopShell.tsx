@@ -133,6 +133,7 @@ import { NetcdfSampleMarkers } from "./NetcdfSampleMarkers";
 import { NetcdfCubeSetupDialog } from "./NetcdfCubeSetupDialog";
 import { NetcdfCubeWindow } from "./NetcdfCubeWindow";
 import { NetcdfProfileWindow } from "./NetcdfProfileWindow";
+import MilSymbolRenderer from "../map/MilSymbolRenderer";
 import { MapLegendPanel } from "../legend/MapLegendPanel";
 import { RasterSubsetPanel } from "./RasterSubsetPanel";
 import { BasemapExtractPanel } from "./BasemapExtractPanel";
@@ -2329,6 +2330,7 @@ export function DesktopShell({
                 onMapDiagnosticEvent={handleMapDiagnosticEvent}
                 onControllerReady={handleMapControllerReady}
               />
+              <MilSymbolRenderer mapControllerRef={mapControllerRef} />
               <RemoteCursorsOverlay mapControllerRef={mapControllerRef} />
               <CommentMapOverlay
                 mapControllerRef={mapControllerRef}
