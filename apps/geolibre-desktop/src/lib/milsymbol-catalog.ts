@@ -246,10 +246,11 @@ export const SYMBOL_CATALOG: CatalogEntry[] = [
     subcategory: "Fires",
   },
   {
-    baseSidc: "10031000001302000000",
-    name: "Rocket Artillery",
+    baseSidc: "10031000001303004100",
+    name: "Rocket Artillery (MLRS)",
     category: "Land",
     subcategory: "Fires",
+    description: "Field artillery unit with multiple rocket launcher amplifier",
   },
 
   // ── Land Combat Support ───────────────────────────────────────────────

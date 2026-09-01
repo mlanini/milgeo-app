@@ -2330,7 +2330,10 @@ export function DesktopShell({
                 onMapDiagnosticEvent={handleMapDiagnosticEvent}
                 onControllerReady={handleMapControllerReady}
               />
-              <MilSymbolRenderer mapControllerRef={mapControllerRef} />
+              <MilSymbolRenderer
+                mapControllerRef={mapControllerRef}
+                mapReadyGeneration={mapReadyGeneration}
+              />
               <RemoteCursorsOverlay mapControllerRef={mapControllerRef} />
               <CommentMapOverlay
                 mapControllerRef={mapControllerRef}

@@ -67,6 +67,13 @@ function cleanSymbolOptions(opts: SymbolOptions): SymbolOptions {
 
 interface MilSymbolRendererProps {
   mapControllerRef: React.RefObject<MapController | null>;
+  /**
+   * Bumped by the shell each time the MapLibre controller (re)initialises.
+   * Used as an effect dependency so this render-less component wires up its
+   * map event handlers once the map is actually ready, even when no symbols
+   * exist yet at first mount.
+   */
+  mapReadyGeneration?: number;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -168,7 +175,10 @@ function graphicColorFromAffiliation(affiliation: unknown): string {
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendererProps) {
+export default function MilSymbolRenderer({
+  mapControllerRef,
+  mapReadyGeneration,
+}: MilSymbolRendererProps) {
   const layers = useAppStore((s) => s.layers);
   const milLayers = useMemo(
     () => layers.filter((layer) => layer.type === "mil-symbol" || layer.type === "mil-graphic"),
@@ -232,7 +242,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
       map.off("style.load", onStyleLoad);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mapReadyGeneration]);
 
   // ── Sync mil-symbol items → GeoJSON source ───────────────────────────
   useEffect(() => {
@@ -306,7 +316,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
     } else if (map.isStyleLoaded()) {
       addSymbolLayers(map, fc);
     }
-  }, [symbols, milLayers, mapControllerRef]);
+  }, [symbols, milLayers, mapControllerRef, mapReadyGeneration]);
 
   // ── Sync mil-graphic items → GeoJSON sources/layers ─────────────────
   useEffect(() => {
@@ -470,7 +480,7 @@ export default function MilSymbolRenderer({ mapControllerRef }: MilSymbolRendere
     return () => {
       map.off("style.load", onStyleLoad);
     };
-  }, [milLayers, mapControllerRef]);
+  }, [milLayers, mapControllerRef, mapReadyGeneration]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────────
   useEffect(() => {

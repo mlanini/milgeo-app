@@ -41,13 +41,12 @@ export interface SidcParts {
 }
 
 const LEGACY_ECHELON_MAP: Record<string, string> = {
-  // Legacy mapping used by older MilGeo builds; align to milsymbol APP-6D mapping.
+  // Legacy mapping used by older MilGeo builds. Only remap codes that are NOT
+  // valid APP-6D amplifier codes, otherwise we corrupt modern selections
+  // (e.g. milsymbol APP-6D: 21=Division, 22=Corps, 23=Army, 24=Army Group).
+  // Codes 19/20 were never valid milsymbol amplifiers, so remapping them is safe.
   "19": "21", // Division
   "20": "22", // Corps / MEF
-  "21": "23", // Army
-  "22": "24", // Army Group / Front
-  "23": "25", // Region / Theater
-  "24": "26", // Command
 };
 
 function normalizeEchelonCode(code: string): string {
