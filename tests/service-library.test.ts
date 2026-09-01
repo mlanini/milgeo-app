@@ -15,6 +15,7 @@ import {
   type ServiceLibraryEntry,
   upsertServiceEntry,
 } from "../apps/geolibre-desktop/src/components/layout/add-data/service-library";
+import { DEFAULT_BASEMAP } from "../packages/core/src/types";
 
 function makeEntry(
   overrides: Partial<ServiceLibraryEntry> = {},
@@ -140,6 +141,26 @@ describe("listServices", () => {
         (e) => e.id === "x",
       ),
       false,
+    );
+  });
+
+  it("keeps curated basemap defaults open and ArcGIS profiles non-basemap", () => {
+    assert.match(DEFAULT_BASEMAP, /openfreemap\.org/i);
+
+    const basemapProfiles = BUILTIN_SERVICES.filter((entry) => entry.category === "Basemaps");
+    assert.ok(
+      basemapProfiles.some((entry) => {
+        const url = entry.fields.url;
+        return typeof url === "string" && /openstreetmap|openfreemap/i.test(url);
+      }),
+      "expected at least one open basemap profile",
+    );
+
+    const arcgisProfiles = BUILTIN_SERVICES.filter((entry) => entry.kind === "arcgis");
+    assert.ok(arcgisProfiles.length > 0, "expected curated ArcGIS entries");
+    assert.ok(
+      arcgisProfiles.every((entry) => entry.category !== "Basemaps"),
+      "ArcGIS curated entries should not be treated as default basemap profiles",
     );
   });
 });

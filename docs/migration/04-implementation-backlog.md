@@ -62,6 +62,16 @@ Date: 2026-08-05
 - Added a project roundtrip regression test that preserves field collection schema, geometry, and captured features across reopen/restore.
 - Validated offline workflow readiness through existing PWA/runtime offline coverage plus collection-layer persistence checks.
 
+### 2026-09-01 - S5 print/search/roundtrip increment
+
+- Added neutral tactical print templates with A4/A3/A2/A1/A0 landscape presets.
+- Extended print layout paper support to A2, A1, and A0.
+- Added classification field handling with fixed-value validation in the print title block.
+- Added tactical export guardrails requiring active UTM/MGRS grid and minimum metadata (title + classification).
+- Expanded layer panel search to a single surface for place, coordinate, H3, layer, and geocoding provider matches.
+- Added dedicated KML and GeoPackage roundtrip tests for import/export fidelity.
+- Verified curated geodata catalog profiles with open default basemap policy and ArcGIS profiles scoped to feasible non-default entries.
+
 ### 2026-09-01 - Planning lock complete
 
 - Closed the pre-implementation decision set for scope, priorities, and constraints.
@@ -110,12 +120,12 @@ Date: 2026-08-05
 
 ## Slice S5 - Print, Search, and Catalog parity
 
-- S5.1 Add tactical print templates from A4 to A0, portrait and landscape.
-- S5.2 Add MGRS grid and minimum metadata fields: title and classification only.
-- S5.3 Merge place/layer/provider search into one operator surface.
-- S5.4 Add curated geodata catalog profiles with open default basemaps and ArcGIS vector tile basemaps only where feasible.
-- S5.5 Validate KML/GPKG import/export roundtrip fidelity.
-- S5.6 Provide a neutral NATO-like print template set with classification value validation.
+- S5.1 Completed: add tactical print templates from A4 to A0, portrait and landscape.
+- S5.2 Completed: add MGRS grid and minimum metadata fields: title and classification only.
+- S5.3 Completed: merge place/layer/provider search into one operator surface.
+- S5.4 Completed: add curated geodata catalog profiles with open default basemaps and ArcGIS vector tile basemaps only where feasible.
+- S5.5 Completed: validate KML/GPKG import/export roundtrip fidelity.
+- S5.6 Completed: provide a neutral NATO-like print template set with classification value validation.
 
 ## Slice S6 - Hardening and rollout
 

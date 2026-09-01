@@ -7,7 +7,7 @@ import {
   VECTOR_COLOR_RAMPS,
 } from "@geolibre/core";
 import { loadMarkerSvgImage, type MapController } from "@geolibre/map";
-import { GRATICULE_LABEL_LAYER_ID } from "@geolibre/plugins";
+import { getGraticuleSettings, GRATICULE_LABEL_LAYER_ID } from "@geolibre/plugins";
 import {
   Button,
   Dialog,
@@ -46,6 +46,7 @@ import {
   PAPER_SIZES,
   resolvePageSize,
   type BodyCorner,
+  type ClassificationLevel,
   type CustomSize,
   type LayoutOptions,
   type Orientation,
@@ -120,6 +121,30 @@ interface PrintLayoutDialogProps {
 
 /** Common industry scale denominators offered as quick presets (GH #522). */
 const SCALE_PRESETS = [500, 1000, 2500, 5000, 10000, 25000, 50000, 100000];
+
+const CLASSIFICATION_LEVELS: readonly ClassificationLevel[] = [
+  "UNCLASSIFIED",
+  "RESTRICTED",
+  "CONFIDENTIAL",
+  "SECRET",
+  "TOP SECRET",
+];
+
+type TacticalTemplateId =
+  | "custom"
+  | "nato-neutral-a4"
+  | "nato-neutral-a3"
+  | "nato-neutral-a2"
+  | "nato-neutral-a1"
+  | "nato-neutral-a0";
+
+const TACTICAL_TEMPLATE_SIZE: Record<Exclude<TacticalTemplateId, "custom">, PaperSizeId> = {
+  "nato-neutral-a4": "a4",
+  "nato-neutral-a3": "a3",
+  "nato-neutral-a2": "a2",
+  "nato-neutral-a1": "a1",
+  "nato-neutral-a0": "a0",
+};
 
 /** Bounds (px) for the draggable controls column inside the dialog. */
 const CONTROLS_MIN_WIDTH = 260;
@@ -306,10 +331,13 @@ export function PrintLayoutDialog({
   const [chartFilterToPage, setChartFilterToPage] = useState(true);
   // Cartographic title block ("stempel") fields (GH #522).
   const [showInfoBlock, setShowInfoBlock] = useState(false);
+  const [classification, setClassification] = useState<ClassificationLevel>("UNCLASSIFIED");
   const [author, setAuthor] = useState("");
   const [projectNumber, setProjectNumber] = useState("");
   const [crs, setCrs] = useState("");
   const [revision, setRevision] = useState("");
+  const [tacticalTemplate, setTacticalTemplate] = useState<TacticalTemplateId>("custom");
+  const [mgrsGridActive, setMgrsGridActive] = useState(false);
   // Custom print extent drawn on the map (GH #523).
   const [captureMode, setCaptureMode] = useState<"viewport" | "extent">("viewport");
   const [extentBbox, setExtentBbox] = useState<PrintExtent | null>(null);
@@ -564,6 +592,50 @@ export function PrintLayoutDialog({
     [legendConfig, entryIdsInOrder, setLegendConfig],
   );
 
+  const applyTacticalTemplate = useCallback(
+    (templateId: Exclude<TacticalTemplateId, "custom">) => {
+      const targetSize = TACTICAL_TEMPLATE_SIZE[templateId];
+      setPaperSize(targetSize);
+      setOrientation("landscape");
+      setShowTitle(true);
+      setShowSubtitle(false);
+      setTitlePlacement("outside");
+      setTitleAlign("left");
+      setShowLegend(true);
+      setShowScaleBar(true);
+      setShowNorthArrow(true);
+      setNavigationGrouped(true);
+      setPageMargin("normal");
+      setShowPageBorder(true);
+      setShowFooter(false);
+      setShowDate(false);
+      setShowInfoBlock(true);
+      setAuthor("");
+      setProjectNumber("");
+      setCrs("");
+      setRevision("");
+      setClassification("UNCLASSIFIED");
+    },
+    [],
+  );
+
+  const isMgrsGridReady = useCallback((): boolean => {
+    const map = mapControllerRef.current?.getMap();
+    if (!map?.getLayer(GRATICULE_LABEL_LAYER_ID)) return false;
+    return getGraticuleSettings().gridType === "utm";
+  }, [mapControllerRef]);
+
+  useEffect(() => {
+    if (!open || tacticalTemplate === "custom") {
+      setMgrsGridActive(false);
+      return;
+    }
+    const update = () => setMgrsGridActive(isMgrsGridReady());
+    update();
+    const intervalId = window.setInterval(update, 400);
+    return () => window.clearInterval(intervalId);
+  }, [open, tacticalTemplate, isMgrsGridReady]);
+
   const recapture = useCallback(
     (clipOverride?: PrintExtent | null) => {
       const map = mapControllerRef.current?.getMap();
@@ -730,11 +802,13 @@ export function PrintLayoutDialog({
           }
         : null,
       showInfoBlock,
+      classification,
       author,
       projectNumber,
       crs,
       revision,
       infoLabels: {
+        classification: t("printLayout.info.classification"),
         author: t("printLayout.info.author"),
         project: t("printLayout.info.project"),
         crs: t("printLayout.info.crs"),
@@ -794,6 +868,7 @@ export function PrintLayoutDialog({
       customLegendEntries,
       customLegendPosition,
       showInfoBlock,
+      classification,
       author,
       projectNumber,
       crs,
@@ -925,6 +1000,15 @@ export function PrintLayoutDialog({
   const atlasConfigBlocked =
     atlasEnabled &&
     (!atlasFilterValid || !atlasScaleValid || !atlasSegmentValid || atlasDeferredPending);
+  // Tactical templates require an active UTM grid (project proxy for MGRS)
+  // plus minimum metadata fields (title and classification).
+  const tacticalTemplateActive = tacticalTemplate !== "custom";
+  const tacticalTitleReady = title.trim().length > 0;
+  const tacticalClassificationReady = CLASSIFICATION_LEVELS.includes(classification);
+  const tacticalMetadataBlocked =
+    tacticalTemplateActive && (!tacticalTitleReady || !tacticalClassificationReady);
+  const tacticalMgrsBlocked = tacticalTemplateActive && !mgrsGridActive;
+  const tacticalRequirementsBlocked = tacticalMetadataBlocked || tacticalMgrsBlocked;
   const atlasTokenCtx = useMemo<AtlasTokenContext | null>(
     () =>
       currentAtlasPage
@@ -1876,6 +1960,33 @@ export function PrintLayoutDialog({
             <Separator />
 
             <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="layout-template">{t("printLayout.templateLabel")}</Label>
+                <Select
+                  id="layout-template"
+                  value={tacticalTemplate}
+                  onChange={(e) => {
+                    const selected = e.target.value as TacticalTemplateId;
+                    setTacticalTemplate(selected);
+                    if (selected !== "custom") applyTacticalTemplate(selected);
+                  }}
+                >
+                  <option value="custom">{t("printLayout.template.custom")}</option>
+                  <option value="nato-neutral-a4">{t("printLayout.template.natoNeutralA4")}</option>
+                  <option value="nato-neutral-a3">{t("printLayout.template.natoNeutralA3")}</option>
+                  <option value="nato-neutral-a2">{t("printLayout.template.natoNeutralA2")}</option>
+                  <option value="nato-neutral-a1">{t("printLayout.template.natoNeutralA1")}</option>
+                  <option value="nato-neutral-a0">{t("printLayout.template.natoNeutralA0")}</option>
+                </Select>
+                {tacticalTemplateActive && !mgrsGridActive && (
+                  <p className="text-xs text-destructive">{t("printLayout.errors.mgrsGridRequired")}</p>
+                )}
+                {tacticalTemplateActive && !tacticalTitleReady && (
+                  <p className="text-xs text-destructive">
+                    {t("printLayout.errors.tacticalTitleRequired")}
+                  </p>
+                )}
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="layout-paper">{t("printLayout.size")}</Label>
                 <Select
@@ -3030,6 +3141,23 @@ export function PrintLayoutDialog({
             {showInfoBlock && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
+                  <Label htmlFor="layout-classification">{t("printLayout.info.classification")}</Label>
+                  <Select
+                    id="layout-classification"
+                    value={classification}
+                    onChange={(e) => {
+                      const next = e.target.value as ClassificationLevel;
+                      if (CLASSIFICATION_LEVELS.includes(next)) setClassification(next);
+                    }}
+                  >
+                    {CLASSIFICATION_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {t(`printLayout.info.classificationValues.${level}`)}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
                   <Label htmlFor="layout-author">{t("printLayout.info.author")}</Label>
                   <Input
                     id="layout-author"
@@ -3338,7 +3466,7 @@ export function PrintLayoutDialog({
           {/* Copy the composed layout straight to the clipboard (GH #773). */}
           <Button
             variant="outline"
-            disabled={exporting || atlasBusy || !captured}
+            disabled={exporting || atlasBusy || !captured || tacticalRequirementsBlocked}
             onClick={() => void handleCopy()}
           >
             {copied ? (
@@ -3356,6 +3484,7 @@ export function PrintLayoutDialog({
             disabled={
               exporting ||
               atlasBusy ||
+              tacticalRequirementsBlocked ||
               atlasConfigBlocked ||
               (atlasEnabled ? !atlasActive : !captured)
             }
@@ -3369,6 +3498,7 @@ export function PrintLayoutDialog({
             disabled={
               exporting ||
               atlasBusy ||
+              tacticalRequirementsBlocked ||
               atlasConfigBlocked ||
               (atlasEnabled ? !atlasActive : !captured)
             }

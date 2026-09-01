@@ -1251,6 +1251,15 @@
     "titlePlaceholder": "Map title",
     "subtitleLabel": "Subtitle",
     "subtitlePlaceholder": "Optional subtitle",
+    "templateLabel": "Template",
+    "template": {
+      "custom": "Custom",
+      "natoNeutralA4": "Neutral tactical (A4 landscape)",
+      "natoNeutralA3": "Neutral tactical (A3 landscape)",
+      "natoNeutralA2": "Neutral tactical (A2 landscape)",
+      "natoNeutralA1": "Neutral tactical (A1 landscape)",
+      "natoNeutralA0": "Neutral tactical (A0 landscape)"
+    },
     "size": "Size",
     "sizeGroup": {
       "paper": "Paper",
@@ -1373,6 +1382,14 @@
       "hint": "Drag a box on the map to set the exact print area. Hold Shift to match the page proportions."
     },
     "info": {
+      "classification": "Classification",
+      "classificationValues": {
+        "UNCLASSIFIED": "UNCLASSIFIED",
+        "RESTRICTED": "RESTRICTED",
+        "CONFIDENTIAL": "CONFIDENTIAL",
+        "SECRET": "SECRET",
+        "TOP SECRET": "TOP SECRET"
+      },
       "author": "Author",
       "authorPlaceholder": "Author or organization",
       "project": "Project No.",
@@ -1393,7 +1410,9 @@
       "captureFirst": "Capture the map before exporting.",
       "exportFailed": "Failed to export {{format}}.",
       "clipboardFailed": "Could not copy the layout to the clipboard.",
-      "scaleOutOfRange": "This scale is outside the range the current view can reach; showing the closest available scale."
+      "scaleOutOfRange": "This scale is outside the range the current view can reach; showing the closest available scale.",
+      "mgrsGridRequired": "Tactical templates require an active UTM/MGRS grid.",
+      "tacticalTitleRequired": "Tactical templates require a map title."
     },
     "legend": {
       "section": "Legend",
@@ -4885,13 +4904,15 @@
     "saveEditsPostgisNoConnection": "No PostgreSQL connection is available for this layer. Reconnect in Add Data > PostgreSQL, then try again.",
     "typeBasemap": "basemap",
     "searchPlaces": "Search places",
-    "searchPlacesPlaceholder": "Search places, lat, lon, or H3 cell...",
+    "searchPlacesPlaceholder": "Search places, layers, providers, lat/lon, or H3 cell...",
     "searchPlacesSearching": "Searching...",
     "searchPlacesNoResults": "No places found",
     "searchPlacesError": "Search failed. Try again.",
     "searchPlacesClear": "Clear search",
     "searchPlacesGoToCoordinate": "Go to {{coordinate}}",
     "searchPlacesGoToH3Cell": "Go to H3 cell {{cell}} (res {{resolution}})",
+    "searchPlacesLayerResult": "Layer: {{name}}",
+    "searchPlacesProviderResult": "Provider: {{name}}",
     "background": "Background",
     "backgroundCannotReorder": "Background cannot be reordered",
     "hideBackground": "Hide background",

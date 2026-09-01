@@ -154,6 +154,13 @@ describe("resolvePageSize", () => {
     assert.deepEqual(landscape, { width: 1920, height: 1080, unit: "px" });
   });
 
+  it("supports large paper presets up to A0", () => {
+    const a0Portrait = resolvePageSize({ paperSize: "a0", orientation: "portrait" });
+    assert.deepEqual(a0Portrait, { width: 841, height: 1189, unit: "mm" });
+    const a0Landscape = resolvePageSize({ paperSize: "a0", orientation: "landscape" });
+    assert.deepEqual(a0Landscape, { width: 1189, height: 841, unit: "mm" });
+  });
+
   it("takes custom dimensions verbatim, ignoring orientation", () => {
     const size = resolvePageSize({
       paperSize: "custom",
@@ -287,6 +294,30 @@ describe("drawLayout cartographic furniture", () => {
         `expected the info block to draw "${v}"`,
       );
     }
+  });
+
+  it("draws classification only when it is an allowed level", () => {
+    const { canvas: validCanvas, fills: validFills } = recordingCanvas();
+    drawLayout(
+      validCanvas,
+      baseOptions({
+        showInfoBlock: true,
+        classification: "SECRET",
+        infoLabels: { classification: "Classification" },
+      }),
+    );
+    assert.ok(validFills.some((f) => f.text === "SECRET"));
+
+    const { canvas: invalidCanvas, fills: invalidFills } = recordingCanvas();
+    drawLayout(
+      invalidCanvas,
+      baseOptions({
+        showInfoBlock: true,
+        classification: "NOFORN" as never,
+        infoLabels: { classification: "Classification" },
+      }),
+    );
+    assert.ok(!invalidFills.some((f) => f.text === "NOFORN"));
   });
 
   it("omits the info block when showInfoBlock is false", () => {

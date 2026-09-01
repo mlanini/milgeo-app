@@ -11,7 +11,9 @@ import {
 import { useTranslation } from "react-i18next";
 import maplibregl from "maplibre-gl";
 import {
+  GEOCODING_PROVIDERS,
   type GeocodeMatch,
+  type GeocodingProviderId,
   geocodeForward,
   geocoderMinIntervalMs,
   resolveGeocoderConfig,
@@ -19,7 +21,7 @@ import {
 } from "@geolibre/core";
 import type { MapController } from "@geolibre/map";
 import { Input } from "@geolibre/ui";
-import { Hexagon, Loader2, LocateFixed, MapPin, Search, X } from "lucide-react";
+import { FileText, Hexagon, Loader2, LocateFixed, MapPin, Search, X } from "lucide-react";
 import { formatLatLon, parseLatLon } from "../../lib/coordinates";
 import { type H3CellMatch, parseH3Cell } from "../../lib/h3-search";
 
@@ -42,6 +44,13 @@ const H3_HIGHLIGHT_COLOR = "#ef4444";
 
 type SearchStatus = "idle" | "loading" | "error" | "empty";
 
+type SearchResultItem =
+  | { kind: "place"; match: GeocodeMatch }
+  | { kind: "coordinate"; match: GeocodeMatch }
+  | { kind: "h3"; match: GeocodeMatch; cell: H3CellMatch }
+  | { kind: "layer"; layerId: string; label: string }
+  | { kind: "provider"; providerId: GeocodingProviderId; label: string };
+
 /**
  * A compact "Search places" geocoder input pinned to the bottom of the Layers
  * panel. Forward-geocodes the typed query through the configured provider,
@@ -59,15 +68,12 @@ export function LayerPanelPlaceSearch({
   const { t } = useTranslation();
   // Per-instance id so multiple mounts never collide on the aria-controls link.
   const resultsId = `${useId()}-results`;
-  const geocodingPrefs = useAppStore((s) => s.preferences.geocoding);
+  const preferences = useAppStore((s) => s.preferences);
+  const geocodingPrefs = preferences.geocoding;
+  const setPreferences = useAppStore((s) => s.setPreferences);
+  const layers = useAppStore((s) => s.layers);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<GeocodeMatch[]>([]);
-  // True when the single result is a parsed lat/lon jump rather than a geocoder
-  // match, so the row is labeled and iconed as a coordinate instead of a place.
-  const [isCoordinate, setIsCoordinate] = useState(false);
-  // Set when the single result is a parsed H3 cell index, both to label the row
-  // and to supply the outline drawn on selection.
-  const [h3Cell, setH3Cell] = useState<H3CellMatch | null>(null);
+  const [results, setResults] = useState<SearchResultItem[]>([]);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<SearchStatus>("idle");
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -113,16 +119,42 @@ export function LayerPanelPlaceSearch({
     [clearH3Highlight],
   );
 
+  const localMatches = useCallback(
+    (text: string): SearchResultItem[] => {
+      const needle = text.trim().toLowerCase();
+      if (!needle) return [];
+
+      const layerResults: SearchResultItem[] = layers
+        .filter((layer) => layer.name.toLowerCase().includes(needle))
+        .slice(0, MAX_RESULTS)
+        .map((layer) => ({ kind: "layer", layerId: layer.id, label: layer.name }));
+
+      const providerResults: SearchResultItem[] = GEOCODING_PROVIDERS.filter(
+        (provider) =>
+          provider.id.toLowerCase().includes(needle) ||
+          provider.label.toLowerCase().includes(needle),
+      )
+        .slice(0, MAX_RESULTS)
+        .map((provider) => ({
+          kind: "provider",
+          providerId: provider.id,
+          label: provider.label,
+        }));
+
+      return [...layerResults, ...providerResults].slice(0, MAX_RESULTS);
+    },
+    [layers],
+  );
+
   const runSearch = useCallback(
     async (text: string) => {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      setIsCoordinate(false);
-      setH3Cell(null);
       setStatus("loading");
       setActiveIndex(-1);
       setOpen(true);
+      const local = localMatches(text);
       try {
         const config = resolveGeocoderConfig(geocodingPrefs);
         const matches = await geocodeForward(text, {
@@ -131,15 +163,24 @@ export function LayerPanelPlaceSearch({
           limit: MAX_RESULTS,
         });
         if (controller.signal.aborted) return;
-        setResults(matches);
-        setStatus(matches.length ? "idle" : "empty");
+        const combined: SearchResultItem[] = [
+          ...local,
+          ...matches.map((match) => ({ kind: "place", match }) as const),
+        ].slice(0, MAX_RESULTS);
+        setResults(combined);
+        setStatus(combined.length ? "idle" : "empty");
       } catch {
         if (controller.signal.aborted) return;
-        setResults([]);
-        setStatus("error");
+        if (local.length > 0) {
+          setResults(local);
+          setStatus("idle");
+        } else {
+          setResults([]);
+          setStatus("error");
+        }
       }
     },
-    [geocodingPrefs],
+    [geocodingPrefs, localMatches],
   );
 
   useEffect(() => {
@@ -152,8 +193,6 @@ export function LayerPanelPlaceSearch({
       abortRef.current?.abort();
       setResults([]);
       setActiveIndex(-1);
-      setIsCoordinate(false);
-      setH3Cell(null);
       setStatus("idle");
       setOpen(false);
       return;
@@ -164,10 +203,14 @@ export function LayerPanelPlaceSearch({
     const cell = parseH3Cell(trimmed);
     if (cell) {
       abortRef.current?.abort();
-      setResults([{ lat: cell.lat, lon: cell.lon, displayName: cell.cell, score: null }]);
+      setResults([
+        {
+          kind: "h3",
+          cell,
+          match: { lat: cell.lat, lon: cell.lon, displayName: cell.cell, score: null },
+        },
+      ]);
       setActiveIndex(0);
-      setIsCoordinate(false);
-      setH3Cell(cell);
       setStatus("idle");
       setOpen(true);
       return;
@@ -180,11 +223,12 @@ export function LayerPanelPlaceSearch({
     if (coord) {
       abortRef.current?.abort();
       setResults([
-        { lat: coord.lat, lon: coord.lon, displayName: formatLatLon(coord), score: null },
+        {
+          kind: "coordinate",
+          match: { lat: coord.lat, lon: coord.lon, displayName: formatLatLon(coord), score: null },
+        },
       ]);
       setActiveIndex(0);
-      setIsCoordinate(true);
-      setH3Cell(null);
       setStatus("idle");
       setOpen(true);
       return;
@@ -196,7 +240,7 @@ export function LayerPanelPlaceSearch({
   }, [query, debounceMs, runSearch]);
 
   const handleSelect = useCallback(
-    (match: GeocodeMatch) => {
+    (item: SearchResultItem) => {
       const map = mapControllerRef.current?.getMap();
       // Drop the previous marker and cell outline unconditionally so neither is
       // ever orphaned when the map is briefly unavailable (mount/teardown/
@@ -204,7 +248,18 @@ export function LayerPanelPlaceSearch({
       markerRef.current?.remove();
       markerRef.current = null;
       clearH3Highlight();
-      if (map && h3Cell) {
+      if (item.kind === "layer") {
+        const layer = layers.find((candidate) => candidate.id === item.layerId);
+        if (layer) mapControllerRef.current?.fitLayer(layer);
+      } else if (item.kind === "provider") {
+        setPreferences({
+          ...preferences,
+          geocoding: {
+            ...preferences.geocoding,
+            providerId: item.providerId,
+          },
+        });
+      } else if (map && item.kind === "h3") {
         // An H3 cell spans anything from a continent (resolution 0) to under a
         // square meter (resolution 15), so frame the cell itself rather than
         // flying to a fixed zoom, and outline it so the match is visible.
@@ -212,8 +267,8 @@ export function LayerPanelPlaceSearch({
           type: "geojson",
           data: {
             type: "Feature",
-            properties: { h3: h3Cell.cell, resolution: h3Cell.resolution },
-            geometry: { type: "Polygon", coordinates: [h3Cell.boundary] },
+            properties: { h3: item.cell.cell, resolution: item.cell.resolution },
+            geometry: { type: "Polygon", coordinates: [item.cell.boundary] },
           },
         });
         map.addLayer({
@@ -229,27 +284,31 @@ export function LayerPanelPlaceSearch({
           paint: { "line-color": H3_HIGHLIGHT_COLOR, "line-width": 2 },
         });
         const bounds = new maplibregl.LngLatBounds();
-        for (const position of h3Cell.boundary) bounds.extend(position);
+        for (const position of item.cell.boundary) bounds.extend(position);
         map.fitBounds(bounds, { padding: 60 });
       } else if (map) {
         map.flyTo({
-          center: [match.lon, match.lat],
+          center: [item.match.lon, item.match.lat],
           zoom: Math.max(map.getZoom(), 12),
         });
         markerRef.current = new maplibregl.Marker({ color: H3_HIGHLIGHT_COLOR })
-          .setLngLat([match.lon, match.lat])
+          .setLngLat([item.match.lon, item.match.lat])
           .addTo(map);
       }
       skipNextSearch.current = true;
-      setQuery(match.displayName);
+      if (item.kind === "provider") {
+        setQuery(item.label);
+      } else if (item.kind === "layer") {
+        setQuery(item.label);
+      } else {
+        setQuery(item.match.displayName);
+      }
       setResults([]);
       setActiveIndex(-1);
-      setIsCoordinate(false);
-      setH3Cell(null);
       setStatus("idle");
       setOpen(false);
     },
-    [clearH3Highlight, h3Cell, mapControllerRef],
+    [clearH3Highlight, layers, mapControllerRef, preferences, setPreferences],
   );
 
   const handleClear = useCallback(() => {
@@ -260,8 +319,6 @@ export function LayerPanelPlaceSearch({
     setQuery("");
     setResults([]);
     setActiveIndex(-1);
-    setIsCoordinate(false);
-    setH3Cell(null);
     setStatus("idle");
     setOpen(false);
   }, [clearH3Highlight]);
@@ -287,7 +344,7 @@ export function LayerPanelPlaceSearch({
             </div>
           ) : (
             <ul id={resultsId} role="listbox" className="max-h-60 overflow-auto py-1">
-              {results.map((match, index) => (
+              {results.map((item, index) => (
                 <li key={index}>
                   <button
                     type="button"
@@ -301,28 +358,36 @@ export function LayerPanelPlaceSearch({
                     // blur handler closes the dropdown.
                     onMouseDown={(event) => {
                       event.preventDefault();
-                      handleSelect(match);
+                      handleSelect(item);
                     }}
                     onMouseEnter={() => setActiveIndex(index)}
                   >
-                    {h3Cell ? (
+                    {item.kind === "h3" ? (
                       <Hexagon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    ) : isCoordinate ? (
+                    ) : item.kind === "coordinate" ? (
                       <LocateFixed className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    ) : item.kind === "layer" ? (
+                      <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    ) : item.kind === "provider" ? (
+                      <Search className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     ) : (
                       <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     )}
                     <span className="line-clamp-2">
-                      {h3Cell
+                      {item.kind === "h3"
                         ? t("layers.searchPlacesGoToH3Cell", {
-                            cell: h3Cell.cell,
-                            resolution: h3Cell.resolution,
+                            cell: item.cell.cell,
+                            resolution: item.cell.resolution,
                           })
-                        : isCoordinate
+                        : item.kind === "coordinate"
                           ? t("layers.searchPlacesGoToCoordinate", {
-                              coordinate: match.displayName,
+                              coordinate: item.match.displayName,
                             })
-                          : match.displayName}
+                          : item.kind === "layer"
+                            ? t("layers.searchPlacesLayerResult", { name: item.label })
+                            : item.kind === "provider"
+                              ? t("layers.searchPlacesProviderResult", { name: item.label })
+                              : item.match.displayName}
                     </span>
                   </button>
                 </li>

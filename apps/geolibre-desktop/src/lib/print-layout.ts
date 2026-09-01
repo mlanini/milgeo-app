@@ -20,6 +20,9 @@ import {
 export type PaperSizeId =
   | "a4"
   | "a3"
+  | "a2"
+  | "a1"
+  | "a0"
   | "letter"
   | "legal"
   | "tabloid"
@@ -29,6 +32,12 @@ export type PaperSizeId =
   | "square"
   | "custom";
 export type Orientation = "portrait" | "landscape";
+export type ClassificationLevel =
+  | "UNCLASSIFIED"
+  | "RESTRICTED"
+  | "CONFIDENTIAL"
+  | "SECRET"
+  | "TOP SECRET";
 /** How a size's width/height are expressed: physical millimetres or screen pixels. */
 export type SizeUnit = "mm" | "px";
 
@@ -65,6 +74,30 @@ export const PAPER_SIZES: PaperSize[] = [
     label: "A3 (297 × 420 mm)",
     width: 297,
     height: 420,
+    unit: "mm",
+    group: "paper",
+  },
+  {
+    id: "a2",
+    label: "A2 (420 × 594 mm)",
+    width: 420,
+    height: 594,
+    unit: "mm",
+    group: "paper",
+  },
+  {
+    id: "a1",
+    label: "A1 (594 × 841 mm)",
+    width: 594,
+    height: 841,
+    unit: "mm",
+    group: "paper",
+  },
+  {
+    id: "a0",
+    label: "A0 (841 × 1189 mm)",
+    width: 841,
+    height: 1189,
     unit: "mm",
     group: "paper",
   },
@@ -332,6 +365,8 @@ export interface LayoutOptions {
   crs?: string;
   /** Revision / version status line of the info block (e.g. "Rev 01"). */
   revision?: string;
+  /** Tactical classification in the title block, validated against fixed values. */
+  classification?: ClassificationLevel | "";
   /**
    * Row labels for the info block. Supplied (translated) by the dialog; English
    * fallbacks are used when omitted so the framework-free drawing code stays
@@ -343,6 +378,7 @@ export interface LayoutOptions {
     crs?: string;
     scale?: string;
     revision?: string;
+    classification?: string;
   };
   showFooter: boolean;
   footerText: string;
@@ -1214,6 +1250,18 @@ interface InfoLine {
   value: string;
 }
 
+const CLASSIFICATION_LEVELS: readonly ClassificationLevel[] = [
+  "UNCLASSIFIED",
+  "RESTRICTED",
+  "CONFIDENTIAL",
+  "SECRET",
+  "TOP SECRET",
+];
+
+function isClassificationLevel(value: string): value is ClassificationLevel {
+  return (CLASSIFICATION_LEVELS as readonly string[]).includes(value);
+}
+
 /**
  * Build the rows of the info block (title block / "stempel") from the layout
  * options, in conventional top-to-bottom order: project reference, author,
@@ -1230,6 +1278,12 @@ function buildInfoLines(opts: LayoutOptions, scaleRatio: number): InfoLine[] {
   // Row order follows the cartographic title-block convention (reference number
   // first as the primary identifier), which intentionally differs from the
   // dialog form's field order; keep it stable rather than matching the form.
+  if (opts.classification && isClassificationLevel(opts.classification)) {
+    lines.push({
+      label: labels.classification ?? "Classification",
+      value: opts.classification,
+    });
+  }
   push(labels.project, "Project", opts.projectNumber);
   push(labels.author, "Author", opts.author);
   push(labels.crs, "CRS", opts.crs);
