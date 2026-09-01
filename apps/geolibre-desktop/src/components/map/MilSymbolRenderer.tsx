@@ -55,6 +55,11 @@ interface SymbolCacheEntry {
   options: SymbolOptions;
 }
 
+interface MarkerEntry {
+  marker: maplibregl.Marker;
+  symbolKey: string;
+}
+
 function cleanSymbolOptions(opts: SymbolOptions): SymbolOptions {
   const cleaned: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(opts)) {
@@ -156,6 +161,28 @@ function ensureSymbolImage(
   }
 }
 
+function buildMilSymbolMarkerElement(sidc: string, options: SymbolOptions): HTMLDivElement | null {
+  try {
+    const symb = new MilSymbol(sidc, options);
+    if (!symb.isValid()) return null;
+    const svg = symb.asSVG();
+    if (!svg) return null;
+    const element = document.createElement("div");
+    element.className = "geolibre-mil-symbol-marker";
+    element.style.pointerEvents = "none";
+    element.style.transformOrigin = "center center";
+    element.style.display = "block";
+    element.innerHTML = svg;
+    const root = element.firstElementChild as HTMLElement | null;
+    if (root) {
+      root.style.display = "block";
+    }
+    return element;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Create the MapLibre source + icon symbol layer.
  * Called once on first use, and again after any style.load that wipes sources.
@@ -223,6 +250,9 @@ export default function MilSymbolRenderer({
     type: "FeatureCollection",
     features: [],
   });
+
+  /** Live DOM markers keyed by layer+symbol id, used as a robust fallback path. */
+  const markerEntriesRef = useRef<Map<string, MarkerEntry>>(new Map());
 
   /** Already-tracked mil-graphic source ids. */
   const graphicSourcesRef = useRef<Set<string>>(new Set());
@@ -340,6 +370,89 @@ export default function MilSymbolRenderer({
       addSymbolLayers(map, fc);
     }
   }, [symbols, milLayers, mapControllerRef, mapReadyGeneration]);
+
+  // ── Sync mil-symbol items → DOM markers fallback ───────────────────
+  useEffect(() => {
+    const map = mapControllerRef.current?.getMap();
+    if (!map) return;
+
+    const nextIds = new Set<string>();
+
+    for (const layer of symbols) {
+      const parsed = parseMilSymbolLayerSource(layer.source);
+      const layerSize =
+        typeof parsed.symbolSize === "number" &&
+        Number.isFinite(parsed.symbolSize) &&
+        parsed.symbolSize > 0
+          ? parsed.symbolSize
+          : SYMBOL_SIZE;
+      const layerOpacity =
+        typeof layer.opacity === "number" && Number.isFinite(layer.opacity)
+          ? Math.max(0, Math.min(1, layer.opacity))
+          : 1;
+
+      for (const symbol of parsed.symbols) {
+        if (!Number.isFinite(symbol.lon) || !Number.isFinite(symbol.lat)) continue;
+        const opts: SymbolOptions = cleanSymbolOptions({
+          size: layerSize,
+          infoFields: true,
+          uniqueDesignation: symbol.uniqueDesignation,
+          higherFormation: symbol.higherFormation,
+          staffComments: symbol.staffComments,
+          additionalInformation: symbol.additionalInformation,
+          dtg: symbol.dtg,
+          altitudeDepth: symbol.altitudeDepth,
+          outlineColor: "white",
+          outlineWidth: 6,
+          quantity: symbol.quantity,
+          iffSif: symbol.iffSif,
+          speed: symbol.speed,
+          type: symbol.typeStr,
+          reinforcedReduced: symbol.reinforcedReduced,
+          combatEffectiveness: symbol.combatEffectiveness,
+          evaluationRating: symbol.evaluationRating,
+        });
+        const markerId = `${layer.id}:${symbol.id}`;
+        nextIds.add(markerId);
+        const direction =
+          typeof symbol.direction === "number" && Number.isFinite(symbol.direction)
+            ? symbol.direction
+            : 0;
+        const symbolKey = makeSymbolKey(symbol.SIDC, opts);
+        const current = markerEntriesRef.current.get(markerId);
+        if (current && current.symbolKey === symbolKey) {
+          const element = current.marker.getElement() as HTMLElement;
+          element.style.opacity = String(layerOpacity);
+          current.marker.setLngLat([symbol.lon, symbol.lat]);
+          current.marker.setRotation(direction);
+          continue;
+        }
+
+        current?.marker.remove();
+        const element = buildMilSymbolMarkerElement(symbol.SIDC, opts);
+        if (!element) continue;
+        element.style.opacity = String(layerOpacity);
+        const marker = new maplibregl.Marker({ element, anchor: "center", rotationAlignment: "map" })
+          .setLngLat([symbol.lon, symbol.lat])
+          .setRotation(direction)
+          .addTo(map);
+        markerEntriesRef.current.set(markerId, { marker, symbolKey });
+      }
+    }
+
+    for (const [markerId, entry] of markerEntriesRef.current.entries()) {
+      if (nextIds.has(markerId)) continue;
+      entry.marker.remove();
+      markerEntriesRef.current.delete(markerId);
+    }
+
+    return () => {
+      for (const entry of markerEntriesRef.current.values()) {
+        entry.marker.remove();
+      }
+      markerEntriesRef.current.clear();
+    };
+  }, [symbols, mapControllerRef, mapReadyGeneration]);
 
   // ── Sync mil-graphic items → GeoJSON sources/layers ─────────────────
   useEffect(() => {
