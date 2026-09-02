@@ -1047,6 +1047,8 @@ export interface MilSymbolLayerSource {
   additionalInfo?: string;
   speed?: string;
   direction?: number;
+  /** Whether symbol outline amplifiers are enabled (default true). */
+  showAmplifiers?: boolean;
 }
 
 /**

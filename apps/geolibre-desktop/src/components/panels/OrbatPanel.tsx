@@ -81,7 +81,7 @@ function buildUnitLayer(unit: OrbatUnit, lon: number, lat: number) {
     opacity: 1,
     style: { ...DEFAULT_LAYER_STYLE },
     metadata: { milgeoManaged: true, orbatUnitId: unit.id },
-    source: serializeMilSymbolLayerSource([symbol], DEFAULT_MIL_SYMBOL_SIZE_PX),
+    source: serializeMilSymbolLayerSource([symbol], DEFAULT_MIL_SYMBOL_SIZE_PX, true),
     createdSymbolId: symbol.id,
   };
 }
@@ -323,7 +323,7 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
         );
 
         updateLayer(linkedLayer.id, {
-          source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize),
+          source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize, parsed.showAmplifiers),
         });
       }
     }
@@ -364,7 +364,7 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
               : symbol
           );
           appState.updateLayer(linkedLayer.id, {
-            source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize),
+            source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize, parsed.showAmplifiers),
           });
         } else {
           const preferredLayer = appState.selectedLayerId
@@ -403,7 +403,11 @@ export function OrbatPanel({ mapControllerRef }: OrbatPanelProps) {
           } else {
             const parsed = parseMilSymbolLayerSource(targetLayer.source);
             appState.updateLayer(targetLayer.id, {
-              source: serializeMilSymbolLayerSource([...parsed.symbols, symbol], parsed.symbolSize),
+              source: serializeMilSymbolLayerSource(
+                [...parsed.symbols, symbol],
+                parsed.symbolSize,
+                parsed.showAmplifiers,
+              ),
             });
             useMilLayerStore.getState().updateOrbatUnit(unitId, { symbolId: symbol.id });
           }

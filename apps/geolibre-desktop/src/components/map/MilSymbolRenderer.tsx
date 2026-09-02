@@ -49,6 +49,17 @@ const SYMBOL_SIZE = DEFAULT_MIL_SYMBOL_SIZE_PX;
 /** Capture DPR once; constant for the component lifetime. */
 const PIXEL_RATIO = window.devicePixelRatio || 1;
 
+function hasRenderableMilGraphicFeatures(value: unknown): value is FeatureCollection {
+  if (!value || typeof value !== "object") return false;
+  const record = value as { features?: unknown };
+  if (!Array.isArray(record.features)) return false;
+  return record.features.some((feature) => {
+    if (!feature || typeof feature !== "object") return false;
+    const geometry = (feature as { geometry?: { type?: unknown } }).geometry;
+    return geometry?.type === "LineString" || geometry?.type === "Polygon";
+  });
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 interface SymbolCacheEntry {
@@ -290,6 +301,7 @@ export default function MilSymbolRenderer({
 
     for (const layer of symbols) {
       const parsed = parseMilSymbolLayerSource(layer.source);
+      const showAmplifiers = parsed.showAmplifiers;
       const layerSize =
         typeof parsed.symbolSize === "number" &&
         Number.isFinite(parsed.symbolSize) &&
@@ -318,8 +330,7 @@ export default function MilSymbolRenderer({
           additionalInformation: symbol.additionalInformation,
           dtg:               symbol.dtg,
           altitudeDepth:     symbol.altitudeDepth,
-          outlineColor:      "white",
-          outlineWidth:      6,
+          ...(showAmplifiers ? { outlineColor: "white", outlineWidth: 6 } : {}),
           quantity:          symbol.quantity,
           iffSif:            symbol.iffSif,
           speed:             symbol.speed,
@@ -367,6 +378,7 @@ export default function MilSymbolRenderer({
 
     for (const layer of symbols) {
       const parsed = parseMilSymbolLayerSource(layer.source);
+      const showAmplifiers = parsed.showAmplifiers;
       const layerSize =
         typeof parsed.symbolSize === "number" &&
         Number.isFinite(parsed.symbolSize) &&
@@ -389,8 +401,7 @@ export default function MilSymbolRenderer({
           additionalInformation: symbol.additionalInformation,
           dtg: symbol.dtg,
           altitudeDepth: symbol.altitudeDepth,
-          outlineColor: "white",
-          outlineWidth: 6,
+          ...(showAmplifiers ? { outlineColor: "white", outlineWidth: 6 } : {}),
           quantity: symbol.quantity,
           iffSif: symbol.iffSif,
           speed: symbol.speed,
@@ -475,10 +486,9 @@ export default function MilSymbolRenderer({
         const dirId = `mg-dir-${layer.id}`;
         const parsed = parseMilGraphicLayerSource(layer.source);
         const fallbackGeoData = milGraphicsToGeoJson(parsed.graphics);
-        const geoData =
-          layer.geojson && Array.isArray(layer.geojson.features)
-            ? layer.geojson
-            : fallbackGeoData;
+        const geoData = hasRenderableMilGraphicFeatures(layer.geojson)
+          ? layer.geojson
+          : fallbackGeoData;
         if (!Array.isArray(geoData.features) || geoData.features.length === 0) continue;
 
         const hasDirectional = geoData.features.some((feature) => {
@@ -487,7 +497,7 @@ export default function MilSymbolRenderer({
             feature.properties && typeof feature.properties === "object"
               ? (feature.properties as Record<string, unknown>)
               : null;
-          return props?.directional === 1 || props?.directional === true;
+          return props?.directional === 1 || props?.directional === true || props?.directional === "1";
         });
 
         if (graphicSourcesRef.current.has(layer.id) && map.getSource(layer.id)) {

@@ -7,14 +7,12 @@
  * Formats supported:
  *   .orbat.json      — KADAS ORBAT flat unit tree
  *   .milsymb.json    — KADAS MilSymb layer document
- *   .milxly / .milx  — gs-soft MilX V3.1 XML
  *
  * Each function returns { layers: MilLayer[], orbat: OrbatUnit[] } which
  * can be merged into the current store state via importFromMilGeoJson().
  */
 
 import type { MilLayer, MilSymbolItem, MilGraphicItem, OrbatUnit, MilGeometryType } from "@geolibre/core";
-import { strFromU8, unzipSync } from "fflate";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -54,8 +52,6 @@ export interface StoreImportResult {
   layers: MilLayer[];
   orbat: OrbatUnit[];
 }
-
-const MAX_MILX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
 function asBytes(data: ArrayBuffer | Uint8Array): Uint8Array {
   return data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -302,107 +298,10 @@ function parseMssStringXML(
  * Each MilXLayer becomes one MilLayer.
  */
 export function parseMilXForStore(
-  xmlString: string,
-  sourceName?: string,
+  _xmlString: string,
+  _sourceName?: string,
 ): StoreImportResult {
-  const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(xmlString, "application/xml");
-
-  if (xmlDoc.querySelector("parsererror")) {
-    throw new Error("Invalid MilX file: XML parse error");
-  }
-
-  const milxLayers = Array.from(xmlDoc.querySelectorAll("MilXLayer"));
-  if (milxLayers.length === 0) {
-    throw new Error("Invalid MilX file: no <MilXLayer> elements found");
-  }
-
-  const resultLayers: MilLayer[] = [];
-
-  for (const milxLayer of milxLayers) {
-    const layerId = crypto.randomUUID();
-    const layerName = getText(milxLayer, "Name") ?? sourceName ?? "MilX Import";
-
-    const symbols: MilSymbolItem[] = [];
-    const graphics: MilGraphicItem[] = [];
-
-    for (const graphic of Array.from(milxLayer.querySelectorAll("MilXGraphic"))) {
-      const mssRaw = getText(graphic, "MssStringXML");
-      if (!mssRaw) continue;
-
-      const parsed = parseMssStringXML(mssRaw, parser);
-      if (!parsed || !isValidSIDC(parsed.sidc)) continue;
-
-      const { sidc, attrs } = parsed;
-
-      // Prefer APP6D attribute for full 20-char SIDC round-trip
-      const finalSidc = (attrs["APP6D"] && isValidSIDC(attrs["APP6D"]))
-        ? attrs["APP6D"]
-        : sidc;
-
-      const graphicName = getText(graphic, "Name");
-      const designation = attrs["T"];
-      const name = graphicName ?? designation ?? sidc.slice(0, 8);
-
-      const pointEls = Array.from(graphic.querySelectorAll("PointList > Point"));
-      const coords: [number, number][] = pointEls
-        .map((pt) => {
-          const x = parseFloat(getText(pt, "X") ?? "NaN");
-          const y = parseFloat(getText(pt, "Y") ?? "NaN");
-          return [x, y] as [number, number];
-        })
-        .filter(([x, y]) => isFinite(x) && isFinite(y));
-
-      if (coords.length === 0) continue;
-
-      const id = crypto.randomUUID();
-
-      if (coords.length === 1) {
-        const [lon, lat] = coords[0];
-        symbols.push({
-          id,
-          name,
-          layerId,
-          sidc: finalSidc,
-          lon,
-          lat,
-          uniqueDesignation: designation,
-          higherFormation: attrs["M"],
-          additionalInformation: attrs["H"] ?? attrs["G"],
-          direction: attrs["Q"] ? parseFloat(attrs["Q"]) : undefined,
-          speed: attrs["Z"],
-        });
-      } else {
-        const first = coords[0];
-        const last = coords[coords.length - 1];
-        const isClosed =
-          first[0] === last[0] && first[1] === last[1] && coords.length >= 4;
-        const geometryType: MilGeometryType = isClosed ? "Polygon" : "LineString";
-
-        graphics.push({
-          id,
-          name,
-          layerId,
-          sidc: finalSidc,
-          geometryType,
-          coordinates: coords,
-          uniqueDesignation: designation,
-          additionalInformation: attrs["H"] ?? attrs["G"],
-        });
-      }
-    }
-
-    resultLayers.push({
-      id: layerId,
-      name: layerName,
-      visible: true,
-      opacity: 1,
-      symbols,
-      graphics,
-    });
-  }
-
-  return { layers: resultLayers, orbat: [] };
+  throw new Error("MILX import non e piu supportato.");
 }
 
 /**
@@ -410,48 +309,11 @@ export function parseMilXForStore(
  * `.milxly` or `.milx` document inside.
  */
 export function parseMilXArchiveForStore(
-  archive: ArrayBuffer | Uint8Array,
-  filename?: string,
-  sourceName?: string,
+  _archive: ArrayBuffer | Uint8Array,
+  _filename?: string,
+  _sourceName?: string,
 ): StoreImportResult {
-  const bytes = asBytes(archive);
-  if (bytes.byteLength > MAX_MILX_ARCHIVE_BYTES) {
-    throw new Error("MilX archive is too large to import safely.");
-  }
-
-  let entries: Record<string, Uint8Array>;
-  try {
-    let expanded = 0;
-    entries = unzipSync(bytes, {
-      filter(entry) {
-        if (entry.originalSize > MAX_MILX_ARCHIVE_BYTES) {
-          throw new Error("MilX archive is too large to import safely.");
-        }
-        expanded += entry.originalSize;
-        if (expanded > MAX_MILX_ARCHIVE_BYTES) {
-          throw new Error("MilX archive is too large to import safely.");
-        }
-        return /\.(milxly|milx)$/i.test(entry.name);
-      },
-    });
-  } catch (error) {
-    if (error instanceof Error && /too large to import safely/i.test(error.message)) {
-      throw error;
-    }
-    throw new Error("Invalid MilX archive: ZIP parse error");
-  }
-
-  const names = Object.keys(entries)
-    .filter((name) => /\.(milxly|milx)$/i.test(name))
-    .sort((a, b) => a.localeCompare(b));
-  if (names.length === 0) {
-    throw new Error("Invalid MilX archive: no .milxly/.milx document found");
-  }
-
-  const preferredName = names.find((name) => name.toLowerCase().endsWith(".milxly")) ?? names[0];
-  const xml = strFromU8(entries[preferredName]);
-  const layerName = sourceName ?? filename?.replace(/\.milxlyz$/i, "") ?? preferredName;
-  return parseMilXForStore(xml, layerName);
+  throw new Error("MILX import non e piu supportato.");
 }
 
 // ─── Auto-detect dispatcher ───────────────────────────────────────────────────
@@ -473,10 +335,6 @@ export function parseAnyMilFormatForStore(
   if (nameLower.endsWith(".milsymb.json")) {
     return parseMilsymbJsonForStore(text, sourceName);
   }
-  if (nameLower.endsWith(".milxly") || nameLower.endsWith(".milx")) {
-    return parseMilXForStore(text, sourceName);
-  }
-
   // Generic JSON: probe content
   if (nameLower.endsWith(".json")) {
     try {
@@ -498,23 +356,11 @@ export function parseAnyMilFormatForStore(
       if (e instanceof Error && e.message === "__milgeo_json__") throw e;
       // ignore parse errors for content probing
     }
-    // MilX XML stored as .json?
-    if (text.trimStart().includes("MilXLayer")) {
-      return parseMilXForStore(text, sourceName);
-    }
-  }
-
-  // XML without recognized extension
-  if (
-    text.trimStart().startsWith("<?xml") ||
-    text.trimStart().includes("MilXLayer")
-  ) {
-    return parseMilXForStore(text, sourceName);
   }
 
   throw new Error(
     `Unrecognised file format: ${filename}. ` +
-      "Expected .milgeo.json, .orbat.json, .milsymb.json, .milxlyz, or .milxly",
+      "Expected .milgeo.json, .orbat.json, or .milsymb.json",
   );
 }
 
@@ -527,11 +373,6 @@ export function parseAnyMilFormatFromBytesForStore(
   filename: string,
   sourceName?: string,
 ): StoreImportResult {
-  const lower = filename.toLowerCase();
-  if (lower.endsWith(".milxlyz")) {
-    return parseMilXArchiveForStore(data, filename, sourceName);
-  }
-
   const text = new TextDecoder().decode(asBytes(data));
   return parseAnyMilFormatForStore(text, filename, sourceName);
 }

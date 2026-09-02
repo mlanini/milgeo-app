@@ -813,9 +813,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
           <div className="max-h-28 space-y-0.5 overflow-y-auto">
             {tacticalGraphics.map((graphic) => (
               <div key={graphic.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-muted/50">
-                <span className="grid h-5 w-5 place-items-center rounded border text-[9px] text-muted-foreground">
-                  {graphic.geometryType === "Polygon" ? "A" : "L"}
-                </span>
+                <GraphicPreview sidc={odinDisplaySidc(graphic.SIDC, graphic.affiliation)} />
                 <div className="min-w-0 flex-1 text-[10px]">
                   <div className="truncate font-medium">{graphic.name}</div>
                   <div className="truncate text-muted-foreground">{graphic.SIDC}</div>

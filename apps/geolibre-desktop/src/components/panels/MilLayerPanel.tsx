@@ -19,7 +19,6 @@ import ms from "../../lib/milsymbol-runtime";
 import {
   Check,
   Crosshair,
-  Download,
   MapPin,
   Pencil,
   Upload,
@@ -49,10 +48,6 @@ import {
   parseAnyMilFormatFromBytesForStore,
   type StoreImportResult,
 } from "../../lib/milsymbol-import-to-store";
-import {
-  exportToMilX,
-  exportToMilXlyz,
-} from "../../lib/milsymbol-export-formats";
 import {
   parseMilGraphicLayerSource,
   serializeMilGraphicLayerSource,
@@ -123,7 +118,12 @@ interface CatalogTabProps {
   mapControllerRef: React.RefObject<MapController | null>;
 }
 
-function createMilSymbolLayer(name: string, symbol: MilSymbolLayerItem, symbolSize: number): GeoLibreLayer {
+function createMilSymbolLayer(
+  name: string,
+  symbol: MilSymbolLayerItem,
+  symbolSize: number,
+  showAmplifiers: boolean,
+): GeoLibreLayer {
   return {
     id: crypto.randomUUID(),
     name,
@@ -132,7 +132,7 @@ function createMilSymbolLayer(name: string, symbol: MilSymbolLayerItem, symbolSi
     opacity: 1,
     style: { ...DEFAULT_LAYER_STYLE },
     metadata: { milgeoManaged: true },
-    source: serializeMilSymbolLayerSource([symbol], symbolSize),
+    source: serializeMilSymbolLayerSource([symbol], symbolSize, showAmplifiers),
   };
 }
 
@@ -147,6 +147,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   const [category,    setCategory]    = useState("All");
   const [affiliation, setAffiliation] = useState<MilAffiliation>("FRIENDLY");
   const [symbolSizePx, setSymbolSizePx] = useState(DEFAULT_MIL_SYMBOL_SIZE_PX);
+  const [showAmplifiers, setShowAmplifiers] = useState(true);
   const [placingSidc, setPlacingSidc] = useState<string | null>(null);
   const [pendingPatch, setPendingPatch] = useState<MilSymbolPatch | null>(null);
   const [pendingMove, setPendingMove] = useState<{ layerId: string; symbolId: string } | null>(null);
@@ -186,6 +187,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     if (!targetLayer) return;
     const parsed = parseMilSymbolLayerSource(targetLayer.source);
     setSymbolSizePx(parsed.symbolSize);
+    setShowAmplifiers(parsed.showAmplifiers);
   }, [targetLayer]);
 
   // Applies echelon to the SIDC before placing, preserving catalog modifiers.
@@ -222,7 +224,11 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
               : symbol
           );
           updateLayer(layer.id, {
-            source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize),
+            source: serializeMilSymbolLayerSource(
+              symbols,
+              parsed.symbolSize,
+              parsed.showAmplifiers,
+            ),
           });
           selectLayer(layer.id);
         }
@@ -257,13 +263,17 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       };
 
       if (!target) {
-        const created = createMilSymbolLayer("Mil Symbols", symbol, symbolSizePx);
+        const created = createMilSymbolLayer("Mil Symbols", symbol, symbolSizePx, showAmplifiers);
         addLayer(created);
         selectLayer(created.id);
       } else {
         const parsed = parseMilSymbolLayerSource(target.source);
         updateLayer(target.id, {
-          source: serializeMilSymbolLayerSource([...parsed.symbols, symbol], symbolSizePx),
+          source: serializeMilSymbolLayerSource(
+            [...parsed.symbols, symbol],
+            symbolSizePx,
+            parsed.showAmplifiers,
+          ),
         });
         selectLayer(target.id);
       }
@@ -272,7 +282,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       setPendingPatch(null);
       setPendingMove(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pendingPatch, pendingMove, symbolSizePx, addLayer, resolveTargetLayer, updateLayer, selectLayer, layers]),
+    }, [pendingPatch, pendingMove, showAmplifiers, symbolSizePx, addLayer, resolveTargetLayer, updateLayer, selectLayer, layers]),
     true,
   );
 
@@ -350,7 +360,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     });
 
     updateLayer(layer.id, {
-      source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize),
+      source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize, parsed.showAmplifiers),
     });
     setEditingSymbol(null);
     setEditingPlacedPatch(null);
@@ -374,7 +384,17 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     if (!target) return;
     const parsed = parseMilSymbolLayerSource(target.source);
     updateLayer(target.id, {
-      source: serializeMilSymbolLayerSource(parsed.symbols, value),
+      source: serializeMilSymbolLayerSource(parsed.symbols, value, parsed.showAmplifiers),
+    });
+  }
+
+  function handleToggleAmplifiers(enabled: boolean) {
+    setShowAmplifiers(enabled);
+    const target = resolveTargetLayer();
+    if (!target) return;
+    const parsed = parseMilSymbolLayerSource(target.source);
+    updateLayer(target.id, {
+      source: serializeMilSymbolLayerSource(parsed.symbols, parsed.symbolSize, enabled),
     });
   }
 
@@ -450,6 +470,14 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
             value={symbolSizePx}
             onChange={(e) => handleChangeSymbolSize(Number(e.target.value))}
           />
+        </label>
+        <label className="inline-flex items-center gap-2 text-[10px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={showAmplifiers}
+            onChange={(e) => handleToggleAmplifiers(e.target.checked)}
+          />
+          Amplificatori contorno simboli
         </label>
       </div>
 
@@ -577,11 +605,6 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const milLayers = useMemo(
-    () => layers.filter((layer) => layer.type === "mil-symbol" || layer.type === "mil-graphic"),
-    [layers],
-  );
-
   const applyImportedStoreData = useCallback((result: StoreImportResult) => {
     const symbolIdMap = new Map<string, string>();
 
@@ -623,7 +646,7 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
           opacity: importedLayer.opacity,
           style: { ...DEFAULT_LAYER_STYLE },
           metadata: { milgeoManaged: true },
-          source: serializeMilSymbolLayerSource(symbols, DEFAULT_MIL_SYMBOL_SIZE_PX),
+          source: serializeMilSymbolLayerSource(symbols, DEFAULT_MIL_SYMBOL_SIZE_PX, true),
         });
       }
     }
@@ -704,8 +727,7 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
       const sourceName = file.name
         .replace(/\.orbat\.json$/i, "")
         .replace(/\.milsymb\.json$/i, "")
-        .replace(/\.milxlyz$/i, "")
-        .replace(/\.(milxly|milx|json)$/i, "");
+        .replace(/\.json$/i, "");
       const bytes = await file.arrayBuffer();
       const parsed = parseAnyMilFormatFromBytesForStore(bytes, file.name, sourceName);
       applyImportedStoreData(parsed);
@@ -719,16 +741,6 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
       setNotice(`Errore import: ${message}`);
     }
   }, [applyImportedStoreData]);
-
-  const handleExportMilX = useCallback(() => {
-    exportToMilX(milLayers, "milgeo-export");
-    setNotice("Export MILXLY completato.");
-  }, [milLayers]);
-
-  const handleExportMilXlyz = useCallback(() => {
-    exportToMilXlyz(milLayers, "milgeo-export");
-    setNotice("Export MILXLYZ completato.");
-  }, [milLayers]);
 
   const tabCls = (t: TabId) =>
     cn(
@@ -744,32 +756,16 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".orbat.json,.milsymb.json,.milxly,.milx,.milxlyz,.json,.xml"
+          accept=".orbat.json,.milsymb.json,.json"
           className="hidden"
           onChange={handleImportFile}
         />
         <button
           className="inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] hover:bg-muted"
           onClick={() => fileInputRef.current?.click()}
-          title="Importa ORBAT, MilSymb, MILXLY o MILXLYZ"
+          title="Importa ORBAT o MilSymb"
         >
           <Upload size={12} /> Importa
-        </button>
-        <button
-          className="inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] hover:bg-muted disabled:opacity-50"
-          onClick={handleExportMilX}
-          disabled={milLayers.length === 0}
-          title="Esporta MILXLY"
-        >
-          <Download size={12} /> MILXLY
-        </button>
-        <button
-          className="inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] hover:bg-muted disabled:opacity-50"
-          onClick={handleExportMilXlyz}
-          disabled={milLayers.length === 0}
-          title="Esporta MILXLYZ"
-        >
-          <Download size={12} /> MILXLYZ
         </button>
       </div>
 

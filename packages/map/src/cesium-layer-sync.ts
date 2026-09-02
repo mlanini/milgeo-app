@@ -18,6 +18,11 @@ type CesiumNs = typeof import("cesium");
 ms.setStandard("APP6");
 const MilSymbol = ms.Symbol;
 
+// In nadir view (pitch near -90 deg) symbols stay clamped to terrain. As soon
+// as the user tilts the globe, lift symbols into billboard mode for legibility.
+const MIL_SYMBOL_BILLBOARD_TILT_THRESHOLD_RAD = -1.52;
+const MIL_SYMBOL_BILLBOARD_HEIGHT_M = 30;
+
 /** Layer kinds this pass renders on the globe. */
 const IMAGERY_TYPES = new Set(["raster", "xyz", "wms", "wmts"]);
 
@@ -60,6 +65,7 @@ interface ParsedMilSymbolItem {
 interface ParsedMilSymbolLayerSource {
   symbols: ParsedMilSymbolItem[];
   symbolSize: number;
+  showAmplifiers: boolean;
 }
 
 interface ParsedMilGraphicItem {
@@ -101,13 +107,14 @@ function parseMilSymbolItem(raw: unknown): ParsedMilSymbolItem | null {
 
 function parseMilSymbolLayerSource(source: Record<string, unknown>): ParsedMilSymbolLayerSource {
   const symbolSize = parseNumber(source.symbolSize) ?? 38;
+  const showAmplifiers = source.showAmplifiers !== false;
   const rawSymbols = Array.isArray(source.symbols) ? source.symbols : [];
   const symbols = rawSymbols
     .map((item) => parseMilSymbolItem(item))
     .filter((item): item is ParsedMilSymbolItem => item !== null);
-  if (symbols.length > 0) return { symbols, symbolSize };
+  if (symbols.length > 0) return { symbols, symbolSize, showAmplifiers };
   const legacy = parseMilSymbolItem(source);
-  return { symbols: legacy ? [legacy] : [], symbolSize };
+  return { symbols: legacy ? [legacy] : [], symbolSize, showAmplifiers };
 }
 
 function parseCoordinate(value: unknown): [number, number] | null {
@@ -217,12 +224,11 @@ function milGraphicCssColor(affiliation: ParsedMilGraphicItem["affiliation"]): s
   }
 }
 
-function milSymbolIconDataUrl(sidc: string, size: number): string | null {
+function milSymbolIconDataUrl(sidc: string, size: number, showAmplifiers: boolean): string | null {
   try {
     const symbol = new MilSymbol(sidc, {
       size,
-      outlineColor: "white",
-      outlineWidth: 6,
+      ...(showAmplifiers ? { outlineColor: "white", outlineWidth: 6 } : {}),
       infoFields: true,
     });
     if (!symbol.isValid()) return null;
@@ -328,11 +334,27 @@ export class CesiumLayerSync {
   private readonly entries = new Map<string, LayerEntry>();
   /** Imagery id order last asserted on the globe, to skip redundant reorders. */
   private lastImageryOrder = "";
+  /** Camera listener cleanup hook registered in the constructor. */
+  private removeCameraChangedListener: (() => void) | null = null;
+  /** Last applied mil-symbol billboard mode (avoids redundant entity updates). */
+  private milSymbolBillboardMode: "ground" | "billboard" = "ground";
 
   constructor(
     private readonly Cesium: CesiumNs,
     private readonly viewer: Viewer,
-  ) {}
+  ) {
+    if (this.viewer.camera.percentageChanged > 0.01) {
+      this.viewer.camera.percentageChanged = 0.01;
+    }
+    const onCameraChanged = () => {
+      this.syncMilSymbolBillboardMode();
+    };
+    this.viewer.camera.changed.addEventListener(onCameraChanged);
+    this.removeCameraChangedListener = () => {
+      this.viewer.camera.changed.removeEventListener(onCameraChanged);
+    };
+    this.syncMilSymbolBillboardMode();
+  }
 
   /** Reconcile the globe to `layers` (order preserved for imagery stacking). */
   sync(layers: GeoLibreLayer[]): void {
@@ -399,8 +421,27 @@ export class CesiumLayerSync {
   }
 
   destroy(): void {
+    this.removeCameraChangedListener?.();
+    this.removeCameraChangedListener = null;
     for (const entry of this.entries.values()) this.destroyEntry(entry);
     this.entries.clear();
+  }
+
+  private cameraIsTiltedForBillboards(): boolean {
+    const pitch = this.viewer.camera.pitch;
+    return Number.isFinite(pitch) && pitch > MIL_SYMBOL_BILLBOARD_TILT_THRESHOLD_RAD;
+  }
+
+  private syncMilSymbolBillboardMode(): void {
+    const nextMode: "ground" | "billboard" = this.cameraIsTiltedForBillboards()
+      ? "billboard"
+      : "ground";
+    if (nextMode === this.milSymbolBillboardMode) return;
+    this.milSymbolBillboardMode = nextMode;
+    for (const entry of this.entries.values()) {
+      if (entry.kind !== "mil-symbol" || !entry.handle) continue;
+      this.applyMilSymbolBillboardMode(entry, nextMode);
+    }
   }
 
   private createEntry(layer: GeoLibreLayer): void {
@@ -499,7 +540,7 @@ export class CesiumLayerSync {
     try {
       const dataSource = new Cesium.CustomDataSource(entry.layer.name);
       for (const symbol of parsed.symbols) {
-        const image = milSymbolIconDataUrl(symbol.SIDC, parsed.symbolSize);
+        const image = milSymbolIconDataUrl(symbol.SIDC, parsed.symbolSize, parsed.showAmplifiers);
         if (!image) continue;
         dataSource.entities.add({
           id: symbol.id,
@@ -526,6 +567,10 @@ export class CesiumLayerSync {
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
               }
             : undefined,
+          properties: {
+            lon: symbol.lon,
+            lat: symbol.lat,
+          },
         });
       }
       if (entry.cancelled) return;
@@ -536,6 +581,7 @@ export class CesiumLayerSync {
       }
       entry.handle = dataSource;
       this.applyAppearance(entry);
+      this.applyMilSymbolBillboardMode(entry, this.milSymbolBillboardMode);
     } catch {
       // Best-effort, like other globe layer kinds.
     }
@@ -676,6 +722,42 @@ export class CesiumLayerSync {
       if (feature.label) {
         feature.label.fillColor = new Cesium.ConstantProperty(color);
       }
+    }
+  }
+
+  private applyMilSymbolBillboardMode(
+    entry: LayerEntry,
+    mode: "ground" | "billboard",
+  ): void {
+    const dataSource = entry.handle as DataSource | null;
+    if (!dataSource) return;
+    const { Cesium } = this;
+    for (const feature of dataSource.entities.values) {
+      const lon = feature.properties?.lon?.getValue?.();
+      const lat = feature.properties?.lat?.getValue?.();
+      const hasLonLat = typeof lon === "number" && typeof lat === "number";
+
+      if (feature.billboard) {
+        feature.billboard.heightReference = new Cesium.ConstantProperty(
+          mode === "billboard"
+            ? Cesium.HeightReference.NONE
+            : Cesium.HeightReference.CLAMP_TO_GROUND,
+        );
+      }
+
+      if (feature.label) {
+        feature.label.heightReference = new Cesium.ConstantProperty(
+          mode === "billboard"
+            ? Cesium.HeightReference.NONE
+            : Cesium.HeightReference.CLAMP_TO_GROUND,
+        );
+      }
+
+      if (!hasLonLat) continue;
+      const altitude = mode === "billboard" ? MIL_SYMBOL_BILLBOARD_HEIGHT_M : 0;
+      feature.position = new Cesium.ConstantPositionProperty(
+        Cesium.Cartesian3.fromDegrees(lon, lat, altitude),
+      );
     }
   }
 

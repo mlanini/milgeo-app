@@ -28,6 +28,7 @@ export interface MilSymbolLayerItem {
 export interface ParsedMilSymbolLayerSource {
   symbols: MilSymbolLayerItem[];
   symbolSize: number;
+  showAmplifiers: boolean;
 }
 
 function isAffiliation(value: unknown): value is MilAffiliation {
@@ -108,30 +109,33 @@ function parseLegacySingleSymbol(raw: Record<string, unknown>): MilSymbolLayerIt
 
 export function parseMilSymbolLayerSource(raw: unknown): ParsedMilSymbolLayerSource {
   if (!raw || typeof raw !== "object") {
-    return { symbols: [], symbolSize: DEFAULT_MIL_SYMBOL_SIZE_PX };
+    return { symbols: [], symbolSize: DEFAULT_MIL_SYMBOL_SIZE_PX, showAmplifiers: true };
   }
 
   const record = raw as Record<string, unknown>;
   const symbolSize = parseNumber(record.symbolSize) ?? DEFAULT_MIL_SYMBOL_SIZE_PX;
+  const showAmplifiers = record.showAmplifiers !== false;
   const rawSymbols = Array.isArray(record.symbols) ? record.symbols : [];
   const symbols = rawSymbols
     .map((item) => parseSymbolItem(item))
     .filter((item): item is MilSymbolLayerItem => item !== null);
 
   if (symbols.length > 0) {
-    return { symbols, symbolSize };
+    return { symbols, symbolSize, showAmplifiers };
   }
 
   const legacy = parseLegacySingleSymbol(record);
   return {
     symbols: legacy ? [legacy] : [],
     symbolSize,
+    showAmplifiers,
   };
 }
 
 export function serializeMilSymbolLayerSource(
   symbols: MilSymbolLayerItem[],
   symbolSize: number,
+  showAmplifiers = true,
 ): Record<string, unknown> {
   const first = symbols[0];
 
@@ -158,5 +162,6 @@ export function serializeMilSymbolLayerSource(
     evaluationRating: first?.evaluationRating,
     symbols,
     symbolSize,
+    showAmplifiers,
   };
 }

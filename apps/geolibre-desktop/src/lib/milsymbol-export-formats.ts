@@ -5,19 +5,15 @@
  *
  *   .orbat.json   — KADAS ORBAT flat-unit-tree (https://github.com/intelligeo/qgis-app6d-plugin)
  *   .milsymb.json — KADAS MilSymb layer document (kadas_milsymb_version 0.2)
- *   .milxly       — gs-soft MilX V3.1 XML (swisstopo KADAS Albireo)
  *
- * All three functions accept the store-native GeoLibreLayer[] model.
- * Graphics (mil-graphic layers) are included in MilX but omitted from
- * ORBAT/MilSymb, which are point-symbol-only formats.
+ * Supported functions accept the store-native GeoLibreLayer[] model.
+ * Graphics layers are omitted because ORBAT/MilSymb are point-symbol-only formats.
  */
 
 import type {
   GeoLibreLayer,
   MilSymbolLayerSource,
-  MilGraphicLayerSource,
 } from "@geolibre/core";
-import { strToU8, zipSync } from "fflate";
 
 // ─── Shared download helper ───────────────────────────────────────────────────
 
@@ -208,146 +204,4 @@ export function exportToMilsymbJson(
   );
 }
 
-// ─── MilX XML (.milxly) export ────────────────────────────────────────────────
-
-const MILX_NS              = "http://gs-soft.com/MilX/V3.1";
-const MILX_LIBRARY_VERSION = "2025.02.20";
-const MILX_SYMBOL_SIZE     = "12";
-
-function xmlEsc(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/**
- * Build the XML-escaped <MssStringXML> content for a single symbol.
- * The raw inner XML takes the form:
- *   <Symbol ID="{sidc}"><Attribute ID="T">Desig</Attribute>...</Symbol>
- * which is then XML-escaped once, as required by the MilX spec.
- */
-function buildMssString(
-  sidc: string,
-  attrs: Array<[string, string]>,
-): string {
-  const attrXml = attrs
-    .map(([id, v]) => `<Attribute ID="${id}">${xmlEsc(v)}</Attribute>`)
-    .join("");
-  return xmlEsc(`<Symbol ID="${sidc}">${attrXml}</Symbol>`);
-}
-
-function milXGraphicFromSymbol(layer: GeoLibreLayer): string {
-  const src    = layer.source as unknown as MilSymbolLayerSource;
-  const attrs: Array<[string, string]> = [];
-  if (src.uniqueDesignation) attrs.push(["T",     src.uniqueDesignation]);
-  if (src.higherFormation)   attrs.push(["M",     src.higherFormation]);
-  if (src.additionalInfo)    attrs.push(["H",     src.additionalInfo]);
-  if (src.direction != null) attrs.push(["Q",     String(src.direction)]);
-  if (src.speed)             attrs.push(["Z",     src.speed]);
-  if (src.SIDC.length === 20) attrs.push(["APP6D", src.SIDC]);
-
-  return `      <MilXGraphic>
-        <MssStringXML>${buildMssString(src.SIDC, attrs)}</MssStringXML>
-        <Name>${xmlEsc(layer.name)}</Name>
-        <PointList>
-          <Point><X>${src.lon.toFixed(6)}</X><Y>${src.lat.toFixed(6)}</Y></Point>
-        </PointList>
-        <Offset><FactorX>0</FactorX><FactorY>0</FactorY></Offset>
-      </MilXGraphic>`;
-}
-
-function milXGraphicFromGraphic(layer: GeoLibreLayer): string {
-  const src    = layer.source as unknown as MilGraphicLayerSource;
-  const attrs: Array<[string, string]> = [];
-  if (src.uniqueDesignation) attrs.push(["T",     src.uniqueDesignation]);
-  if (src.additionalInfo)    attrs.push(["H",     src.additionalInfo]);
-  if (src.SIDC.length === 20) attrs.push(["APP6D", src.SIDC]);
-
-  const points = src.coordinates
-    .map(([lon, lat]: [number, number]) =>
-      `          <Point><X>${lon.toFixed(6)}</X><Y>${lat.toFixed(6)}</Y></Point>`,
-    )
-    .join("\n");
-
-  return `      <MilXGraphic>
-        <MssStringXML>${buildMssString(src.SIDC, attrs)}</MssStringXML>
-        <Name>${xmlEsc(layer.name)}</Name>
-        <PointList>
-${points}
-        </PointList>
-        <Offset><FactorX>0</FactorX><FactorY>0</FactorY></Offset>
-      </MilXGraphic>`;
-}
-
-/**
- * Export mil layers as gs-soft MilX XML (.milxly).
- *
- * Both point symbols (`mil-symbol`) and tactical graphics (`mil-graphic`)
- * are serialised into a single MilXLayer. The full APP-6D SIDC is embedded
- * as an APP6D attribute for lossless round-trip via KADAS.
- *
- * @param layers   Store layers to export
- * @param filename Filename stem (without extension). Defaults to "milgeo-export"
- */
-export function exportToMilX(
-  layers: GeoLibreLayer[],
-  filename?: string,
-): void {
-  const xml = buildMilXDocument(layers, filename);
-  downloadBlob(xml, "application/xml", `${filename ?? "milgeo-export"}.milxly`);
-}
-
-/**
- * Build a MilX XML document from the selected mil layers.
- */
-export function buildMilXDocument(
-  layers: GeoLibreLayer[],
-  filename?: string,
-): string {
-  const graphicElements: string[] = [];
-
-  for (const layer of layers) {
-    if (layer.type === "mil-symbol") {
-      const src = layer.source as unknown as MilSymbolLayerSource;
-      if (src.lon == null || src.lat == null) continue;
-      graphicElements.push(milXGraphicFromSymbol(layer));
-    } else if (layer.type === "mil-graphic") {
-      const src = layer.source as unknown as MilGraphicLayerSource;
-      if (!src.coordinates?.length) continue;
-      graphicElements.push(milXGraphicFromGraphic(layer));
-    }
-  }
-
-  const layerName = filename ?? "MilGeo Export";
-
-  return `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<MilXDocument_Layer xmlns="${MILX_NS}">
-  <MssLibraryVersionTag>${MILX_LIBRARY_VERSION}</MssLibraryVersionTag>
-  <MilXLayer>
-    <Name>${xmlEsc(layerName)}</Name>
-    <LayerType>Normal</LayerType>
-    <GraphicList>
-${graphicElements.join("\n")}
-    </GraphicList>
-  </MilXLayer>
-  <CoordSystemType>WGS84</CoordSystemType>
-  <SymbolSize>${MILX_SYMBOL_SIZE}</SymbolSize>
-</MilXDocument_Layer>`;
-}
-
-/**
- * Export mil layers as a `.milxlyz` archive containing one `.milxly` entry.
- */
-export function exportToMilXlyz(
-  layers: GeoLibreLayer[],
-  filename?: string,
-): void {
-  const stem = (filename ?? "milgeo-export").trim() || "milgeo-export";
-  const xml = buildMilXDocument(layers, stem);
-  const zipped = zipSync({
-    [`${stem}.milxly`]: strToU8(xml),
-  }, { level: 6 });
-  downloadBlob(zipped, "application/zip", `${stem}.milxlyz`);
-}
+// MILX export support has been removed.
