@@ -139,8 +139,8 @@ DEFAULT_PROJECT_PREFERENCES: dict[str, Any] = {
 def default_map_view() -> dict[str, Any]:
     """Return the app's default camera (createDefaultMapView in project.ts)."""
     return {
-        "center": [8.181318, 46.862932],
-        "zoom": 4.5,
+        "center": [8.18, 46.86],
+        "zoom": 4.61,
         "bearing": 0,
         "pitch": 0,
     }

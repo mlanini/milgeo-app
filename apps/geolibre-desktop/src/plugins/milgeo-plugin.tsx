@@ -25,11 +25,9 @@ function MilGeoWorkspacePanelContent({ app }: { app: GeoLibreAppAPI }) {
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
       <div className="rounded-md border bg-background/80 p-3 text-xs">
-        <div className="font-semibold">MilGeo workspace</div>
+        <div className="font-semibold">MIL-STD-2525C</div>
         <p className="mt-1 text-muted-foreground">
-          This workspace panel is a work in progress. It is intended to provide a
-          convenient interface for managing MilSymbol layers and their contents, but it is not yet
-          feature-complete. Please report any issues or suggestions to the project maintainers.
+          Full military symbology support with drag-and-drop placement.
         </p>
       </div>
       <div className="min-h-0 flex-1 rounded-md border bg-background/80 p-2">
@@ -59,7 +57,7 @@ export function createMilGeoPlugin(): GeoLibrePlugin {
       if (unregisterPanel) return;
       unregisterPanel = app.registerRightPanel?.({
         id: MILGEO_PLUGIN_ID,
-        title: "MilGeo workspace",
+        title: "Mil Symbols Panel",
         dock: "right-of-style",
         defaultWidth: 360,
         onOpen: () => {
