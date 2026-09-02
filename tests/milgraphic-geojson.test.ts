@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { milGraphicsToGeoJson } from "../apps/geolibre-desktop/src/lib/milgraphic-geojson";
 
 describe("milGraphicsToGeoJson", () => {
-  it("closes polygon rings and preserves directional line metadata", () => {
+  it("expands whitelist tactical features and closes polygon rings", () => {
     const result = milGraphicsToGeoJson([
       {
         id: "line-1",
@@ -32,15 +32,22 @@ describe("milGraphicsToGeoJson", () => {
     ]);
 
     assert.equal(result.type, "FeatureCollection");
-    assert.equal(result.features.length, 2);
+    assert.equal(result.features.length, 3);
 
-    const line = result.features.find((f) => f.geometry.type === "LineString");
+    const line = result.features.find(
+      (f) => f.geometry.type === "LineString" && f.properties?.renderRole === "main-line",
+    );
+    const arrowTip = result.features.find(
+      (f) => f.geometry.type === "Point" && f.properties?.renderRole === "direction-of-attack-head",
+    );
     const polygon = result.features.find((f) => f.geometry.type === "Polygon");
     assert.ok(line);
+    assert.ok(arrowTip);
     assert.ok(polygon);
 
-    assert.equal(line.properties?.directional, 1);
+    assert.equal(line.properties?.ruleKey, "direction_of_attack");
     assert.equal(line.properties?.color, "#CE4A4A");
+    assert.equal(typeof arrowTip.properties?.bearing, "number");
 
     const ring = polygon.geometry.coordinates[0];
     assert.equal(ring.length, 4);

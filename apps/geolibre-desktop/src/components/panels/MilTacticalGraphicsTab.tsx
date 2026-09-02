@@ -3,7 +3,6 @@ import type { GeoLibreLayer, MilAffiliation, MilGraphicLayerSource } from "@geol
 import { DEFAULT_LAYER_STYLE, useAppStore } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
 import type { MapController } from "@geolibre/map";
-import ms from "../../lib/milsymbol-runtime";
 import type { Feature, FeatureCollection, LineString, Point, Polygon } from "geojson";
 import { Crosshair, Eye, EyeOff, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMapClick } from "../../hooks/useMapClick";
@@ -22,8 +21,8 @@ import {
 import { milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
 import { resolveTacticalRuleKey } from "../../lib/tactical-rules/catalog";
 import { normalizeTacticalSidc } from "../../lib/tactical-rules/normalize";
+import { tacticalMiniIconDataUri } from "../../lib/tactical-rules/mini-icon";
 
-const MilSymbol = ms.Symbol;
 const PREVIEW_SOURCE_ID = "mil-tactical-preview-source";
 const PREVIEW_LINE_ID = "mil-tactical-preview-line";
 const PREVIEW_FILL_ID = "mil-tactical-preview-fill";
@@ -42,31 +41,21 @@ function minPoints(entry: TacticalCatalogEntry): number {
   return entry.geometryType === "Polygon" ? 3 : 2;
 }
 
-function previewSidcForGraphic(sidc: string, affiliation: MilAffiliation): string {
-  const normalized = sidc.trim().toUpperCase();
-  if (/^\d{20}$/.test(normalized)) return normalized;
-  if (/^[A-Z0-9\-]{15}$/.test(normalized)) return normalized;
-  return odinDisplaySidc(normalized, affiliation);
-}
-
-function GraphicPreview({ sidc }: { sidc: string }) {
-  const svg = useMemo(() => {
-    try {
-      const sym = new MilSymbol(sidc, { size: 30 });
-      return sym.isValid() ? sym.asSVG() : null;
-    } catch {
-      return null;
-    }
-  }, [sidc]);
-
-  if (!svg) {
-    return <div className="h-8 w-8 rounded border border-border/60 bg-muted/40 text-[9px] grid place-items-center">TG</div>;
-  }
-
+function GraphicPreview({ sidc, geometryType, affiliation }: {
+  sidc: string;
+  geometryType: "LineString" | "Polygon";
+  affiliation: MilAffiliation;
+}) {
+  const src = useMemo(
+    () => tacticalMiniIconDataUri(sidc, geometryType, affiliation),
+    [affiliation, geometryType, sidc],
+  );
   return (
-    <div
-      className="h-8 w-8 overflow-hidden [&>svg]:w-full [&>svg]:h-full [&>svg]:block"
-      dangerouslySetInnerHTML={{ __html: svg }}
+    <img
+      src={src}
+      alt=""
+      aria-hidden="true"
+      className="h-8 w-8 rounded border border-border/40 bg-muted/20 p-0.5"
     />
   );
 }
@@ -785,7 +774,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
               )}
               onClick={() => setSelected((prev) => (prev?.sidc === entry.sidc ? null : entry))}
             >
-              <GraphicPreview sidc={displaySidc} />
+              <GraphicPreview sidc={displaySidc} geometryType={entry.geometryType} affiliation={affiliation} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs font-medium">{entry.name}</div>
                 <div className="truncate text-[10px] text-muted-foreground">{entry.family} - {entry.geometryType}</div>
@@ -836,10 +825,16 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
           <div className="max-h-28 space-y-0.5 overflow-y-auto">
             {tacticalGraphics.map((graphic) => (
               <div key={graphic.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-muted/50">
-                <GraphicPreview sidc={previewSidcForGraphic(graphic.SIDC, graphic.affiliation)} />
+                <GraphicPreview
+                  sidc={graphic.sidcOriginal ?? graphic.SIDC}
+                  geometryType={graphic.geometryType}
+                  affiliation={graphic.affiliation}
+                />
                 <div className="min-w-0 flex-1 text-[10px]">
                   <div className="truncate font-medium">{graphic.name}</div>
-                  <div className="truncate text-muted-foreground">{graphic.SIDC}</div>
+                  <div className="truncate text-muted-foreground">
+                    {(graphic.ruleKey ?? resolveTacticalRuleKey(graphic.sidcOriginal ?? graphic.SIDC, graphic.geometryType)).replaceAll("_", " ")}
+                  </div>
                 </div>
                 <button
                   title="Modifica vertici"

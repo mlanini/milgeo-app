@@ -45,6 +45,10 @@ const IMG_PREFIX = "ms-";
 
 /** Default symbol size (CSS px) at 1× DPR. */
 const SYMBOL_SIZE = DEFAULT_MIL_SYMBOL_SIZE_PX;
+const TACTICAL_ARROW_FRIENDLY = "mil-tactical-arrow-friendly";
+const TACTICAL_ARROW_HOSTILE = "mil-tactical-arrow-hostile";
+const TACTICAL_ARROW_NEUTRAL = "mil-tactical-arrow-neutral";
+const TACTICAL_ARROW_UNKNOWN = "mil-tactical-arrow-unknown";
 
 /** Capture DPR once; constant for the component lifetime. */
 const PIXEL_RATIO = window.devicePixelRatio || 1;
@@ -63,6 +67,42 @@ function graphicFillLayerId(layerId: string): string {
 
 function graphicDirectionLayerId(layerId: string): string {
   return `mg-dir-${layerId}`;
+}
+
+function buildArrowHeadImageData(color: string): ImageData {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return new ImageData(2, 2);
+  ctx.clearRect(0, 0, 64, 64);
+  ctx.beginPath();
+  ctx.moveTo(32, 4);
+  ctx.lineTo(58, 56);
+  ctx.lineTo(32, 46);
+  ctx.lineTo(6, 56);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  return ctx.getImageData(0, 0, 64, 64);
+}
+
+function ensureTacticalArrowImages(map: maplibregl.Map): void {
+  if (!map.hasImage(TACTICAL_ARROW_FRIENDLY)) {
+    map.addImage(TACTICAL_ARROW_FRIENDLY, buildArrowHeadImageData("#4A7FCE"), { pixelRatio: 2 });
+  }
+  if (!map.hasImage(TACTICAL_ARROW_HOSTILE)) {
+    map.addImage(TACTICAL_ARROW_HOSTILE, buildArrowHeadImageData("#CE4A4A"), { pixelRatio: 2 });
+  }
+  if (!map.hasImage(TACTICAL_ARROW_NEUTRAL)) {
+    map.addImage(TACTICAL_ARROW_NEUTRAL, buildArrowHeadImageData("#4ACE8C"), { pixelRatio: 2 });
+  }
+  if (!map.hasImage(TACTICAL_ARROW_UNKNOWN)) {
+    map.addImage(TACTICAL_ARROW_UNKNOWN, buildArrowHeadImageData("#A8A8A8"), { pixelRatio: 2 });
+  }
 }
 
 function hasRenderableMilGraphicFeatures(value: unknown): value is FeatureCollection {
@@ -510,12 +550,12 @@ export default function MilSymbolRenderer({
         if (!Array.isArray(geoData.features) || geoData.features.length === 0) continue;
 
         const hasDirectional = geoData.features.some((feature) => {
-          if (feature.geometry?.type !== "LineString") return false;
+          if (feature.geometry?.type !== "Point") return false;
           const props =
             feature.properties && typeof feature.properties === "object"
               ? (feature.properties as Record<string, unknown>)
               : null;
-          return props?.directional === 1 || props?.directional === true || props?.directional === "1";
+          return props?.renderRole === "direction-of-attack-head";
         });
 
         const sourceExists = Boolean(map.getSource(srcId));
@@ -533,7 +573,18 @@ export default function MilSymbolRenderer({
             filter: ["==", ["geometry-type"], "Polygon"],
             paint: {
               "fill-color": ["coalesce", ["get", "color"], "#4A7FCE"],
-              "fill-opacity": layer.opacity * 0.15,
+              "fill-opacity": [
+                "*",
+                layer.opacity,
+                [
+                  "case",
+                  ["==", ["coalesce", ["get", "areaPattern"], "none"], "no-fire"],
+                  0.22,
+                  ["==", ["coalesce", ["get", "areaPattern"], "none"], "fortified"],
+                  0.18,
+                  0.12,
+                ],
+              ],
             },
             layout: { visibility: layer.visible ? "visible" : "none" },
           });
@@ -547,52 +598,87 @@ export default function MilSymbolRenderer({
             paint: {
               "line-color": ["coalesce", ["get", "color"], "#4A7FCE"],
               "line-width": [
-                "interpolate",
-                ["linear"],
-                ["zoom"],
-                4, 1.25,
-                8, 2,
-                12, 3,
-                16, 5,
-                20, 8,
+                "case",
+                ["==", ["coalesce", ["get", "renderRole"], "main-line"], "flot-right-tick"],
+                [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  4, 1,
+                  10, 1.6,
+                  16, 2.4,
+                ],
+                [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  4, 1.25,
+                  8, 2,
+                  12, 3,
+                  16, 5,
+                  20, 8,
+                ],
               ],
               "line-opacity": layer.opacity,
-              "line-dasharray": [3, 1.75],
+              "line-dasharray": [
+                "case",
+                ["==", ["coalesce", ["get", "ruleKey"], "fallback"], "no_fire_area"],
+                ["literal", [2, 1.3]],
+                ["literal", [1, 0.001]],
+              ],
             },
             layout: { visibility: layer.visible ? "visible" : "none" },
           });
         }
 
         if (hasDirectional && !map.getLayer(dirId)) {
+          ensureTacticalArrowImages(map);
           map.addLayer({
             id: dirId,
             type: "symbol",
             source: srcId,
             filter: [
-              "all",
-              ["==", ["geometry-type"], "LineString"],
-              [">", ["coalesce", ["get", "directional"], 0], 0],
+              "==",
+              ["coalesce", ["get", "renderRole"], ""],
+              "direction-of-attack-head",
             ],
             layout: {
-              "symbol-placement": "line",
-              "symbol-spacing": 180,
-              "text-field": ">",
-              "text-font": ["Open Sans Regular"],
-              "text-size": [
+              "icon-image": [
+                "match",
+                ["coalesce", ["get", "affiliation"], "FRIENDLY"],
+                "HOSTILE",
+                TACTICAL_ARROW_HOSTILE,
+                "NEUTRAL",
+                TACTICAL_ARROW_NEUTRAL,
+                "UNKNOWN",
+                TACTICAL_ARROW_UNKNOWN,
+                TACTICAL_ARROW_FRIENDLY,
+              ],
+              "icon-size": [
                 "interpolate",
                 ["linear"],
                 ["zoom"],
-                6, 10,
-                12, 14,
-                18, 18,
+                6, 0.28,
+                10, 0.45,
+                14, 0.72,
+                18, 1,
               ],
-              "text-keep-upright": false,
+              "icon-rotate": ["coalesce", ["get", "bearing"], 0],
+              "icon-rotation-alignment": "map",
+              "icon-pitch-alignment": "map",
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              "icon-anchor": "center",
+              "icon-offset": [0, -0.1],
+              "symbol-sort-key": [
+                "case",
+                ["==", ["coalesce", ["get", "renderRole"], ""], "direction-of-attack-head"],
+                100,
+                0,
+              ],
             },
             paint: {
-              "text-color": ["coalesce", ["get", "color"], "#4A7FCE"],
-              "text-opacity": layer.opacity,
-              "text-halo-color": "#ffffff",
-              "text-halo-width": 1,
+              "icon-opacity": layer.opacity,
             },
           });
         }
@@ -602,8 +688,21 @@ export default function MilSymbolRenderer({
         if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
         if (map.getLayer(dirId)) map.setLayoutProperty(dirId, "visibility", vis);
         if (map.getLayer(lineId)) map.setPaintProperty(lineId, "line-opacity", layer.opacity);
-        if (map.getLayer(fillId)) map.setPaintProperty(fillId, "fill-opacity", layer.opacity * 0.15);
-        if (map.getLayer(dirId)) map.setPaintProperty(dirId, "text-opacity", layer.opacity);
+        if (map.getLayer(fillId)) {
+          map.setPaintProperty(fillId, "fill-opacity", [
+            "*",
+            layer.opacity,
+            [
+              "case",
+              ["==", ["coalesce", ["get", "areaPattern"], "none"], "no-fire"],
+              0.22,
+              ["==", ["coalesce", ["get", "areaPattern"], "none"], "fortified"],
+              0.18,
+              0.12,
+            ],
+          ]);
+        }
+        if (map.getLayer(dirId)) map.setPaintProperty(dirId, "icon-opacity", layer.opacity);
 
         graphicSourcesRef.current.add(layer.id);
 
