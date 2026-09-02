@@ -31,6 +31,7 @@ import type {
 } from "@geolibre/core";
 import { parseMilSymbolLayerSource, DEFAULT_MIL_SYMBOL_SIZE_PX } from "../../lib/milsymbol-layer-source";
 import { parseMilGraphicLayerSource } from "../../lib/milgraphic-layer-source";
+import { milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -210,20 +211,6 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
       "icon-opacity": ["coalesce", ["get", "opacity"], 1],
     },
   });
-}
-
-function graphicColorFromAffiliation(affiliation: unknown): string {
-  switch (affiliation) {
-    case "HOSTILE":
-      return "#CE4A4A";
-    case "NEUTRAL":
-      return "#4ACE8C";
-    case "UNKNOWN":
-      return "#A8A8A8";
-    case "FRIENDLY":
-    default:
-      return "#4A7FCE";
-  }
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
@@ -483,40 +470,25 @@ export default function MilSymbolRenderer({
       }
 
       for (const layer of allGraphics) {
-        const parsed = parseMilGraphicLayerSource(layer.source);
-        if (parsed.graphics.length === 0) continue;
-
         const lineId = `mg-line-${layer.id}`;
         const fillId = `mg-fill-${layer.id}`;
         const dirId = `mg-dir-${layer.id}`;
-        const hasDirectional = parsed.graphics.some(
-          (graphic) => graphic.geometryType === "LineString" && graphic.tacticalDirectional === true,
-        );
+        const parsed = parseMilGraphicLayerSource(layer.source);
+        const fallbackGeoData = milGraphicsToGeoJson(parsed.graphics);
+        const geoData =
+          layer.geojson && Array.isArray(layer.geojson.features)
+            ? layer.geojson
+            : fallbackGeoData;
+        if (!Array.isArray(geoData.features) || geoData.features.length === 0) continue;
 
-        const features = parsed.graphics.map((graphic) => {
-          const color = graphicColorFromAffiliation(graphic.affiliation);
-          const geom =
-            graphic.geometryType === "Polygon"
-              ? ({ type: "Polygon" as const, coordinates: [graphic.coordinates] })
-              : ({ type: "LineString" as const, coordinates: graphic.coordinates });
-
-          return {
-            type: "Feature" as const,
-            geometry: geom,
-            properties: {
-              id: graphic.id,
-              name: graphic.name,
-              sidc: graphic.SIDC,
-              color,
-              directional: graphic.tacticalDirectional === true ? 1 : 0,
-            },
-          };
+        const hasDirectional = geoData.features.some((feature) => {
+          if (feature.geometry?.type !== "LineString") return false;
+          const props =
+            feature.properties && typeof feature.properties === "object"
+              ? (feature.properties as Record<string, unknown>)
+              : null;
+          return props?.directional === 1 || props?.directional === true;
         });
-
-        const geoData = {
-          type: "FeatureCollection" as const,
-          features,
-        };
 
         if (graphicSourcesRef.current.has(layer.id) && map.getSource(layer.id)) {
           (map.getSource(layer.id) as maplibregl.GeoJSONSource)?.setData(geoData);
@@ -524,6 +496,9 @@ export default function MilSymbolRenderer({
           if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
           if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
           if (map.getLayer(dirId)) map.setLayoutProperty(dirId, "visibility", vis);
+          if (map.getLayer(lineId)) map.setPaintProperty(lineId, "line-opacity", layer.opacity);
+          if (map.getLayer(fillId)) map.setPaintProperty(fillId, "fill-opacity", layer.opacity * 0.15);
+          if (map.getLayer(dirId)) map.setPaintProperty(dirId, "text-opacity", layer.opacity);
         } else {
           map.addSource(layer.id, { type: "geojson", data: geoData });
 

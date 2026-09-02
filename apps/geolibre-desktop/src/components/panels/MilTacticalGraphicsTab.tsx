@@ -19,6 +19,7 @@ import {
   serializeMilGraphicLayerSource,
   type MilGraphicLayerItem,
 } from "../../lib/milgraphic-layer-source";
+import { milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
 
 const MilSymbol = ms.Symbol;
 const PREVIEW_SOURCE_ID = "mil-tactical-preview-source";
@@ -192,6 +193,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
 
       updateLayer(tacticalLayer.id, {
         source: serializeMilGraphicLayerSource(merged) as unknown as Record<string, unknown>,
+        geojson: milGraphicsToGeoJson(merged),
         metadata: {
           ...tacticalLayer.metadata,
           milgeoManaged: true,
@@ -215,6 +217,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         tacticalCollection: true,
       },
       source: serializeMilGraphicLayerSource(migratedGraphics) as unknown as Record<string, unknown>,
+      geojson: milGraphicsToGeoJson(migratedGraphics),
     });
 
     legacyTacticalLayers.forEach((layer) => removeLayer(layer.id));
@@ -233,6 +236,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
 
         updateLayer(tacticalLayer.id, {
           source: serializeMilGraphicLayerSource(nextGraphics) as unknown as Record<string, unknown>,
+          geojson: milGraphicsToGeoJson(nextGraphics),
         });
         return;
       }
@@ -251,6 +255,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
           tacticalCollection: true,
         },
         source: serializeMilGraphicLayerSource(nextGraphics) as unknown as Record<string, unknown>,
+        geojson: milGraphicsToGeoJson(nextGraphics),
       };
 
       addLayer(layer);

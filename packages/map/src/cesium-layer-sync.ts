@@ -21,7 +21,7 @@ const MilSymbol = ms.Symbol;
 /** Layer kinds this pass renders on the globe. */
 const IMAGERY_TYPES = new Set(["raster", "xyz", "wms", "wmts"]);
 
-type EntryKind = "imagery" | "geojson" | "3dtiles" | "mil-symbol";
+type EntryKind = "imagery" | "geojson" | "3dtiles" | "mil-symbol" | "mil-graphic";
 
 interface LayerEntry {
   kind: EntryKind;
@@ -62,6 +62,18 @@ interface ParsedMilSymbolLayerSource {
   symbolSize: number;
 }
 
+interface ParsedMilGraphicItem {
+  id: string;
+  name: string;
+  geometryType: "LineString" | "Polygon";
+  coordinates: [number, number][];
+  affiliation: "FRIENDLY" | "HOSTILE" | "NEUTRAL" | "UNKNOWN";
+}
+
+interface ParsedMilGraphicLayerSource {
+  graphics: ParsedMilGraphicItem[];
+}
+
 function parseNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -98,6 +110,113 @@ function parseMilSymbolLayerSource(source: Record<string, unknown>): ParsedMilSy
   return { symbols: legacy ? [legacy] : [], symbolSize };
 }
 
+function parseCoordinate(value: unknown): [number, number] | null {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const lon = parseNumber(value[0]);
+  const lat = parseNumber(value[1]);
+  if (lon === null || lat === null) return null;
+  return [lon, lat];
+}
+
+function parseCoordinates(value: unknown): [number, number][] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => parseCoordinate(item))
+    .filter((item): item is [number, number] => item !== null);
+}
+
+function parseAffiliation(value: unknown): ParsedMilGraphicItem["affiliation"] {
+  if (value === "HOSTILE") return "HOSTILE";
+  if (value === "NEUTRAL") return "NEUTRAL";
+  if (value === "UNKNOWN") return "UNKNOWN";
+  return "FRIENDLY";
+}
+
+function parseGeometryType(value: unknown): "LineString" | "Polygon" | null {
+  if (value === "LineString") return "LineString";
+  if (value === "Polygon") return "Polygon";
+  return null;
+}
+
+function parseMilGraphicItem(raw: unknown): ParsedMilGraphicItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const geometryType = parseGeometryType(record.geometryType);
+  const coordinates = parseCoordinates(record.coordinates);
+  if (!geometryType || coordinates.length === 0) return null;
+  return {
+    id: parseString(record.id) ?? crypto.randomUUID(),
+    name: parseString(record.name) ?? "Tactical Graphic",
+    geometryType,
+    coordinates,
+    affiliation: parseAffiliation(record.affiliation),
+  };
+}
+
+function parseMilGraphicLayerSource(source: Record<string, unknown>): ParsedMilGraphicLayerSource {
+  const rawGraphics = Array.isArray(source.graphics) ? source.graphics : [];
+  const graphics = rawGraphics
+    .map((item) => parseMilGraphicItem(item))
+    .filter((item): item is ParsedMilGraphicItem => item !== null);
+  if (graphics.length > 0) return { graphics };
+  const legacy = parseMilGraphicItem(source);
+  return { graphics: legacy ? [legacy] : [] };
+}
+
+function parseMilGraphicGeoJson(raw: unknown): ParsedMilGraphicItem[] {
+  if (!raw || typeof raw !== "object") return [];
+  const record = raw as { features?: unknown };
+  if (!Array.isArray(record.features)) return [];
+  const graphics: ParsedMilGraphicItem[] = [];
+  for (const feature of record.features) {
+    if (!feature || typeof feature !== "object") continue;
+    const f = feature as {
+      geometry?: { type?: unknown; coordinates?: unknown };
+      properties?: Record<string, unknown>;
+    };
+    const geometryType = parseGeometryType(f.geometry?.type);
+    if (!geometryType) continue;
+    const coordinates =
+      geometryType === "Polygon"
+        ? parseCoordinates(
+            Array.isArray(f.geometry?.coordinates) ? (f.geometry?.coordinates as unknown[])[0] : [],
+          )
+        : parseCoordinates(f.geometry?.coordinates);
+    if (coordinates.length === 0) continue;
+    const properties = f.properties ?? {};
+    graphics.push({
+      id: parseString(properties.id) ?? crypto.randomUUID(),
+      name: parseString(properties.name) ?? "Tactical Graphic",
+      geometryType,
+      coordinates,
+      affiliation: parseAffiliation(properties.affiliation),
+    });
+  }
+  return graphics;
+}
+
+function closePolygonRing(coordinates: [number, number][]): [number, number][] {
+  if (coordinates.length === 0) return [];
+  const first = coordinates[0];
+  const last = coordinates[coordinates.length - 1];
+  if (first[0] === last[0] && first[1] === last[1]) return coordinates;
+  return [...coordinates, [first[0], first[1]]];
+}
+
+function milGraphicCssColor(affiliation: ParsedMilGraphicItem["affiliation"]): string {
+  switch (affiliation) {
+    case "HOSTILE":
+      return "#CE4A4A";
+    case "NEUTRAL":
+      return "#4ACE8C";
+    case "UNKNOWN":
+      return "#A8A8A8";
+    case "FRIENDLY":
+    default:
+      return "#4A7FCE";
+  }
+}
+
 function milSymbolIconDataUrl(sidc: string, size: number): string | null {
   try {
     const symbol = new MilSymbol(sidc, {
@@ -123,6 +242,7 @@ export function isCesiumSupportedLayerType(layer: GeoLibreLayer): boolean {
     layer.type === "geojson" ||
     layer.type === "3d-tiles" ||
     layer.type === "mil-symbol" ||
+    layer.type === "mil-graphic" ||
     IMAGERY_TYPES.has(layer.type)
   );
 }
@@ -133,6 +253,10 @@ function isSupported(layer: GeoLibreLayer): boolean {
   if (layer.type === "mil-symbol") {
     return parseMilSymbolLayerSource(layer.source).symbols.length > 0;
   }
+  if (layer.type === "mil-graphic") {
+    if (layer.geojson?.features?.length) return true;
+    return parseMilGraphicLayerSource(layer.source).graphics.length > 0;
+  }
   if (layer.type === "geojson") return Boolean(layer.geojson?.features?.length);
   if (layer.type === "3d-tiles") return Boolean(tilesetUrl(layer));
   // Mirror createImagery's real capability: WMS builds from source.url, but
@@ -142,6 +266,7 @@ function isSupported(layer: GeoLibreLayer): boolean {
 
 function entryKind(layer: GeoLibreLayer): EntryKind {
   if (layer.type === "mil-symbol") return "mil-symbol";
+  if (layer.type === "mil-graphic") return "mil-graphic";
   if (layer.type === "geojson") return "geojson";
   if (layer.type === "3d-tiles") return "3dtiles";
   return "imagery";
@@ -170,6 +295,8 @@ function needsRebuild(prev: GeoLibreLayer, next: GeoLibreLayer): boolean {
   switch (entryKind(next)) {
     case "geojson":
       return prev.geojson !== next.geojson || styleSignature(prev) !== styleSignature(next);
+    case "mil-graphic":
+      return prev.geojson !== next.geojson || prev.source !== next.source;
     case "mil-symbol":
       return prev.source !== next.source;
     case "imagery":
@@ -282,6 +409,7 @@ export class CesiumLayerSync {
     this.entries.set(layer.id, entry);
     if (kind === "imagery") this.createImagery(entry);
     else if (kind === "geojson") void this.createGeoJson(entry);
+    else if (kind === "mil-graphic") void this.createMilGraphic(entry);
     else if (kind === "mil-symbol") void this.createMilSymbol(entry);
     else void this.createTileset(entry);
   }
@@ -413,6 +541,67 @@ export class CesiumLayerSync {
     }
   }
 
+  private async createMilGraphic(entry: LayerEntry): Promise<void> {
+    const { Cesium, viewer } = this;
+    const layer = entry.layer;
+    const parsed = parseMilGraphicLayerSource(layer.source);
+    const graphics =
+      parsed.graphics.length > 0 ? parsed.graphics : parseMilGraphicGeoJson(layer.geojson);
+    if (graphics.length === 0) return;
+    try {
+      const dataSource = new Cesium.CustomDataSource(layer.name);
+      for (const graphic of graphics) {
+        if (graphic.geometryType === "LineString") {
+          if (graphic.coordinates.length < 2) continue;
+          const positions = Cesium.Cartesian3.fromDegreesArray(graphic.coordinates.flat());
+          dataSource.entities.add({
+            id: graphic.id,
+            name: graphic.name,
+            polyline: {
+              positions,
+              width: 3,
+              clampToGround: true,
+            },
+            properties: {
+              affiliation: graphic.affiliation,
+              geometryType: "LineString",
+            },
+          });
+          continue;
+        }
+
+        const ring = closePolygonRing(graphic.coordinates);
+        if (ring.length < 4) continue;
+        const hierarchy = Cesium.Cartesian3.fromDegreesArray(ring.flat());
+        dataSource.entities.add({
+          id: graphic.id,
+          name: graphic.name,
+          polygon: {
+            hierarchy,
+            perPositionHeight: false,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            classificationType: Cesium.ClassificationType.TERRAIN,
+            outline: true,
+          },
+          properties: {
+            affiliation: graphic.affiliation,
+            geometryType: "Polygon",
+          },
+        });
+      }
+      if (entry.cancelled) return;
+      await viewer.dataSources.add(dataSource);
+      if (entry.cancelled) {
+        viewer.dataSources.remove(dataSource, true);
+        return;
+      }
+      entry.handle = dataSource;
+      this.applyAppearance(entry);
+    } catch {
+      // Best-effort, like other globe layer kinds.
+    }
+  }
+
   private async createTileset(entry: LayerEntry): Promise<void> {
     const { Cesium, viewer } = this;
     const layer = entry.layer;
@@ -463,6 +652,9 @@ export class CesiumLayerSync {
     } else if (entry.kind === "geojson") {
       (handle as DataSource).show = layer.visible;
       this.applyGeoJsonStyle(entry);
+    } else if (entry.kind === "mil-graphic") {
+      (handle as DataSource).show = layer.visible;
+      this.applyMilGraphicStyle(entry);
     } else if (entry.kind === "mil-symbol") {
       (handle as DataSource).show = layer.visible;
       this.applyMilSymbolStyle(entry);
@@ -483,6 +675,30 @@ export class CesiumLayerSync {
       }
       if (feature.label) {
         feature.label.fillColor = new Cesium.ConstantProperty(color);
+      }
+    }
+  }
+
+  private applyMilGraphicStyle(entry: LayerEntry): void {
+    const dataSource = entry.handle as DataSource | null;
+    if (!dataSource) return;
+    const opacity = Math.max(0, Math.min(1, entry.layer.opacity));
+    const strokeWidth =
+      typeof entry.layer.style?.strokeWidth === "number" && Number.isFinite(entry.layer.style.strokeWidth)
+        ? Math.max(1, entry.layer.style.strokeWidth)
+        : 3;
+    const { Cesium } = this;
+    for (const feature of dataSource.entities.values) {
+      const affiliationRaw = feature.properties?.affiliation?.getValue?.();
+      const affiliation = parseAffiliation(affiliationRaw);
+      const base = Cesium.Color.fromCssColorString(milGraphicCssColor(affiliation));
+      if (feature.polyline) {
+        feature.polyline.material = new Cesium.ColorMaterialProperty(base.withAlpha(opacity));
+        feature.polyline.width = new Cesium.ConstantProperty(strokeWidth);
+      }
+      if (feature.polygon) {
+        feature.polygon.material = new Cesium.ColorMaterialProperty(base.withAlpha(opacity * 0.18));
+        feature.polygon.outlineColor = new Cesium.ConstantProperty(base.withAlpha(opacity));
       }
     }
   }
@@ -534,7 +750,11 @@ export class CesiumLayerSync {
     if (!handle) return;
     if (entry.kind === "imagery") {
       this.viewer.imageryLayers.remove(handle as ImageryLayer, true);
-    } else if (entry.kind === "geojson" || entry.kind === "mil-symbol") {
+    } else if (
+      entry.kind === "geojson" ||
+      entry.kind === "mil-symbol" ||
+      entry.kind === "mil-graphic"
+    ) {
       this.viewer.dataSources.remove(handle as DataSource, true);
     } else {
       this.viewer.scene.primitives.remove(handle as Cesium3DTileset);

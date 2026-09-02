@@ -58,6 +58,7 @@ import {
   serializeMilGraphicLayerSource,
   type MilGraphicLayerItem,
 } from "../../lib/milgraphic-layer-source";
+import { milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
 
 const MilSymbol = ms.Symbol;
 const CATALOG_ICON = 32;
@@ -650,8 +651,10 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
 
       if (tacticalLayer) {
         const existing = parseMilGraphicLayerSource(tacticalLayer.source).graphics;
+        const merged = [...existing, ...importedGraphics];
         updateLayer(tacticalLayer.id, {
-          source: serializeMilGraphicLayerSource([...existing, ...importedGraphics]) as unknown as Record<string, unknown>,
+          source: serializeMilGraphicLayerSource(merged) as unknown as Record<string, unknown>,
+          geojson: milGraphicsToGeoJson(merged),
         });
       } else {
         addLayer({
@@ -663,6 +666,7 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
           style: { ...DEFAULT_LAYER_STYLE },
           metadata: { milgeoManaged: true, tacticalCollection: true },
           source: serializeMilGraphicLayerSource(importedGraphics) as unknown as Record<string, unknown>,
+          geojson: milGraphicsToGeoJson(importedGraphics),
         });
       }
     }
