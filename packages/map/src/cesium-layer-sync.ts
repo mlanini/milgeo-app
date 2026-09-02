@@ -22,7 +22,7 @@ const MilSymbol = ms.Symbol;
 // camera and remain legible in oblique views.
 const MIL_SYMBOL_ALWAYS_BILLBOARD = true;
 const MIL_SYMBOL_BILLBOARD_TILT_THRESHOLD_RAD = -1.52;
-const MIL_SYMBOL_BILLBOARD_HEIGHT_M = 120;
+const MIL_SYMBOL_BILLBOARD_GROUND_OFFSET_M = 45;
 
 /** Layer kinds this pass renders on the globe. */
 const IMAGERY_TYPES = new Set(["raster", "xyz", "wms", "wmts"]);
@@ -556,8 +556,8 @@ export class CesiumLayerSync {
       for (const symbol of parsed.symbols) {
         const image = milSymbolIconDataUrl(symbol.SIDC, parsed.symbolSize, parsed.showAmplifiers);
         if (!image) continue;
-        const initialAltitude =
-          this.milSymbolBillboardMode === "billboard" ? MIL_SYMBOL_BILLBOARD_HEIGHT_M : 0;
+        const inBillboardMode = this.milSymbolBillboardMode === "billboard";
+        const initialAltitude = inBillboardMode ? MIL_SYMBOL_BILLBOARD_GROUND_OFFSET_M : 0;
         dataSource.entities.add({
           id: symbol.id,
           name: symbol.name,
@@ -565,10 +565,10 @@ export class CesiumLayerSync {
           billboard: {
             image,
             heightReference:
-              this.milSymbolBillboardMode === "billboard"
-                ? Cesium.HeightReference.NONE
+              inBillboardMode
+                ? Cesium.HeightReference.RELATIVE_TO_GROUND
                 : Cesium.HeightReference.CLAMP_TO_GROUND,
-            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             scale: 1,
@@ -584,8 +584,8 @@ export class CesiumLayerSync {
                 outlineWidth: 2,
                 pixelOffset: new Cesium.Cartesian2(0, 22),
                 heightReference:
-                  this.milSymbolBillboardMode === "billboard"
-                    ? Cesium.HeightReference.NONE
+                  inBillboardMode
+                    ? Cesium.HeightReference.RELATIVE_TO_GROUND
                     : Cesium.HeightReference.CLAMP_TO_GROUND,
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
               }
@@ -775,7 +775,7 @@ export class CesiumLayerSync {
       if (feature.billboard) {
         feature.billboard.heightReference = new Cesium.ConstantProperty(
           mode === "billboard"
-            ? Cesium.HeightReference.NONE
+            ? Cesium.HeightReference.RELATIVE_TO_GROUND
             : Cesium.HeightReference.CLAMP_TO_GROUND,
         );
         feature.billboard.alignedAxis = new Cesium.ConstantProperty(Cesium.Cartesian3.ZERO);
@@ -784,13 +784,13 @@ export class CesiumLayerSync {
       if (feature.label) {
         feature.label.heightReference = new Cesium.ConstantProperty(
           mode === "billboard"
-            ? Cesium.HeightReference.NONE
+            ? Cesium.HeightReference.RELATIVE_TO_GROUND
             : Cesium.HeightReference.CLAMP_TO_GROUND,
         );
       }
 
       if (!hasLonLat) continue;
-      const altitude = mode === "billboard" ? MIL_SYMBOL_BILLBOARD_HEIGHT_M : 0;
+      const altitude = mode === "billboard" ? MIL_SYMBOL_BILLBOARD_GROUND_OFFSET_M : 0;
       feature.position = new Cesium.ConstantPositionProperty(
         Cesium.Cartesian3.fromDegrees(lon, lat, altitude),
       );
