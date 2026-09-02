@@ -17,6 +17,10 @@ flowchart LR
   Proc -.-> Sidecar[FastAPI optional]
 ```
 
+  ## Architecture decision records
+
+  - Tactical graphics rendering V2 decision (accepted): docs/migration/06-adr-tactical-graphics-rendering-v2.md
+
 ## Packages
 
 | Package | Responsibility |

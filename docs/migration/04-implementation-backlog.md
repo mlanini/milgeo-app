@@ -14,6 +14,14 @@ Date: 2026-08-05
 
 ## Progress log
 
+### 2026-09-02 - ADR tactical graphics rendering V2 accepted
+
+- Accepted hard-migration tactical graphics strategy with partial project loading.
+- Locked whitelist V1 for full MIL-STD-2525C fidelity: Direction of Attack, FLOT, No-Fire Area, Fortified Area.
+- Locked canonical SIDC target to 20-digit APP-6D when conversion is deterministic.
+- Locked workspace icon strategy to mini geometric renderers aligned with tactical rule output.
+- Reference: docs/migration/06-adr-tactical-graphics-rendering-v2.md.
+
 ### 2026-09-01 - S1.1 terrain audit complete
 
 - Confirmed terrain tool availability and outputs across Analysis panel and Raster toolbox.
