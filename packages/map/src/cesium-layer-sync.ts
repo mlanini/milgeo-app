@@ -71,9 +71,13 @@ interface ParsedMilSymbolLayerSource {
 interface ParsedMilGraphicItem {
   id: string;
   name: string;
+  sidcOriginal?: string;
+  sidcCanonical?: string | null;
+  ruleKey?: string;
   geometryType: "LineString" | "Polygon";
   coordinates: [number, number][];
   affiliation: "FRIENDLY" | "HOSTILE" | "NEUTRAL" | "UNKNOWN";
+  migrationReason?: string;
 }
 
 interface ParsedMilGraphicLayerSource {
@@ -154,9 +158,13 @@ function parseMilGraphicItem(raw: unknown): ParsedMilGraphicItem | null {
   return {
     id: parseString(record.id) ?? crypto.randomUUID(),
     name: parseString(record.name) ?? "Tactical Graphic",
+    sidcOriginal: parseString(record.sidcOriginal) ?? parseString(record.SIDC),
+    sidcCanonical: parseString(record.sidcCanonical) ?? null,
+    ruleKey: parseString(record.ruleKey),
     geometryType,
     coordinates,
     affiliation: parseAffiliation(record.affiliation),
+    migrationReason: parseString((record.migration as Record<string, unknown> | undefined)?.reason),
   };
 }
 
@@ -194,9 +202,13 @@ function parseMilGraphicGeoJson(raw: unknown): ParsedMilGraphicItem[] {
     graphics.push({
       id: parseString(properties.id) ?? crypto.randomUUID(),
       name: parseString(properties.name) ?? "Tactical Graphic",
+      sidcOriginal: parseString(properties.sidc),
+      sidcCanonical: parseString(properties.sidcCanonical) ?? null,
+      ruleKey: parseString(properties.ruleKey),
       geometryType,
       coordinates,
       affiliation: parseAffiliation(properties.affiliation),
+      migrationReason: parseString(properties.migrationReason),
     });
   }
   return graphics;

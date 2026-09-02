@@ -20,6 +20,8 @@ import {
   type MilGraphicLayerItem,
 } from "../../lib/milgraphic-layer-source";
 import { milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
+import { resolveTacticalRuleKey } from "../../lib/tactical-rules/catalog";
+import { normalizeTacticalSidc } from "../../lib/tactical-rules/normalize";
 
 const MilSymbol = ms.Symbol;
 const PREVIEW_SOURCE_ID = "mil-tactical-preview-source";
@@ -527,6 +529,8 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
       affiliation,
       uniqueDesignation: designation.trim() || undefined,
     };
+    const normalizedSidc = normalizeTacticalSidc(source.SIDC);
+    const ruleKey = resolveTacticalRuleKey(source.SIDC, source.geometryType);
 
     const graphicItem: MilGraphicLayerItem = {
       id: crypto.randomUUID(),
@@ -539,6 +543,18 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
       additionalInfo: source.additionalInfo,
       tacticalDirectional: selected.directional === true,
       tacticalFamily: selected.family,
+      sidcOriginal: normalizedSidc.original,
+      sidcCanonical: normalizedSidc.canonical20,
+      ruleKey,
+      migration: {
+        migrated: normalizedSidc.canonical20 !== null && ruleKey !== "fallback",
+        reason:
+          normalizedSidc.canonical20 === null
+            ? "sidc-not-canonical"
+            : ruleKey === "fallback"
+              ? "rule-unresolved"
+              : undefined,
+      },
     };
 
     updateTacticalGraphics([...tacticalGraphics, graphicItem]);

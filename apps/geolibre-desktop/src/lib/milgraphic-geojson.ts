@@ -46,7 +46,10 @@ export function milGraphicsToGeoJson(
         properties: {
           id: graphic.id,
           name: graphic.name,
-          sidc: graphic.SIDC,
+          sidc: graphic.sidcOriginal ?? graphic.SIDC,
+          sidcCanonical: graphic.sidcCanonical ?? null,
+          ruleKey: graphic.ruleKey ?? "fallback",
+          migrationReason: graphic.migration?.reason,
           affiliation: graphic.affiliation,
           color: colorFromAffiliation(graphic.affiliation),
           directional: graphic.tacticalDirectional === true ? 1 : 0,
@@ -67,7 +70,10 @@ export function milGraphicsToGeoJson(
       properties: {
         id: graphic.id,
         name: graphic.name,
-        sidc: graphic.SIDC,
+        sidc: graphic.sidcOriginal ?? graphic.SIDC,
+        sidcCanonical: graphic.sidcCanonical ?? null,
+        ruleKey: graphic.ruleKey ?? "fallback",
+        migrationReason: graphic.migration?.reason,
         affiliation: graphic.affiliation,
         color: colorFromAffiliation(graphic.affiliation),
         directional: 0,

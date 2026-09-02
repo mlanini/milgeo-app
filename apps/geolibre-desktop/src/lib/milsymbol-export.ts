@@ -1,6 +1,7 @@
 import type { FeatureCollection, Feature, Point, LineString, Polygon } from "geojson";
 import type { GeoLibreLayer } from "@geolibre/core";
 import type { MilSymbolLayerSource, MilGraphicLayerSource } from "@geolibre/core";
+import { parseMilGraphicLayerSource } from "./milgraphic-layer-source";
 
 /**
  * Converts all mil-symbol and mil-graphic layers to a GeoJSON FeatureCollection.
@@ -47,30 +48,36 @@ export function exportMilLayersToGeoJSON(layers: GeoLibreLayer[]): FeatureCollec
 
     } else if (layer.type === "mil-graphic") {
       const src = layer.source as unknown as MilGraphicLayerSource;
-      if (!src.SIDC || !src.coordinates?.length) continue;
+      const parsed = parseMilGraphicLayerSource(src);
+      for (const graphic of parsed.graphics) {
+        if (!graphic.SIDC || !graphic.coordinates?.length) continue;
 
-      const geometry =
-        src.geometryType === "Polygon"
-          ? ({ type: "Polygon", coordinates: [src.coordinates] } as Polygon)
-          : ({ type: "LineString", coordinates: src.coordinates } as LineString);
+        const geometry =
+          graphic.geometryType === "Polygon"
+            ? ({ type: "Polygon", coordinates: [graphic.coordinates] } as Polygon)
+            : ({ type: "LineString", coordinates: graphic.coordinates } as LineString);
 
-      const feature: Feature<LineString | Polygon> = {
-        type: "Feature",
-        id: layer.id,
-        geometry,
-        properties: {
-          SIDC: src.SIDC,
-          name: layer.name,
-          affiliation: src.affiliation,
-          ...(src.uniqueDesignation !== undefined && {
-            uniqueDesignation: src.uniqueDesignation,
-          }),
-          ...(src.additionalInfo !== undefined && {
-            additionalInfo: src.additionalInfo,
-          }),
-        },
-      };
-      features.push(feature);
+        const feature: Feature<LineString | Polygon> = {
+          type: "Feature",
+          id: graphic.id,
+          geometry,
+          properties: {
+            SIDC: graphic.sidcOriginal ?? graphic.SIDC,
+            sidcCanonical: graphic.sidcCanonical ?? null,
+            ruleKey: graphic.ruleKey ?? "fallback",
+            migrationReason: graphic.migration?.reason,
+            name: graphic.name,
+            affiliation: graphic.affiliation,
+            ...(graphic.uniqueDesignation !== undefined && {
+              uniqueDesignation: graphic.uniqueDesignation,
+            }),
+            ...(graphic.additionalInfo !== undefined && {
+              additionalInfo: graphic.additionalInfo,
+            }),
+          },
+        };
+        features.push(feature);
+      }
     }
   }
 

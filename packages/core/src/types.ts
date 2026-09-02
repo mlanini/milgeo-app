@@ -1064,6 +1064,43 @@ export interface MilGraphicLayerSource {
   affiliation: MilAffiliation;
   uniqueDesignation?: string;
   additionalInfo?: string;
+  /** Tactical source schema version. Version 2 stores canonical graphic records. */
+  schemaVersion?: 1 | 2;
+  /** Canonical tactical graphic records for Milestone A and beyond. */
+  graphics?: TacticalGraphicV2[];
+}
+
+export type TacticalGraphicRuleKey =
+  | "direction_of_attack"
+  | "flot"
+  | "no_fire_area"
+  | "fortified_area"
+  | "fallback";
+
+export interface TacticalGraphicMigrationState {
+  migrated: boolean;
+  reason?: string;
+}
+
+/**
+ * Canonical tactical item persisted under mil-graphic layer source.graphics.
+ * Legacy top-level MilGraphicLayerSource fields remain for backward compatibility.
+ */
+export interface TacticalGraphicV2 {
+  id: string;
+  name: string;
+  SIDC: string;
+  sidcOriginal: string;
+  sidcCanonical: string | null;
+  ruleKey: TacticalGraphicRuleKey;
+  geometryType: "LineString" | "Polygon";
+  coordinates: [number, number][];
+  affiliation: MilAffiliation;
+  uniqueDesignation?: string;
+  additionalInfo?: string;
+  tacticalDirectional?: boolean;
+  tacticalFamily?: string;
+  migration: TacticalGraphicMigrationState;
 }
 
 export interface MapViewState {

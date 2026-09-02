@@ -1175,14 +1175,204 @@ function isPlainObject(value: object): boolean {
   return prototype === Object.prototype || prototype === null;
 }
 
-function normalizeLayer(layer: GeoLibreLayer): GeoLibreLayer {
+type TacticalRuleKey =
+  | "direction_of_attack"
+  | "flot"
+  | "no_fire_area"
+  | "fortified_area"
+  | "fallback";
+
+interface TacticalMigrationDiagnostic {
+  itemId: string;
+  name: string;
+  sidc?: string;
+  reason: string;
+}
+
+interface TacticalMigrationSummary {
+  schemaVersion: 2;
+  total: number;
+  migrated: number;
+  skipped: number;
+  warnings: number;
+  diagnostics: TacticalMigrationDiagnostic[];
+}
+
+function parseMilGraphicAffiliation(value: unknown): "FRIENDLY" | "HOSTILE" | "NEUTRAL" | "UNKNOWN" {
+  if (value === "HOSTILE") return "HOSTILE";
+  if (value === "NEUTRAL") return "NEUTRAL";
+  if (value === "UNKNOWN") return "UNKNOWN";
+  return "UNKNOWN";
+}
+
+function parseMilGraphicGeometryType(value: unknown): "LineString" | "Polygon" | null {
+  if (value === "LineString") return "LineString";
+  if (value === "Polygon") return "Polygon";
+  return null;
+}
+
+function parseMilGraphicCoordinate(value: unknown): [number, number] | null {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const lon = value[0];
+  const lat = value[1];
+  if (typeof lon !== "number" || !Number.isFinite(lon)) return null;
+  if (typeof lat !== "number" || !Number.isFinite(lat)) return null;
+  return [lon, lat];
+}
+
+function parseMilGraphicCoordinates(value: unknown): [number, number][] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => parseMilGraphicCoordinate(item))
+    .filter((item): item is [number, number] => item !== null);
+}
+
+function normalizeSidc20(value: string): { original: string; canonical20: string | null } {
+  const original = value.trim().toUpperCase();
+  return { original, canonical20: /^\d{20}$/.test(original) ? original : null };
+}
+
+function tacticalRuleFromSidc(
+  sidc: string,
+  geometryType: "LineString" | "Polygon",
+): TacticalRuleKey {
+  if (sidc.length < 10) return "fallback";
+  const token = sidc.slice(4, 10).replace(/[^A-Z0-9]/g, "");
+  if (geometryType === "LineString") {
+    if (token.startsWith("OLK") || token === "PF") return "direction_of_attack";
+    if (token.startsWith("GLF")) return "flot";
+    return "fallback";
+  }
+  if (token.startsWith("ACN")) return "no_fire_area";
+  if (token.startsWith("GAF")) return "fortified_area";
+  return "fallback";
+}
+
+function normalizeMilGraphicLayerSourceOnLoad(source: unknown): {
+  normalizedSource: Record<string, unknown>;
+  migration: TacticalMigrationSummary;
+} {
+  const record = source && typeof source === "object" ? (source as Record<string, unknown>) : {};
+  const rawGraphics = Array.isArray(record.graphics) ? record.graphics : [record];
+  const diagnostics: TacticalMigrationDiagnostic[] = [];
+  const graphics: Record<string, unknown>[] = [];
+
+  for (const rawItem of rawGraphics) {
+    if (!rawItem || typeof rawItem !== "object") continue;
+    const item = rawItem as Record<string, unknown>;
+    const itemId = typeof item.id === "string" && item.id.length > 0 ? item.id : uuidv4();
+    const name = typeof item.name === "string" && item.name.length > 0 ? item.name : "Tactical Graphic";
+    const sidc =
+      typeof item.sidcOriginal === "string" && item.sidcOriginal.trim().length > 0
+        ? item.sidcOriginal
+        : typeof item.SIDC === "string"
+          ? item.SIDC
+          : "";
+
+    if (!sidc.trim()) {
+      diagnostics.push({ itemId, name, reason: "sidc-missing" });
+      continue;
+    }
+
+    const geometryType = parseMilGraphicGeometryType(item.geometryType);
+    const coordinates = parseMilGraphicCoordinates(item.coordinates);
+    const minCoordinates = geometryType === "Polygon" ? 3 : 2;
+    if (!geometryType || coordinates.length < minCoordinates) {
+      diagnostics.push({ itemId, name, sidc, reason: "unsupported-geometry" });
+      continue;
+    }
+
+    const normalizedSidc = normalizeSidc20(sidc);
+    const ruleKey = tacticalRuleFromSidc(normalizedSidc.original, geometryType);
+    const migrationReason =
+      normalizedSidc.canonical20 === null
+        ? "sidc-not-canonical"
+        : ruleKey === "fallback"
+          ? "rule-unresolved"
+          : undefined;
+
+    if (migrationReason) {
+      diagnostics.push({ itemId, name, sidc: normalizedSidc.original, reason: migrationReason });
+    }
+
+    graphics.push({
+      id: itemId,
+      name,
+      SIDC: normalizedSidc.original,
+      sidcOriginal: normalizedSidc.original,
+      sidcCanonical: normalizedSidc.canonical20,
+      ruleKey,
+      geometryType,
+      coordinates,
+      affiliation: parseMilGraphicAffiliation(item.affiliation),
+      uniqueDesignation:
+        typeof item.uniqueDesignation === "string" ? item.uniqueDesignation : undefined,
+      additionalInfo: typeof item.additionalInfo === "string" ? item.additionalInfo : undefined,
+      tacticalDirectional: item.tacticalDirectional === true,
+      tacticalFamily: typeof item.tacticalFamily === "string" ? item.tacticalFamily : undefined,
+      migration: {
+        migrated: normalizedSidc.canonical20 !== null && ruleKey !== "fallback",
+        ...(migrationReason ? { reason: migrationReason } : {}),
+      },
+    });
+  }
+
+  const first = graphics[0] as Record<string, unknown> | undefined;
   return {
+    normalizedSource: {
+      SIDC: (first?.sidcOriginal as string | undefined) ?? "",
+      geometryType: (first?.geometryType as "LineString" | "Polygon" | undefined) ?? "LineString",
+      coordinates: (first?.coordinates as [number, number][] | undefined) ?? [],
+      affiliation:
+        (first?.affiliation as "FRIENDLY" | "HOSTILE" | "NEUTRAL" | "UNKNOWN" | undefined) ??
+        "UNKNOWN",
+      uniqueDesignation: first?.uniqueDesignation as string | undefined,
+      additionalInfo: first?.additionalInfo as string | undefined,
+      schemaVersion: 2,
+      graphics,
+    },
+    migration: {
+      schemaVersion: 2,
+      total: rawGraphics.length,
+      migrated: graphics.filter(
+        (entry) =>
+          Boolean(
+            (entry.migration as { migrated?: boolean } | undefined)?.migrated,
+          ),
+      ).length,
+      skipped: diagnostics.filter(
+        (diag) => diag.reason === "sidc-missing" || diag.reason === "unsupported-geometry",
+      ).length,
+      warnings: diagnostics.filter(
+        (diag) => diag.reason === "sidc-not-canonical" || diag.reason === "rule-unresolved",
+      ).length,
+      diagnostics,
+    },
+  };
+}
+
+function normalizeLayer(layer: GeoLibreLayer): GeoLibreLayer {
+  const normalizedBase: GeoLibreLayer = {
     ...layer,
     style: { ...DEFAULT_LAYER_STYLE, ...layer.style },
     visible: layer.visible ?? true,
     opacity: layer.opacity ?? 1,
     metadata: layer.metadata ?? {},
     source: layer.source ?? {},
+  };
+
+  if (normalizedBase.type !== "mil-graphic") {
+    return normalizedBase;
+  }
+
+  const normalizedMilGraphic = normalizeMilGraphicLayerSourceOnLoad(normalizedBase.source);
+  return {
+    ...normalizedBase,
+    source: normalizedMilGraphic.normalizedSource,
+    metadata: {
+      ...normalizedBase.metadata,
+      tacticalMigration: normalizedMilGraphic.migration,
+    },
   };
 }
 

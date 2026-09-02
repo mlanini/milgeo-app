@@ -121,6 +121,113 @@ describe("project parsing", () => {
     assert.equal(reloaded.preferences.map.projection, "mercator");
   });
 
+  it("normalizes mil-graphic layers to TacticalGraphicV2 source on project load", () => {
+    const project = parseProject(
+      JSON.stringify({
+        version: "0.1.0",
+        name: "Mil migration",
+        mapView: { center: [8.1, 46.9], zoom: 7, bearing: 0, pitch: 0 },
+        layers: [
+          {
+            id: "mil-a",
+            name: "Tactical",
+            type: "mil-graphic",
+            source: {
+              graphics: [
+                {
+                  id: "g-ok",
+                  name: "FLOT",
+                  SIDC: "G*G*GLF---",
+                  geometryType: "LineString",
+                  coordinates: [
+                    [7.3, 46.8],
+                    [7.6, 47.0],
+                  ],
+                  affiliation: "FRIENDLY",
+                },
+              ],
+            },
+            style: {},
+            metadata: {},
+          },
+        ],
+      }),
+    );
+
+    const layer = project.layers[0];
+    const source = layer.source as Record<string, unknown>;
+    const graphics = (source.graphics as Record<string, unknown>[] | undefined) ?? [];
+    const migration = layer.metadata.tacticalMigration as Record<string, unknown>;
+    assert.equal(layer.type, "mil-graphic");
+    assert.equal(source.schemaVersion, 2);
+    assert.equal(Array.isArray(source.graphics), true);
+    assert.equal(graphics.length, 1);
+    assert.equal(graphics[0].ruleKey, "flot");
+    assert.equal((graphics[0].migration as Record<string, unknown>).migrated, false);
+    assert.equal(migration.schemaVersion, 2);
+    assert.equal(migration.total, 1);
+    assert.equal(migration.warnings, 1);
+  });
+
+  it("applies hard migration skip for invalid mil-graphic records while partially loading project", () => {
+    const project = parseProject(
+      JSON.stringify({
+        version: "0.1.0",
+        name: "Mil partial",
+        mapView: { center: [8.1, 46.9], zoom: 7, bearing: 0, pitch: 0 },
+        layers: [
+          {
+            id: "mil-b",
+            name: "Mixed tactical",
+            type: "mil-graphic",
+            source: {
+              graphics: [
+                {
+                  id: "keep",
+                  name: "Fortified",
+                  SIDC: "G*G*GAF---",
+                  geometryType: "Polygon",
+                  coordinates: [
+                    [7.0, 46.7],
+                    [7.1, 46.7],
+                    [7.1, 46.8],
+                  ],
+                  affiliation: "HOSTILE",
+                },
+                {
+                  id: "skip",
+                  name: "Broken",
+                  SIDC: "G*G*GLF---",
+                  geometryType: "LineString",
+                  coordinates: [[7.0, 46.7]],
+                  affiliation: "FRIENDLY",
+                },
+              ],
+            },
+            style: {},
+            metadata: {},
+          },
+        ],
+      }),
+    );
+
+    const layer = project.layers[0];
+    const source = layer.source as Record<string, unknown>;
+    const graphics = (source.graphics as Record<string, unknown>[] | undefined) ?? [];
+    const migration = layer.metadata.tacticalMigration as Record<string, unknown>;
+    const diagnostics = (migration.diagnostics as Record<string, unknown>[] | undefined) ?? [];
+    assert.equal(graphics.length, 1);
+    assert.equal(graphics[0].id, "keep");
+    assert.equal(migration.skipped, 1);
+    assert.equal(migration.total, 2);
+    assert.equal(
+      diagnostics.some(
+        (diag: { itemId?: string }) => diag.itemId === "skip",
+      ),
+      true,
+    );
+  });
+
   it("normalizes a legend config, dropping malformed overrides", () => {
     const project = parseProject(
       JSON.stringify({
