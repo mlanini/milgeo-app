@@ -40,6 +40,13 @@ function minPoints(entry: TacticalCatalogEntry): number {
   return entry.geometryType === "Polygon" ? 3 : 2;
 }
 
+function previewSidcForGraphic(sidc: string, affiliation: MilAffiliation): string {
+  const normalized = sidc.trim().toUpperCase();
+  if (/^\d{20}$/.test(normalized)) return normalized;
+  if (/^[A-Z0-9\-]{15}$/.test(normalized)) return normalized;
+  return odinDisplaySidc(normalized, affiliation);
+}
+
 function GraphicPreview({ sidc }: { sidc: string }) {
   const svg = useMemo(() => {
     try {
@@ -813,7 +820,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
           <div className="max-h-28 space-y-0.5 overflow-y-auto">
             {tacticalGraphics.map((graphic) => (
               <div key={graphic.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-muted/50">
-                <GraphicPreview sidc={odinDisplaySidc(graphic.SIDC, graphic.affiliation)} />
+                <GraphicPreview sidc={previewSidcForGraphic(graphic.SIDC, graphic.affiliation)} />
                 <div className="min-w-0 flex-1 text-[10px]">
                   <div className="truncate font-medium">{graphic.name}</div>
                   <div className="truncate text-muted-foreground">{graphic.SIDC}</div>

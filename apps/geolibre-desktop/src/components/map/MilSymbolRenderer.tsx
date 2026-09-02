@@ -49,6 +49,22 @@ const SYMBOL_SIZE = DEFAULT_MIL_SYMBOL_SIZE_PX;
 /** Capture DPR once; constant for the component lifetime. */
 const PIXEL_RATIO = window.devicePixelRatio || 1;
 
+function graphicSourceId(layerId: string): string {
+  return `mg-source-${layerId}`;
+}
+
+function graphicLineLayerId(layerId: string): string {
+  return `mg-line-${layerId}`;
+}
+
+function graphicFillLayerId(layerId: string): string {
+  return `mg-fill-${layerId}`;
+}
+
+function graphicDirectionLayerId(layerId: string): string {
+  return `mg-dir-${layerId}`;
+}
+
 function hasRenderableMilGraphicFeatures(value: unknown): value is FeatureCollection {
   if (!value || typeof value !== "object") return false;
   const record = value as { features?: unknown };
@@ -469,21 +485,23 @@ export default function MilSymbolRenderer({
       // Remove stale graphic sources
       for (const id of graphicSourcesRef.current) {
         if (!graphicIds.has(id)) {
-          const lineId = `mg-line-${id}`;
-          const fillId = `mg-fill-${id}`;
-          const dirId = `mg-dir-${id}`;
+          const srcId = graphicSourceId(id);
+          const lineId = graphicLineLayerId(id);
+          const fillId = graphicFillLayerId(id);
+          const dirId = graphicDirectionLayerId(id);
           if (map.getLayer(dirId)) map.removeLayer(dirId);
           if (map.getLayer(lineId)) map.removeLayer(lineId);
           if (map.getLayer(fillId)) map.removeLayer(fillId);
-          if (map.getSource(id)) map.removeSource(id);
+          if (map.getSource(srcId)) map.removeSource(srcId);
           graphicSourcesRef.current.delete(id);
         }
       }
 
       for (const layer of allGraphics) {
-        const lineId = `mg-line-${layer.id}`;
-        const fillId = `mg-fill-${layer.id}`;
-        const dirId = `mg-dir-${layer.id}`;
+        const srcId = graphicSourceId(layer.id);
+        const lineId = graphicLineLayerId(layer.id);
+        const fillId = graphicFillLayerId(layer.id);
+        const dirId = graphicDirectionLayerId(layer.id);
         const parsed = parseMilGraphicLayerSource(layer.source);
         const fallbackGeoData = milGraphicsToGeoJson(parsed.graphics);
         const geoData = hasRenderableMilGraphicFeatures(layer.geojson)
@@ -500,22 +518,18 @@ export default function MilSymbolRenderer({
           return props?.directional === 1 || props?.directional === true || props?.directional === "1";
         });
 
-        if (graphicSourcesRef.current.has(layer.id) && map.getSource(layer.id)) {
-          (map.getSource(layer.id) as maplibregl.GeoJSONSource)?.setData(geoData);
-          const vis = layer.visible ? "visible" : "none";
-          if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
-          if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
-          if (map.getLayer(dirId)) map.setLayoutProperty(dirId, "visibility", vis);
-          if (map.getLayer(lineId)) map.setPaintProperty(lineId, "line-opacity", layer.opacity);
-          if (map.getLayer(fillId)) map.setPaintProperty(fillId, "fill-opacity", layer.opacity * 0.15);
-          if (map.getLayer(dirId)) map.setPaintProperty(dirId, "text-opacity", layer.opacity);
+        const sourceExists = Boolean(map.getSource(srcId));
+        if (!sourceExists) {
+          map.addSource(srcId, { type: "geojson", data: geoData });
         } else {
-          map.addSource(layer.id, { type: "geojson", data: geoData });
+          (map.getSource(srcId) as maplibregl.GeoJSONSource)?.setData(geoData);
+        }
 
+        if (!map.getLayer(fillId)) {
           map.addLayer({
             id: fillId,
             type: "fill",
-            source: layer.id,
+            source: srcId,
             filter: ["==", ["geometry-type"], "Polygon"],
             paint: {
               "fill-color": ["coalesce", ["get", "color"], "#4A7FCE"],
@@ -523,11 +537,13 @@ export default function MilSymbolRenderer({
             },
             layout: { visibility: layer.visible ? "visible" : "none" },
           });
+        }
 
+        if (!map.getLayer(lineId)) {
           map.addLayer({
             id: lineId,
             type: "line",
-            source: layer.id,
+            source: srcId,
             paint: {
               "line-color": ["coalesce", ["get", "color"], "#4A7FCE"],
               "line-width": [
@@ -545,43 +561,51 @@ export default function MilSymbolRenderer({
             },
             layout: { visibility: layer.visible ? "visible" : "none" },
           });
-
-          if (hasDirectional) {
-            map.addLayer({
-              id: dirId,
-              type: "symbol",
-              source: layer.id,
-              filter: [
-                "all",
-                ["==", ["geometry-type"], "LineString"],
-                [">", ["coalesce", ["get", "directional"], 0], 0],
-              ],
-              layout: {
-                "symbol-placement": "line",
-                "symbol-spacing": 180,
-                "text-field": ">",
-                "text-font": ["Open Sans Regular"],
-                "text-size": [
-                  "interpolate",
-                  ["linear"],
-                  ["zoom"],
-                  6, 10,
-                  12, 14,
-                  18, 18,
-                ],
-                "text-keep-upright": false,
-              },
-              paint: {
-                "text-color": ["coalesce", ["get", "color"], "#4A7FCE"],
-                "text-opacity": layer.opacity,
-                "text-halo-color": "#ffffff",
-                "text-halo-width": 1,
-              },
-            });
-          }
-
-          graphicSourcesRef.current.add(layer.id);
         }
+
+        if (hasDirectional && !map.getLayer(dirId)) {
+          map.addLayer({
+            id: dirId,
+            type: "symbol",
+            source: srcId,
+            filter: [
+              "all",
+              ["==", ["geometry-type"], "LineString"],
+              [">", ["coalesce", ["get", "directional"], 0], 0],
+            ],
+            layout: {
+              "symbol-placement": "line",
+              "symbol-spacing": 180,
+              "text-field": ">",
+              "text-font": ["Open Sans Regular"],
+              "text-size": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                6, 10,
+                12, 14,
+                18, 18,
+              ],
+              "text-keep-upright": false,
+            },
+            paint: {
+              "text-color": ["coalesce", ["get", "color"], "#4A7FCE"],
+              "text-opacity": layer.opacity,
+              "text-halo-color": "#ffffff",
+              "text-halo-width": 1,
+            },
+          });
+        }
+
+        const vis = layer.visible ? "visible" : "none";
+        if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
+        if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
+        if (map.getLayer(dirId)) map.setLayoutProperty(dirId, "visibility", vis);
+        if (map.getLayer(lineId)) map.setPaintProperty(lineId, "line-opacity", layer.opacity);
+        if (map.getLayer(fillId)) map.setPaintProperty(fillId, "fill-opacity", layer.opacity * 0.15);
+        if (map.getLayer(dirId)) map.setPaintProperty(dirId, "text-opacity", layer.opacity);
+
+        graphicSourcesRef.current.add(layer.id);
 
         if (!hasDirectional && map.getLayer(dirId)) {
           map.removeLayer(dirId);
