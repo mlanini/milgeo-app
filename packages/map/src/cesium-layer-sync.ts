@@ -572,7 +572,6 @@ export class CesiumLayerSync {
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             scale: 1,
-            alignedAxis: Cesium.Cartesian3.ZERO,
           },
           label: symbol.uniqueDesignation
             ? {
@@ -778,7 +777,6 @@ export class CesiumLayerSync {
             ? Cesium.HeightReference.RELATIVE_TO_GROUND
             : Cesium.HeightReference.CLAMP_TO_GROUND,
         );
-        feature.billboard.alignedAxis = new Cesium.ConstantProperty(Cesium.Cartesian3.ZERO);
       }
 
       if (feature.label) {
