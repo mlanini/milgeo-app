@@ -268,8 +268,8 @@ function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
     layout: {
       "icon-image":              ["get", "symbolKey"],
       "icon-rotate":             ["coalesce", ["get", "direction"], 0],
-      "icon-rotation-alignment": "map",
-      "icon-pitch-alignment":    "map",
+      "icon-rotation-alignment": "viewport",
+      "icon-pitch-alignment":    "viewport",
       "icon-size":               1,
       "icon-allow-overlap":      true,
       "icon-ignore-placement":   true,
@@ -486,7 +486,7 @@ export default function MilSymbolRenderer({
         const element = buildMilSymbolMarkerElement(symbol.SIDC, opts);
         if (!element) continue;
         element.style.opacity = String(layerOpacity);
-        const marker = new maplibregl.Marker({ element, anchor: "center", rotationAlignment: "map" })
+        const marker = new maplibregl.Marker({ element, anchor: "center", rotationAlignment: "viewport" })
           .setLngLat([symbol.lon, symbol.lat])
           .setRotation(direction)
           .addTo(map);
