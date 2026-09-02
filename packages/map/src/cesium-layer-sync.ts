@@ -18,10 +18,11 @@ type CesiumNs = typeof import("cesium");
 ms.setStandard("APP6");
 const MilSymbol = ms.Symbol;
 
-// In nadir view (pitch near -90 deg) symbols stay clamped to terrain. As soon
-// as the user tilts the globe, lift symbols into billboard mode for legibility.
+// Keep MIL symbols in billboard mode on the globe so they always face the
+// camera and remain legible in oblique views.
+const MIL_SYMBOL_ALWAYS_BILLBOARD = true;
 const MIL_SYMBOL_BILLBOARD_TILT_THRESHOLD_RAD = -1.52;
-const MIL_SYMBOL_BILLBOARD_HEIGHT_M = 30;
+const MIL_SYMBOL_BILLBOARD_HEIGHT_M = 120;
 
 /** Layer kinds this pass renders on the globe. */
 const IMAGERY_TYPES = new Set(["raster", "xyz", "wms", "wmts"]);
@@ -440,6 +441,7 @@ export class CesiumLayerSync {
   }
 
   private cameraIsTiltedForBillboards(): boolean {
+    if (MIL_SYMBOL_ALWAYS_BILLBOARD) return true;
     const pitch = this.viewer.camera.pitch;
     return Number.isFinite(pitch) && pitch > MIL_SYMBOL_BILLBOARD_TILT_THRESHOLD_RAD;
   }
@@ -554,17 +556,23 @@ export class CesiumLayerSync {
       for (const symbol of parsed.symbols) {
         const image = milSymbolIconDataUrl(symbol.SIDC, parsed.symbolSize, parsed.showAmplifiers);
         if (!image) continue;
+        const initialAltitude =
+          this.milSymbolBillboardMode === "billboard" ? MIL_SYMBOL_BILLBOARD_HEIGHT_M : 0;
         dataSource.entities.add({
           id: symbol.id,
           name: symbol.name,
-          position: Cesium.Cartesian3.fromDegrees(symbol.lon, symbol.lat),
+          position: Cesium.Cartesian3.fromDegrees(symbol.lon, symbol.lat, initialAltitude),
           billboard: {
             image,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference:
+              this.milSymbolBillboardMode === "billboard"
+                ? Cesium.HeightReference.NONE
+                : Cesium.HeightReference.CLAMP_TO_GROUND,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             scale: 1,
+            alignedAxis: Cesium.Cartesian3.ZERO,
           },
           label: symbol.uniqueDesignation
             ? {
@@ -575,7 +583,10 @@ export class CesiumLayerSync {
                 outlineColor: Cesium.Color.BLACK,
                 outlineWidth: 2,
                 pixelOffset: new Cesium.Cartesian2(0, 22),
-                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                heightReference:
+                  this.milSymbolBillboardMode === "billboard"
+                    ? Cesium.HeightReference.NONE
+                    : Cesium.HeightReference.CLAMP_TO_GROUND,
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
               }
             : undefined,
@@ -745,8 +756,20 @@ export class CesiumLayerSync {
     if (!dataSource) return;
     const { Cesium } = this;
     for (const feature of dataSource.entities.values) {
-      const lon = feature.properties?.lon?.getValue?.();
-      const lat = feature.properties?.lat?.getValue?.();
+      const lonFromProperty = feature.properties?.lon?.getValue?.();
+      const latFromProperty = feature.properties?.lat?.getValue?.();
+      let lon = typeof lonFromProperty === "number" ? lonFromProperty : undefined;
+      let lat = typeof latFromProperty === "number" ? latFromProperty : undefined;
+
+      if (lon === undefined || lat === undefined) {
+        const cartesian = feature.position?.getValue?.(this.viewer.clock.currentTime);
+        if (cartesian) {
+          const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+          lon = Cesium.Math.toDegrees(cartographic.longitude);
+          lat = Cesium.Math.toDegrees(cartographic.latitude);
+        }
+      }
+
       const hasLonLat = typeof lon === "number" && typeof lat === "number";
 
       if (feature.billboard) {
@@ -755,6 +778,7 @@ export class CesiumLayerSync {
             ? Cesium.HeightReference.NONE
             : Cesium.HeightReference.CLAMP_TO_GROUND,
         );
+        feature.billboard.alignedAxis = new Cesium.ConstantProperty(Cesium.Cartesian3.ZERO);
       }
 
       if (feature.label) {
