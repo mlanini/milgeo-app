@@ -55,7 +55,8 @@ const IS_EMBED = process.env.GEOLIBRE_EMBED === "1";
 const PWA_DISABLED = IS_TAURI_BUILD || IS_EMBED;
 
 const pgliteCdnRequire = createRequire(import.meta.url);
-const threeModuleEntryPoint = pgliteCdnRequire.resolve("three/build/three.module.js");
+const threePackageRoot = path.dirname(path.dirname(pgliteCdnRequire.resolve("three")));
+const threeModuleEntryPoint = path.join(threePackageRoot, "build/three.module.js");
 // The ESM entry of a package's manifest. Prefer the `module` field and the
 // `import` condition of `exports` (both point at the ESM build); never fall back
 // to `main`, which is the CJS entry (`dist/index.cjs` for PGlite) and would
