@@ -542,6 +542,11 @@ export default function MilSymbolRenderer({
         const lineId = graphicLineLayerId(layer.id);
         const fillId = graphicFillLayerId(layer.id);
         const dirId = graphicDirectionLayerId(layer.id);
+        const layerVisible = typeof layer.visible === "boolean" ? layer.visible : true;
+        const layerOpacity =
+          typeof layer.opacity === "number" && Number.isFinite(layer.opacity)
+            ? Math.max(0, Math.min(1, layer.opacity))
+            : 1;
         const parsed = parseMilGraphicLayerSource(layer.source);
         const fallbackGeoData = milGraphicsToGeoJson(parsed.graphics);
         const geoData = hasRenderableMilGraphicFeatures(layer.geojson)
@@ -575,7 +580,7 @@ export default function MilSymbolRenderer({
               "fill-color": ["coalesce", ["get", "color"], "#4A7FCE"],
               "fill-opacity": [
                 "*",
-                layer.opacity,
+                layerOpacity,
                 [
                   "case",
                   ["==", ["coalesce", ["get", "areaPattern"], "none"], "no-fire"],
@@ -586,7 +591,7 @@ export default function MilSymbolRenderer({
                 ],
               ],
             },
-            layout: { visibility: layer.visible ? "visible" : "none" },
+            layout: { visibility: layerVisible ? "visible" : "none" },
           });
         }
 
@@ -607,12 +612,12 @@ export default function MilSymbolRenderer({
                 16, 5,
                 20, 8,
               ],
-              "line-opacity": layer.opacity,
+              "line-opacity": layerOpacity,
               "line-dasharray": [3, 1.75],
               "line-cap": "round",
               "line-join": "round",
             },
-            layout: { visibility: layer.visible ? "visible" : "none" },
+            layout: { visibility: layerVisible ? "visible" : "none" },
           });
         }
 
@@ -663,20 +668,20 @@ export default function MilSymbolRenderer({
               ],
             },
             paint: {
-              "icon-opacity": layer.opacity,
+              "icon-opacity": layerOpacity,
             },
           });
         }
 
-        const vis = layer.visible ? "visible" : "none";
+        const vis = layerVisible ? "visible" : "none";
         if (map.getLayer(lineId)) map.setLayoutProperty(lineId, "visibility", vis);
         if (map.getLayer(fillId)) map.setLayoutProperty(fillId, "visibility", vis);
         if (map.getLayer(dirId)) map.setLayoutProperty(dirId, "visibility", vis);
-        if (map.getLayer(lineId)) map.setPaintProperty(lineId, "line-opacity", layer.opacity);
+        if (map.getLayer(lineId)) map.setPaintProperty(lineId, "line-opacity", layerOpacity);
         if (map.getLayer(fillId)) {
           map.setPaintProperty(fillId, "fill-opacity", [
             "*",
-            layer.opacity,
+            layerOpacity,
             [
               "case",
               ["==", ["coalesce", ["get", "areaPattern"], "none"], "no-fire"],
@@ -687,7 +692,7 @@ export default function MilSymbolRenderer({
             ],
           ]);
         }
-        if (map.getLayer(dirId)) map.setPaintProperty(dirId, "icon-opacity", layer.opacity);
+        if (map.getLayer(dirId)) map.setPaintProperty(dirId, "icon-opacity", layerOpacity);
 
         graphicSourcesRef.current.add(layer.id);
 
