@@ -600,6 +600,7 @@ export default function MilSymbolRenderer({
             id: lineId,
             type: "line",
             source: srcId,
+            filter: ["==", ["geometry-type"], "LineString"],
             paint: {
               "line-color": ["coalesce", ["get", "color"], "#4A7FCE"],
               "line-width": [
@@ -631,10 +632,12 @@ export default function MilSymbolRenderer({
                 ["literal", [2, 1.3]],
                 ["literal", [1, 0.001]],
               ],
+            },
+            layout: {
+              visibility: layerVisible ? "visible" : "none",
               "line-cap": "round",
               "line-join": "round",
             },
-            layout: { visibility: layerVisible ? "visible" : "none" },
           });
         }
 
