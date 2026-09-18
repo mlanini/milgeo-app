@@ -13,6 +13,7 @@ import {
   useEffect,
   useRef,
 } from "react";
+import { useTranslation } from "react-i18next";
 import type maplibregl from "maplibre-gl";
 import { DEFAULT_LAYER_STYLE, useAppStore, type GeoLibreLayer } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
@@ -108,11 +109,11 @@ function SymPreview({ sidc, size = CATALOG_ICON }: { sidc: string; size?: number
 
 // ─── AFFILIATION bar ──────────────────────────────────────────────────────────
 
-const AFF_OPTIONS: { id: MilAffiliation; label: string; color: string }[] = [
-  { id: "FRIENDLY", label: "Amico",    color: "#4A7FCE" },
-  { id: "HOSTILE",  label: "Ostile",   color: "#CE4A4A" },
-  { id: "NEUTRAL",  label: "Neutrale", color: "#4ACE8C" },
-  { id: "UNKNOWN",  label: "Ignoto",   color: "#AAAAAA" },
+const AFF_OPTIONS: { id: MilAffiliation; color: string }[] = [
+  { id: "FRIENDLY", color: "#4A7FCE" },
+  { id: "HOSTILE",  color: "#CE4A4A" },
+  { id: "NEUTRAL",  color: "#4ACE8C" },
+  { id: "UNKNOWN",  color: "#AAAAAA" },
 ];
 
 function affiliationFromSidc(sidc: string): MilAffiliation {
@@ -155,6 +156,7 @@ function createMilSymbolLayer(
 }
 
 function CatalogTab({ mapControllerRef }: CatalogTabProps) {
+  const { t } = useTranslation();
   const layers = useAppStore((s) => s.layers);
   const selectedLayerId = useAppStore((s) => s.selectedLayerId);
   const addLayer = useAppStore((s) => s.addLayer);
@@ -712,7 +714,9 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   return (
     <div className="relative flex flex-col h-full">
       <div className="border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-        Set rapido (10 simboli comuni): trascina e rilascia direttamente sulla mappa oppure clicca per piazzare.
+        {t("milSymbols.quickSetHint", {
+          defaultValue: "Quick set (10 common symbols): drag and drop directly onto the map, or click to place.",
+        })}
       </div>
 
       {/* Affiliation bar */}
@@ -729,7 +733,15 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
             style={affiliation === a.id ? { background: a.color } : {}}
             onClick={() => setAffiliation(a.id)}
           >
-            {a.label}
+            {t(`milSymbols.affiliation.${a.id.toLowerCase()}`, {
+              defaultValue: a.id === "FRIENDLY"
+                ? "Friendly"
+                : a.id === "HOSTILE"
+                  ? "Hostile"
+                  : a.id === "NEUTRAL"
+                    ? "Neutral"
+                    : "Unknown",
+            })}
           </button>
         ))}
       </div>
@@ -738,7 +750,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       <div className="px-3 pb-1 grid grid-cols-2 gap-1.5">
         <label className="flex flex-col gap-0.5">
           <span className="text-[10px] font-medium text-muted-foreground">
-            Scale Symbols Size: {symbolSizePx}px
+            {t("milSymbols.scaleSymbolsSize", { defaultValue: "Scale Symbols Size" })}: {symbolSizePx}px
           </span>
           <input
             type="range"
@@ -751,7 +763,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
         </label>
         <label className="flex flex-col gap-0.5">
           <span className="text-[10px] font-medium text-muted-foreground">
-            Tactical Line Width: {tacticalLineWidthPx.toFixed(1)}px
+            {t("milSymbols.tacticalLineWidth", { defaultValue: "Tactical Line Width" })}: {tacticalLineWidthPx.toFixed(1)}px
           </span>
           <input
             type="range"
@@ -769,7 +781,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
             checked={showAmplifiers}
             onChange={(e) => handleToggleAmplifiers(e.target.checked)}
           />
-          Mostra amplificatori
+          {t("milSymbols.showAmplifiers", { defaultValue: "Show amplifiers" })}
         </label>
       </div>
 
@@ -777,7 +789,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       <div className="flex gap-1.5 px-3 pb-1">
         <input
           className="flex-1 h-6 rounded border border-input bg-background px-1.5 text-xs focus:outline-none"
-          placeholder="Cerca nel catalogo MilSymbols…"
+          placeholder={t("milSymbols.searchPlaceholder", { defaultValue: "Search in Mil Symbols catalog…" })}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -786,7 +798,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
           value={category}
           onChange={(e) => setCategory(e.target.value)}
         >
-          <option value="All">Tutte</option>
+          <option value="All">{t("milSymbols.allCategories", { defaultValue: "All" })}</option>
           {CATEGORIES.map((c) => (
             <option key={c} value={c}>{c}</option>
           ))}
@@ -797,7 +809,9 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       {(placingSidc || pendingMove) && (
         <div className="mx-3 mb-1 px-2 py-1 bg-blue-500/10 rounded border border-blue-500/30 flex items-center gap-2 text-xs text-blue-700 dark:text-blue-300">
           {pendingMove ? <Crosshair size={11} /> : <MapPin size={11} />}
-          {pendingMove ? "Clicca nuova posizione per il simbolo…" : "Clicca sulla mappa per posizionare…"}
+          {pendingMove
+            ? t("milSymbols.clickNewPosition", { defaultValue: "Click a new position for the symbol…" })
+            : t("milSymbols.clickMapToPlace", { defaultValue: "Click on the map to place…" })}
           <button className="ml-auto" onClick={cancelPlace}><X size={11} /></button>
         </div>
       )}
@@ -835,7 +849,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
                   e.stopPropagation();
                   handleEditEntry(entry);
                 }}
-                title="Modifica prima del posizionamento"
+                  title={t("milSymbols.editBeforePlacement", { defaultValue: "Edit before placement" })}
               >
                 <Pencil size={12} />
               </button>
@@ -845,7 +859,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
         })}
         {filtered.length === 0 && (
           <div className="py-4 text-center text-xs text-muted-foreground">
-            Nessun risultato.
+            {t("milSymbols.noResults", { defaultValue: "No results." })}
           </div>
         )}
       </div>
@@ -853,7 +867,10 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       {targetLayer && targetSymbols.length > 0 && (
         <div className="border-t px-3 py-2">
           <div className="mb-1 text-[10px] font-medium text-muted-foreground">
-            Simboli nel layer selezionato ({targetSymbols.length})
+            {t("milSymbols.symbolsInSelectedLayer", {
+              defaultValue: "Symbols in selected layer ({{count}})",
+              count: targetSymbols.length,
+            })}
           </div>
           <div className="max-h-28 overflow-y-auto space-y-0.5">
             {targetSymbols.map((symbol) => (
@@ -874,21 +891,21 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
                 <button
                   className="p-1 rounded hover:bg-muted"
                   onClick={() => handleMovePlacedSymbol(symbol)}
-                  title="Sposta simbolo"
+                  title={t("milSymbols.moveSymbol", { defaultValue: "Move symbol" })}
                 >
                   <Crosshair size={11} />
                 </button>
                 <button
                   className="p-1 rounded hover:bg-muted"
                   onClick={() => handleEditPlacedSymbol(symbol)}
-                  title="Modifica simbolo"
+                  title={t("milSymbols.editSymbol", { defaultValue: "Edit symbol" })}
                 >
                   <Pencil size={11} />
                 </button>
                 <button
                   className="p-1 rounded hover:bg-muted hover:text-red-500"
                   onClick={() => handleDeletePlacedSymbol(symbol)}
-                  title="Elimina simbolo"
+                  title={t("milSymbols.deleteSymbol", { defaultValue: "Delete symbol" })}
                 >
                   <Trash2 size={11} />
                 </button>
@@ -910,6 +927,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
 // ─── MAIN PANEL ───────────────────────────────────────────────────────────────
 
 export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
+  const { t } = useTranslation();
   const layers = useAppStore((s) => s.layers);
   const addLayer = useAppStore((s) => s.addLayer);
   const updateLayer = useAppStore((s) => s.updateLayer);
@@ -1092,14 +1110,22 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
       applyImportedStoreData(parsed);
       const symbolCount = parsed.layers.reduce((acc, layer) => acc + layer.symbols.length, 0);
       const graphicCount = parsed.layers.reduce((acc, layer) => acc + layer.graphics.length, 0);
-      setNotice(`Import completato: ${symbolCount} simboli, ${graphicCount} grafiche, ${parsed.orbat.length} unità ORBAT.`);
+      setNotice(t("milSymbols.importCompleted", {
+        defaultValue: "Import completed: {{symbols}} symbols, {{graphics}} graphics, {{orbat}} ORBAT units.",
+        symbols: symbolCount,
+        graphics: graphicCount,
+        orbat: parsed.orbat.length,
+      }));
     } catch (error) {
       const message = error instanceof Error
         ? error.message
-        : "Import militare non riuscito";
-      setNotice(`Errore import: ${message}`);
+        : t("milSymbols.importFailedGeneric", { defaultValue: "Military import failed" });
+      setNotice(t("milSymbols.importError", {
+        defaultValue: "Import error: {{message}}",
+        message,
+      }));
     }
-  }, [applyImportedStoreData]);
+  }, [applyImportedStoreData, t]);
 
   const handleExportJson = useCallback(() => {
     const features: Feature[] = [];
@@ -1218,17 +1244,19 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
         <button
           className="inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] hover:bg-muted"
           onClick={() => fileInputRef.current?.click()}
-          title="Importa ORBAT o MilSymb"
+          title={t("milSymbols.importTitle", { defaultValue: "Import ORBAT or MilSymb" })}
         >
-          <Upload size={12} /> Importa
+          <Upload size={12} /> {t("milSymbols.importButton", { defaultValue: "Import" })}
         </button>
         <button
           className="inline-flex h-7 items-center gap-1 rounded border px-2 text-[11px] hover:bg-muted disabled:opacity-50"
           onClick={handleExportJson}
           disabled={allMilLayers.length === 0}
-          title="Export JSON compatibile con import (GeoJSON + SIDC)"
+          title={t("milSymbols.exportJsonTitle", {
+            defaultValue: "Export JSON compatible with import (GeoJSON + SIDC)",
+          })}
         >
-          <Download size={12} /> Export JSON
+          <Download size={12} /> {t("milSymbols.exportJsonButton", { defaultValue: "Export JSON" })}
         </button>
       </div>
 
@@ -1240,8 +1268,8 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
 
       {/* Tabs */}
       <div className="flex border-b">
-        <button className={tabCls("catalog")} onClick={() => setTab("catalog")}>Catalogo</button>
-        <button className={tabCls("tactical")} onClick={() => setTab("tactical")}>Grafica Tattica</button>
+        <button className={tabCls("catalog")} onClick={() => setTab("catalog")}>{t("milSymbols.tabCatalog", { defaultValue: "Catalog" })}</button>
+        <button className={tabCls("tactical")} onClick={() => setTab("tactical")}>{t("milSymbols.tabTactical", { defaultValue: "Tactical Graphics" })}</button>
         <button className={tabCls("orbat")}   onClick={() => setTab("orbat")}>ORBAT</button>
       </div>
 

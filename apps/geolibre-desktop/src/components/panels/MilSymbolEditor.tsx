@@ -11,6 +11,7 @@
  * The editor calls `onSave(patch)` when the user confirms.
  */
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import ms from "../../lib/milsymbol-runtime";
 import { cn } from "@geolibre/ui";
 import type { MilSymbolItem } from "@geolibre/core";
@@ -124,6 +125,7 @@ function NumberField({
 // ─── Live preview ─────────────────────────────────────────────────────────────
 
 function SymbolPreview({
+  t,
   sidc,
   uniqueDesignation,
   higherFormation,
@@ -140,6 +142,7 @@ function SymbolPreview({
   combatEffectiveness,
   evaluationRating,
 }: {
+  t: (key: string, options?: Record<string, unknown>) => string;
   sidc: string;
   uniqueDesignation?: string;
   higherFormation?: string;
@@ -236,7 +239,9 @@ function SymbolPreview({
           />
         </div>
       ) : (
-        <div className="text-xs text-muted-foreground italic">Preview non disponibile</div>
+        <div className="text-xs text-muted-foreground italic">
+          {t("milSymbols.previewUnavailable", { defaultValue: "Preview not available" })}
+        </div>
       )}
     </div>
   );
@@ -245,6 +250,7 @@ function SymbolPreview({
 // ─── Main editor ──────────────────────────────────────────────────────────────
 
 export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSymbolEditorProps) {
+  const { t } = useTranslation();
   const initSidc = initial.sidc ?? "10031000000000000000";
   const parts = parseSidc(initSidc);
 
@@ -378,6 +384,7 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
       {/* Preview */}
       <div className="border-b bg-muted/30 px-3">
         <SymbolPreview
+          t={t}
           sidc={currentSidc}
           uniqueDesignation={uniqueDesignation}
           higherFormation={higherFormation}
@@ -400,22 +407,27 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
       {/* Tabs */}
       <div className="flex border-b">
         <button className={tabCls("sidc")} onClick={() => setTab("sidc")}>SIDC</button>
-        <button className={tabCls("amplifiers")} onClick={() => setTab("amplifiers")}>Amplificatori</button>
+        <button className={tabCls("amplifiers")} onClick={() => setTab("amplifiers")}>{t("milSymbols.amplifiers", { defaultValue: "Amplifiers" })}</button>
       </div>
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
         {tab === "sidc" && (
           <>
-            <TextField label="Nome simbolo" value={name} placeholder="es. 1° Battaglione" onChange={setName} />
-            <SelectField label="Contesto"    value={context}   options={CONTEXT_OPTIONS}    onChange={setContext}   />
-            <SelectField label="Identità"    value={identity}  options={IDENTITY_OPTIONS}   onChange={setIdentity}  />
+            <TextField
+              label={t("milSymbols.symbolName", { defaultValue: "Symbol name" })}
+              value={name}
+              placeholder={t("milSymbols.symbolNamePlaceholder", { defaultValue: "e.g. 1st Battalion" })}
+              onChange={setName}
+            />
+            <SelectField label={t("milSymbols.context", { defaultValue: "Context" })} value={context} options={CONTEXT_OPTIONS} onChange={setContext} />
+            <SelectField label={t("milSymbols.identity", { defaultValue: "Identity" })} value={identity} options={IDENTITY_OPTIONS} onChange={setIdentity} />
             <SelectField label="Symbol Set"  value={symbolSet} options={SYMBOL_SET_OPTIONS} onChange={setSymbolSet} />
             <SelectField label="Status"      value={status}    options={STATUS_OPTIONS}      onChange={setStatus}    />
             <SelectField label="QG/TF/Dummy" value={hqTf}      options={HQTF_OPTIONS}       onChange={setHqTf}      />
             <SelectField label="Echelon"     value={echelon}   options={ECHELON_OPTIONS}     onChange={setEchelon}   />
             <SelectField
-              label="Tipo entità"
+              label={t("milSymbols.entityType", { defaultValue: "Entity type" })}
               value={entity}
               options={entityOptions}
               onChange={setEntity}
@@ -428,27 +440,27 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
         {tab === "amplifiers" && (
           <>
             <TextField     label="Designation (T)"        value={uniqueDesignation}   placeholder="es. 1-68 AR" onChange={setUniqueDesignation}  />
-            <TextField     label="Formazione superiore (M)" value={higherFormation}    placeholder="es. 3 ID"     onChange={setHigherFormation}     />
-            <TextField     label="Commenti di staff (G)"   value={staffComments}       placeholder=""             onChange={setStaffComments}        />
-            <TextField     label="Info aggiuntive (H)"     value={additionalInfo}      placeholder=""             onChange={setAdditionalInfo}       />
+            <TextField     label={t("milSymbols.higherFormation", { defaultValue: "Higher formation (M)" })} value={higherFormation}    placeholder={t("milSymbols.higherFormationPlaceholder", { defaultValue: "e.g. 3 ID" })}     onChange={setHigherFormation}     />
+            <TextField     label={t("milSymbols.staffComments", { defaultValue: "Staff comments (G)" })}   value={staffComments}       placeholder=""             onChange={setStaffComments}        />
+            <TextField     label={t("milSymbols.additionalInfo", { defaultValue: "Additional info (H)" })}     value={additionalInfo}      placeholder=""             onChange={setAdditionalInfo}       />
             <TextField     label="DTG (W)"                 value={dtg}                 placeholder="DDHHMMSSZMONYYYY" onChange={setDtg}              />
-            <TextField     label="Quota / Profondità (X)"  value={altitudeDepth}       placeholder="es. 2000m"    onChange={setAltitudeDepth}        />
-            <NumberField   label="Direzione (Q) °"         value={direction}           min={0} max={360}          onChange={setDirection}            />
-            <TextField     label="Quantità (C)"            value={quantity}            placeholder=""             onChange={setQuantity}             />
+            <TextField     label={t("milSymbols.altitudeDepth", { defaultValue: "Altitude / Depth (X)" })}  value={altitudeDepth}       placeholder={t("milSymbols.altitudeDepthPlaceholder", { defaultValue: "e.g. 2000m" })}    onChange={setAltitudeDepth}        />
+            <NumberField   label={t("milSymbols.direction", { defaultValue: "Direction (Q) °" })}         value={direction}           min={0} max={360}          onChange={setDirection}            />
+            <TextField     label={t("milSymbols.quantity", { defaultValue: "Quantity (C)" })}            value={quantity}            placeholder=""             onChange={setQuantity}             />
             <TextField     label="IFF/SIF (P)"             value={iffSif}              placeholder=""             onChange={setIffSif}               />
-            <TextField     label="Velocità (Z)"            value={speed}               placeholder="es. 30 km/h"  onChange={setSpeed}                />
+            <TextField     label={t("milSymbols.speed", { defaultValue: "Speed (Z)" })}            value={speed}               placeholder={t("milSymbols.speedPlaceholder", { defaultValue: "e.g. 30 km/h" })}  onChange={setSpeed}                />
             <TextField     label="Tipo (T)"                value={typeStr}             placeholder=""             onChange={setTypeStr}              />
-            <SelectField   label="Rinforzato / Ridotto (F)" value={reinforcedReduced}
+            <SelectField   label={t("milSymbols.reinforcedReduced", { defaultValue: "Reinforced / Reduced (F)" })} value={reinforcedReduced}
               options={[
-                { code: "", label: "–" },
-                { code: "(+)", label: "Rinforzato (+)" },
-                { code: "(-)", label: "Ridotto (–)" },
-                { code: "(±)", label: "Rinforzato e ridotto (±)" },
+                { code: "", label: t("milSymbols.reinforcedReducedNone", { defaultValue: "–" }) },
+                { code: "(+)", label: t("milSymbols.reinforced", { defaultValue: "Reinforced (+)" }) },
+                { code: "(-)", label: t("milSymbols.reduced", { defaultValue: "Reduced (–)" }) },
+                { code: "(±)", label: t("milSymbols.reinforcedAndReduced", { defaultValue: "Reinforced and reduced (±)" }) },
               ]}
               onChange={setReinforcedReduced}
             />
-            <TextField     label="Efficacia combattimento (AL)" value={combatEffectiveness} placeholder="" onChange={setCombatEffectiveness} />
-            <TextField     label="Indice valutazione (AP)"      value={evaluationRating}    placeholder="" onChange={setEvaluationRating}    />
+            <TextField     label={t("milSymbols.combatEffectiveness", { defaultValue: "Combat effectiveness (AL)" })} value={combatEffectiveness} placeholder="" onChange={setCombatEffectiveness} />
+            <TextField     label={t("milSymbols.evaluationRating", { defaultValue: "Evaluation rating (AP)" })}      value={evaluationRating}    placeholder="" onChange={setEvaluationRating}    />
           </>
         )}
       </div>
@@ -460,14 +472,14 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
             className="flex-1 h-7 rounded text-xs border border-input hover:bg-muted transition-colors"
             onClick={onCancel}
           >
-            Annulla
+            {t("common.cancel")}
           </button>
         )}
         <button
           className="flex-1 h-7 rounded text-xs bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-medium"
           onClick={handleSave}
         >
-          Salva
+          {t("common.save")}
         </button>
       </div>
     </div>

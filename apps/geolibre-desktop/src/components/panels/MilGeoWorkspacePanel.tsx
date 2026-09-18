@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { Activity, PanelRightClose, Shield } from "lucide-react";
 import { AnalysisPanel } from "../analysis/AnalysisPanel";
 import { MilLayerPanel } from "./MilLayerPanel";
@@ -28,6 +29,7 @@ export function MilGeoWorkspacePanel({
   dtmAnalysisEnabled,
   onClose,
 }: MilGeoWorkspacePanelProps) {
+  const { t } = useTranslation();
   const enabledTabs = useMemo(() => {
     const tabs: MilGeoTab[] = [];
     if (milSymbolsEnabled) tabs.push("milsymbols");
@@ -57,13 +59,13 @@ export function MilGeoWorkspacePanel({
 
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
         <Shield className="h-4 w-4 text-primary" />
-        <span className="flex-1 text-sm font-semibold">Mil Symbols</span>
+        <span className="flex-1 text-sm font-semibold">{t("milSymbols.workspaceTitle", { defaultValue: "Mil Symbols" })}</span>
         <Button
           variant="ghost"
           size="icon"
           className="h-7 w-7"
           onClick={onClose}
-          aria-label="Close Mil Symbols"
+          aria-label={t("milSymbols.closeWorkspace", { defaultValue: "Close Mil Symbols" })}
         >
           <PanelRightClose className="h-4 w-4" />
         </Button>
@@ -95,7 +97,7 @@ export function MilGeoWorkspacePanel({
           >
             <span className="inline-flex items-center gap-1">
               <Activity className="h-3.5 w-3.5" />
-              Analysis
+              {t("milSymbols.analysis", { defaultValue: "Analysis" })}
             </span>
           </button>
         </div>
@@ -104,7 +106,9 @@ export function MilGeoWorkspacePanel({
       <div className="min-h-0 flex-1">
         {enabledTabs.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground">
-            Enable at least one Mil Symbols module from the top menu.
+            {t("milSymbols.enableModuleHint", {
+              defaultValue: "Enable at least one Mil Symbols module from the top menu.",
+            })}
           </div>
         ) : activeTab === "milsymbols" ? (
           <MilLayerPanel mapControllerRef={mapControllerRef} />

@@ -91,6 +91,7 @@ import {
   usePluginRegistry,
 } from "../../hooks/usePlugins";
 import { MILGEO_PLUGIN_ID } from "../../plugins/milgeo-plugin";
+import { EO_PREDICTOR_PLUGIN_ID } from "../../plugins/eo-predictor-plugin";
 import { useProjectFileActions } from "../../hooks/useProjectFileActions";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
 import type { ThemeMode } from "../../hooks/useThemeMode";
@@ -375,6 +376,13 @@ export function TopToolbar({
         toggle(pluginId, appApi);
       }
       openRightPanel(MILGEO_PLUGIN_ID);
+      return;
+    }
+    if (pluginId === EO_PREDICTOR_PLUGIN_ID) {
+      if (!isActive(pluginId)) {
+        toggle(pluginId, appApi);
+      }
+      openRightPanel(EO_PREDICTOR_PLUGIN_ID);
       return;
     }
     toggle(pluginId, appApi);

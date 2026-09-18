@@ -96,6 +96,7 @@ import { shouldCloseTimeSliderDock } from "../lib/time-slider-dock";
 import { useDesktopSettingsStore } from "./useDesktopSettings";
 import { useFileNamePrompt } from "./useFileNamePrompt";
 import { milgeoPlugin } from "../plugins/milgeo-plugin";
+import { eoPredictorPlugin } from "../plugins/eo-predictor-plugin";
 
 /**
  * Append the first allowed extension to a user-entered file name when it lacks
@@ -140,6 +141,7 @@ manager.registerAll([
   maplibreGeoEditorPlugin,
   maplibreAnnotationsPlugin,
   milgeoPlugin,
+  eoPredictorPlugin,
   maplibreBasemapControlPlugin,
   // The four web service plugins are grouped into the "Web Services"
   // submenu, rendered where the first of them appears in this order.
