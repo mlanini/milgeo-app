@@ -32,6 +32,7 @@ import type {
 import { parseMilSymbolLayerSource, DEFAULT_MIL_SYMBOL_SIZE_PX } from "../../lib/milsymbol-layer-source";
 import { parseMilGraphicLayerSource } from "../../lib/milgraphic-layer-source";
 import { milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
+import { parseSidc } from "../../lib/mil-sidc";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -128,6 +129,14 @@ interface MarkerEntry {
   symbolKey: string;
 }
 
+interface SymbolPlacementMetrics {
+  anchor: { x: number; y: number } | null;
+  markerOffset: [number, number];
+}
+
+const HQ_CODES = new Set(["2", "3", "6", "7"]);
+const placementMetricsCache = new Map<string, SymbolPlacementMetrics>();
+
 function cleanSymbolOptions(opts: SymbolOptions): SymbolOptions {
   const cleaned: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(opts)) {
@@ -136,6 +145,111 @@ function cleanSymbolOptions(opts: SymbolOptions): SymbolOptions {
     cleaned[key] = value;
   }
   return cleaned as SymbolOptions;
+}
+
+function hasHqModifier(sidc: string): boolean {
+  return HQ_CODES.has(parseSidc(sidc).hqTfDummy);
+}
+
+function detectHqGroundAnchor(symb: InstanceType<typeof MilSymbol>): { x: number; y: number } | null {
+  const canvas = symb.asCanvas(1);
+  if (!canvas) return null;
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const alphaAt = (x: number, y: number): number => data[(y * w + x) * 4 + 3] ?? 0;
+
+  // Search only in the left half, where HQ staff legs are drawn.
+  const xMax = Math.max(1, Math.floor(w * 0.5));
+  let bestX = -1;
+  let bestY = -1;
+
+  for (let y = h - 1; y >= 0; y--) {
+    for (let x = 0; x <= xMax; x++) {
+      if (alphaAt(x, y) < 20) continue;
+
+      // Vertical support avoids choosing label glyph tails.
+      let support = 0;
+      for (let dy = 1; dy <= 10; dy++) {
+        const yy = y - dy;
+        if (yy < 0) break;
+        if (
+          alphaAt(x, yy) >= 20
+          || alphaAt(Math.max(0, x - 1), yy) >= 20
+          || alphaAt(Math.min(w - 1, x + 1), yy) >= 20
+        ) {
+          support++;
+        }
+      }
+      if (support < 3) continue;
+
+      if (y > bestY || (y === bestY && (bestX < 0 || x < bestX))) {
+        bestX = x;
+        bestY = y;
+      }
+    }
+    if (bestY === y && bestY >= 0) {
+      break;
+    }
+  }
+
+  if (bestX < 0 || bestY < 0) return null;
+
+  let sumX = 0;
+  let count = 0;
+  for (let x = Math.max(0, bestX - 4); x <= Math.min(w - 1, bestX + 4); x++) {
+    if (alphaAt(x, bestY) >= 20) {
+      sumX += x;
+      count++;
+    }
+  }
+
+  return {
+    x: count > 0 ? sumX / count : bestX,
+    y: bestY,
+  };
+}
+
+function resolveSymbolPlacementMetrics(sidc: string, opts: SymbolOptions): SymbolPlacementMetrics {
+  const sizeValue =
+    typeof opts.size === "number" && Number.isFinite(opts.size)
+      ? opts.size
+      : DEFAULT_MIL_SYMBOL_SIZE_PX;
+  const cacheKey = `${sidc}|${sizeValue}`;
+  const cached = placementMetricsCache.get(cacheKey);
+  if (cached) return cached;
+
+  let metrics: SymbolPlacementMetrics = {
+    anchor: null,
+    markerOffset: [0, 0],
+  };
+
+  if (hasHqModifier(sidc)) {
+    try {
+      const symb = new MilSymbol(sidc, opts);
+      if (symb.isValid()) {
+        const hqAnchor = detectHqGroundAnchor(symb);
+        if (hqAnchor) {
+          const size = symb.getSize();
+          const centerX = size.width / 2;
+          const centerY = size.height / 2;
+          metrics = {
+            anchor: hqAnchor,
+            markerOffset: [centerX - hqAnchor.x, centerY - hqAnchor.y],
+          };
+        }
+      }
+    } catch {
+      // Keep default center/anchor behaviour if probing fails.
+    }
+  }
+
+  placementMetricsCache.set(cacheKey, metrics);
+  return metrics;
 }
 
 interface MilSymbolRendererProps {
@@ -178,7 +292,8 @@ function buildMilSymbolImageData(
     if (!symb.isValid()) return null;
 
     const { width, height } = symb.getSize();
-    const anchor = symb.getAnchor();
+    const placement = resolveSymbolPlacementMetrics(sidc, opts);
+    const anchor = placement.anchor ?? symb.getAnchor();
     const srcCanvas = symb.asCanvas(pixelRatio);
     if (!srcCanvas) return null;
 
@@ -474,6 +589,7 @@ export default function MilSymbolRenderer({
           typeof symbol.direction === "number" && Number.isFinite(symbol.direction)
             ? symbol.direction
             : 0;
+        const placement = resolveSymbolPlacementMetrics(symbol.SIDC, opts);
         const symbolKey = makeSymbolKey(symbol.SIDC, opts);
         const current = markerEntriesRef.current.get(markerId);
         if (current && current.symbolKey === symbolKey) {
@@ -481,6 +597,7 @@ export default function MilSymbolRenderer({
           element.style.opacity = String(layerOpacity);
           current.marker.setLngLat([symbol.lon, symbol.lat]);
           current.marker.setRotation(direction);
+          current.marker.setOffset(placement.markerOffset);
           continue;
         }
 
@@ -491,6 +608,7 @@ export default function MilSymbolRenderer({
         const marker = new maplibregl.Marker({ element, anchor: "center", rotationAlignment: "viewport" })
           .setLngLat([symbol.lon, symbol.lat])
           .setRotation(direction)
+          .setOffset(placement.markerOffset)
           .addTo(map);
         markerEntriesRef.current.set(markerId, { marker, symbolKey });
       }
