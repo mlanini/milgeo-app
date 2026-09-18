@@ -222,7 +222,11 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
   }, [addLayer, layers, removeLayer, tacticalLayer, updateLayer]);
 
   const updateTacticalGraphics = useCallback(
-    (nextGraphics: MilGraphicLayerItem[]) => {
+    (
+      nextGraphics: MilGraphicLayerItem[],
+      options?: { ensureVisible?: boolean },
+    ) => {
+      const ensureVisible = options?.ensureVisible === true;
       if (tacticalLayer) {
         if (nextGraphics.length === 0) {
           removeLayer(tacticalLayer.id);
@@ -235,6 +239,15 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         updateLayer(tacticalLayer.id, {
           source: serializeMilGraphicLayerSource(nextGraphics) as unknown as Record<string, unknown>,
           geojson: milGraphicsToGeoJson(nextGraphics),
+          ...(ensureVisible
+            ? {
+                visible: true,
+                opacity:
+                  typeof tacticalLayer.opacity === "number" && Number.isFinite(tacticalLayer.opacity)
+                    ? Math.max(0.2, tacticalLayer.opacity)
+                    : 1,
+              }
+            : {}),
         });
         return;
       }
@@ -546,7 +559,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
       },
     };
 
-    updateTacticalGraphics([...tacticalGraphics, graphicItem]);
+    updateTacticalGraphics([...tacticalGraphics, graphicItem], { ensureVisible: true });
     cancelDrawing();
   }, [affiliation, cancelDrawing, designation, selected, tacticalGraphics, updateTacticalGraphics]);
 

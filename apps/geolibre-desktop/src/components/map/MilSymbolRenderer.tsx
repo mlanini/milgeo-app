@@ -933,6 +933,13 @@ export default function MilSymbolRenderer({
         }
         if (map.getLayer(dirId)) map.setPaintProperty(dirId, "icon-opacity", layerOpacity);
 
+        // Keep tactical graphics above normal store-synced layers: MapController
+        // reorders known native layers, but these plugin-owned layers are outside
+        // that ordering pass and can otherwise end up buried under opaque layers.
+        if (map.getLayer(fillId)) map.moveLayer(fillId);
+        if (map.getLayer(lineId)) map.moveLayer(lineId);
+        if (map.getLayer(dirId)) map.moveLayer(dirId);
+
         graphicSourcesRef.current.add(layer.id);
 
         if (!hasDirectional && map.getLayer(dirId)) {
