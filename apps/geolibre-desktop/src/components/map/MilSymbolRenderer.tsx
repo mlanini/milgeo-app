@@ -117,6 +117,78 @@ function hasRenderableMilGraphicFeatures(value: unknown): value is FeatureCollec
   });
 }
 
+function buildPlainMilGraphicFeatures(parsed: {
+  graphics: Array<{
+    id: string;
+    name: string;
+    SIDC: string;
+    geometryType: "LineString" | "Polygon";
+    coordinates: [number, number][];
+    affiliation: "FRIENDLY" | "HOSTILE" | "NEUTRAL" | "UNKNOWN";
+  }>;
+}): FeatureCollection<LineString | Polygon> {
+  const colorFromAffiliation = (affiliation: "FRIENDLY" | "HOSTILE" | "NEUTRAL" | "UNKNOWN") => {
+    switch (affiliation) {
+      case "HOSTILE":
+        return "#CE4A4A";
+      case "NEUTRAL":
+        return "#4ACE8C";
+      case "UNKNOWN":
+        return "#A8A8A8";
+      case "FRIENDLY":
+      default:
+        return "#4A7FCE";
+    }
+  };
+
+  const features: Feature<LineString | Polygon>[] = [];
+  for (const item of parsed.graphics) {
+    if (item.geometryType === "LineString") {
+      if (item.coordinates.length < 2) continue;
+      features.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: item.coordinates },
+        properties: {
+          id: item.id,
+          name: item.name,
+          sidc: item.SIDC,
+          affiliation: item.affiliation,
+          color: colorFromAffiliation(item.affiliation),
+          renderRole: "main-line",
+          ruleKey: "fallback",
+        },
+      });
+      continue;
+    }
+
+    if (item.coordinates.length < 3) continue;
+    const first = item.coordinates[0];
+    const last = item.coordinates[item.coordinates.length - 1];
+    const ring =
+      first && last && first[0] === last[0] && first[1] === last[1]
+        ? item.coordinates
+        : [...item.coordinates, [first[0], first[1]]];
+    if (ring.length < 4) continue;
+
+    features.push({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [ring] },
+      properties: {
+        id: item.id,
+        name: item.name,
+        sidc: item.SIDC,
+        affiliation: item.affiliation,
+        color: colorFromAffiliation(item.affiliation),
+        renderRole: "main-area",
+        areaPattern: "none",
+        ruleKey: "fallback",
+      },
+    });
+  }
+
+  return { type: "FeatureCollection", features };
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 interface SymbolCacheEntry {
@@ -371,28 +443,34 @@ function buildMilSymbolMarkerElement(sidc: string, options: SymbolOptions): HTML
  * Called once on first use, and again after any style.load that wipes sources.
  */
 function addSymbolLayers(map: maplibregl.Map, fc: FeatureCollection<Point>) {
-  map.addSource(SYM_SOURCE_ID, { type: "geojson", data: fc });
+  if (!map.getSource(SYM_SOURCE_ID)) {
+    map.addSource(SYM_SOURCE_ID, { type: "geojson", data: fc });
+  } else {
+    (map.getSource(SYM_SOURCE_ID) as GeoJSONSource).setData(fc);
+  }
 
   // Icon layer — viewport-aligned: stays upright regardless of map rotation,
   // pitch, or globe mode. icon-rotate still applies the symbol's direction of
   // movement in screen space (clockwise from up).
-  map.addLayer({
-    id:     SYM_LAYER_ID,
-    type:   "symbol",
-    source: SYM_SOURCE_ID,
-    layout: {
-      "icon-image":              ["get", "symbolKey"],
-      "icon-rotate":             ["coalesce", ["get", "direction"], 0],
-      "icon-rotation-alignment": "viewport",
-      "icon-pitch-alignment":    "viewport",
-      "icon-size":               1,
-      "icon-allow-overlap":      true,
-      "icon-ignore-placement":   true,
-    },
-    paint: {
-      "icon-opacity": ["coalesce", ["get", "opacity"], 1],
-    },
-  });
+  if (!map.getLayer(SYM_LAYER_ID)) {
+    map.addLayer({
+      id:     SYM_LAYER_ID,
+      type:   "symbol",
+      source: SYM_SOURCE_ID,
+      layout: {
+        "icon-image":              ["get", "symbolKey"],
+        "icon-rotate":             ["coalesce", ["get", "direction"], 0],
+        "icon-rotation-alignment": "viewport",
+        "icon-pitch-alignment":    "viewport",
+        "icon-size":               1,
+        "icon-allow-overlap":      true,
+        "icon-ignore-placement":   true,
+      },
+      paint: {
+        "icon-opacity": ["coalesce", ["get", "opacity"], 1],
+      },
+    });
+  }
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
@@ -668,6 +746,7 @@ export default function MilSymbolRenderer({
       }
 
       for (const layer of allGraphics) {
+        try {
         const srcId = graphicSourceId(layer.id);
         const lineId = graphicLineLayerId(layer.id);
         const fillId = graphicFillLayerId(layer.id);
@@ -678,11 +757,21 @@ export default function MilSymbolRenderer({
             ? Math.max(0, Math.min(1, layer.opacity))
             : 1;
         const parsed = parseMilGraphicLayerSource(layer.source);
-        const fallbackGeoData = milGraphicsToGeoJson(parsed.graphics);
-        const geoData = hasRenderableMilGraphicFeatures(layer.geojson)
+        const ruleGeoData = hasRenderableMilGraphicFeatures(layer.geojson)
           ? layer.geojson
-          : fallbackGeoData;
-        if (!Array.isArray(geoData.features) || geoData.features.length === 0) continue;
+          : milGraphicsToGeoJson(parsed.graphics);
+        const plainGeoData = buildPlainMilGraphicFeatures(parsed);
+        const geoData = hasRenderableMilGraphicFeatures(ruleGeoData)
+          ? ruleGeoData
+          : plainGeoData;
+        if (!Array.isArray(geoData.features) || geoData.features.length === 0) {
+          if (map.getLayer(dirId)) map.removeLayer(dirId);
+          if (map.getLayer(lineId)) map.removeLayer(lineId);
+          if (map.getLayer(fillId)) map.removeLayer(fillId);
+          if (map.getSource(srcId)) map.removeSource(srcId);
+          graphicSourcesRef.current.delete(layer.id);
+          continue;
+        }
 
         const hasDirectional = geoData.features.some((feature) => {
           if (feature.geometry?.type !== "Point") return false;
@@ -848,6 +937,9 @@ export default function MilSymbolRenderer({
 
         if (!hasDirectional && map.getLayer(dirId)) {
           map.removeLayer(dirId);
+        }
+        } catch (error) {
+          console.warn("Mil tactical graphics render failed for layer", layer.id, error);
         }
       }
     };
