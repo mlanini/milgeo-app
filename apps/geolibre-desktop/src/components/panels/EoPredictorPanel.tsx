@@ -5,13 +5,23 @@ import booleanIntersects from "@turf/boolean-intersects";
 import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon, Position } from "geojson";
 import type { GeoLibreAppAPI } from "@geolibre/plugins";
 import { Button, cn } from "@geolibre/ui";
-import { Check, Loader2, Upload, X } from "lucide-react";
+import { Check, Loader2, Orbit, Upload, X } from "lucide-react";
 
 const EO_SOURCE_ID = "geolibre-eo-predictor-source";
 const EO_FILL_LAYER_ID = "geolibre-eo-predictor-fill";
 const EO_LINE_LAYER_ID = "geolibre-eo-predictor-line";
 const EO_AOI_SOURCE_ID = "geolibre-eo-predictor-aoi-source";
 const EO_AOI_LAYER_ID = "geolibre-eo-predictor-aoi-line";
+const EO_REMOTE_SOURCE_ID = "geolibre-eo-predictor-remote-source";
+const EO_REMOTE_LOAD_LAYER_ID = "geolibre-eo-predictor-remote-load-layer";
+const EO_REMOTE_SOURCE_LAYER = "satellite_paths";
+
+const EO_REMOTE_METADATA_URL =
+  "https://raw.githubusercontent.com/developmentseed/eo-predictor/main/public/satellite_paths_metadata.json";
+const EO_REMOTE_TILES_FALLBACK_URL =
+  "https://raw.githubusercontent.com/developmentseed/eo-predictor/main/public/tiles/{z}/{x}/{y}.pbf";
+const EO_REMOTE_SATELLITES_API_URL =
+  "https://api.github.com/repos/developmentseed/eo-predictor/contents/scripts/satellites";
 
 type SensorType = "all" | "optical" | "SAR" | "hyperspectral";
 type ResolutionBucket = "all" | "high" | "medium" | "low";
@@ -45,6 +55,27 @@ interface EoFeatureProperties {
   is_daytime?: boolean;
   data_repo_type?: string;
   data_repo_url?: string;
+}
+
+interface EoRemoteMetadata {
+  constellations?: string[];
+  operators?: string[];
+  sensor_types?: string[];
+  data_access_options?: string[];
+  minTime?: string;
+  maxTime?: string;
+  lastUpdated?: string;
+  tilesUrl?: string;
+}
+
+interface SatelliteCatalogEntry {
+  constellation: string;
+  operator?: string;
+  sensor_type?: string;
+  spatial_res_cm?: number;
+  data_access?: string;
+  tasking?: boolean;
+  norad_ids?: number[];
 }
 
 type EoFeature = Feature<Geometry, EoFeatureProperties>;
@@ -330,6 +361,48 @@ function updateSourceData(map: maplibregl.Map, sourceId: string, data: FeatureCo
   source?.setData(data);
 }
 
+function resolveRemoteTilesUrl(metadata: EoRemoteMetadata): string {
+  const candidate = metadata.tilesUrl;
+  if (candidate && /^https?:\/\//i.test(candidate)) {
+    return candidate;
+  }
+  // Upstream metadata commonly exposes a relative "/tiles/{z}/{x}/{y}.pbf".
+  // In plugin mode we resolve directly to the repository raw public folder.
+  return EO_REMOTE_TILES_FALLBACK_URL;
+}
+
+function ensureRemoteVectorSource(map: maplibregl.Map, tilesUrl: string): void {
+  const existing = map.getSource(EO_REMOTE_SOURCE_ID) as maplibregl.VectorSource | undefined;
+  const currentTiles = (existing as unknown as { tiles?: string[] } | undefined)?.tiles;
+  const hasSameTiles = Array.isArray(currentTiles) && currentTiles.includes(tilesUrl);
+  if (!existing || !hasSameTiles) {
+    if (map.getLayer(EO_REMOTE_LOAD_LAYER_ID)) {
+      map.removeLayer(EO_REMOTE_LOAD_LAYER_ID);
+    }
+    if (map.getSource(EO_REMOTE_SOURCE_ID)) {
+      map.removeSource(EO_REMOTE_SOURCE_ID);
+    }
+    map.addSource(EO_REMOTE_SOURCE_ID, {
+      type: "vector",
+      tiles: [tilesUrl],
+      minzoom: 0,
+      maxzoom: 7,
+    });
+  }
+
+  if (!map.getLayer(EO_REMOTE_LOAD_LAYER_ID)) {
+    map.addLayer({
+      id: EO_REMOTE_LOAD_LAYER_ID,
+      type: "fill",
+      source: EO_REMOTE_SOURCE_ID,
+      "source-layer": EO_REMOTE_SOURCE_LAYER,
+      paint: {
+        "fill-opacity": 0,
+      },
+    });
+  }
+}
+
 function computeCollectionBounds(collection: FeatureCollection<Geometry>): [number, number, number, number] | null {
   let merged: [number, number, number, number] | null = null;
   for (const feature of collection.features) {
@@ -353,9 +426,11 @@ function computeCollectionBounds(collection: FeatureCollection<Geometry>): [numb
 
 export function clearEoPredictorArtifacts(map: maplibregl.Map | null): void {
   if (!map) return;
+  if (map.getLayer(EO_REMOTE_LOAD_LAYER_ID)) map.removeLayer(EO_REMOTE_LOAD_LAYER_ID);
   if (map.getLayer(EO_FILL_LAYER_ID)) map.removeLayer(EO_FILL_LAYER_ID);
   if (map.getLayer(EO_LINE_LAYER_ID)) map.removeLayer(EO_LINE_LAYER_ID);
   if (map.getLayer(EO_AOI_LAYER_ID)) map.removeLayer(EO_AOI_LAYER_ID);
+  if (map.getSource(EO_REMOTE_SOURCE_ID)) map.removeSource(EO_REMOTE_SOURCE_ID);
   if (map.getSource(EO_SOURCE_ID)) map.removeSource(EO_SOURCE_ID);
   if (map.getSource(EO_AOI_SOURCE_ID)) map.removeSource(EO_AOI_SOURCE_ID);
 }
@@ -379,14 +454,133 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
   const [isLoading, setIsLoading] = useState(false);
   const [visibleInViewCount, setVisibleInViewCount] = useState<number>(0);
   const [zoom, setZoom] = useState<number>(1);
+  const [remoteMode, setRemoteMode] = useState(false);
+  const [remoteMetadata, setRemoteMetadata] = useState<EoRemoteMetadata | null>(null);
+  const [remoteTilesUrl, setRemoteTilesUrl] = useState<string | null>(null);
+  const [satelliteCatalog, setSatelliteCatalog] = useState<Record<string, SatelliteCatalogEntry>>({});
 
   const allFeatures = useMemo<EoFeature[]>(() => {
     if (!rawData) return [];
     return rawData.features as EoFeature[];
   }, [rawData]);
 
-  const uniqueConstellations = useMemo(() => uniq(allFeatures.map((f) => f.properties?.constellation)), [allFeatures]);
-  const uniqueOperators = useMemo(() => uniq(allFeatures.map((f) => f.properties?.operator)), [allFeatures]);
+  const derivedConstellations = useMemo(() => uniq(allFeatures.map((f) => f.properties?.constellation)), [allFeatures]);
+  const derivedOperators = useMemo(() => uniq(allFeatures.map((f) => f.properties?.operator)), [allFeatures]);
+  const uniqueConstellations = useMemo(
+    () => (derivedConstellations.length > 0 ? derivedConstellations : (remoteMetadata?.constellations ?? [])),
+    [derivedConstellations, remoteMetadata?.constellations],
+  );
+  const uniqueOperators = useMemo(
+    () => (derivedOperators.length > 0 ? derivedOperators : (remoteMetadata?.operators ?? [])),
+    [derivedOperators, remoteMetadata?.operators],
+  );
+
+  const mergeSatelliteFallback = useMemo(
+    () => (feature: EoFeature): EoFeature => {
+      const props = { ...(feature.properties ?? {}) };
+      const key = props.constellation ?? "";
+      const fallback = satelliteCatalog[key];
+      if (!fallback) return { ...feature, properties: props };
+      if (!props.operator && fallback.operator) props.operator = fallback.operator;
+      if (!props.sensor_type && fallback.sensor_type) props.sensor_type = fallback.sensor_type;
+      if (typeof props.spatial_res_cm !== "number" && typeof fallback.spatial_res_cm === "number") {
+        props.spatial_res_cm = fallback.spatial_res_cm;
+      }
+      if (!props.data_access && fallback.data_access) props.data_access = fallback.data_access;
+      if (typeof props.tasking !== "boolean" && typeof fallback.tasking === "boolean") {
+        props.tasking = fallback.tasking;
+      }
+      return { ...feature, properties: props };
+    },
+    [satelliteCatalog],
+  );
+
+  const ingestRemoteFeatures = useMemo(
+    () => (map: maplibregl.Map): void => {
+      const source = map.getSource(EO_REMOTE_SOURCE_ID);
+      if (!source) return;
+      const queried = map.querySourceFeatures(EO_REMOTE_SOURCE_ID, {
+        sourceLayer: EO_REMOTE_SOURCE_LAYER,
+      });
+      const dedup = new Map<string, EoFeature>();
+      for (const feature of queried) {
+        const props = (feature.properties ?? {}) as EoFeatureProperties;
+        const key = `${props.satellite ?? "sat"}|${props.start_time ?? "start"}|${props.end_time ?? "end"}`;
+        if (dedup.has(key)) continue;
+        const normalized: EoFeature = mergeSatelliteFallback({
+          type: "Feature",
+          geometry: feature.geometry as Geometry,
+          properties: props,
+        });
+        dedup.set(key, normalized);
+      }
+      setRawData(toFeatureCollection(Array.from(dedup.values())) as FeatureCollection<Geometry, EoFeatureProperties>);
+    },
+    [mergeSatelliteFallback],
+  );
+
+  const loadRemoteFromRepository = async () => {
+    setIsLoading(true);
+    setMessage(t("eoPredictor.message.loadingRemote", {
+      defaultValue: "Loading orbital metadata and satellite catalog from EO Predictor...",
+    }));
+    try {
+      const metadataResponse = await fetch(EO_REMOTE_METADATA_URL);
+      if (!metadataResponse.ok) {
+        throw new Error(t("eoPredictor.error.remoteMetadata", {
+          defaultValue: "Failed to load remote satellite metadata.",
+        }));
+      }
+      const metadata = (await metadataResponse.json()) as EoRemoteMetadata;
+      setRemoteMetadata(metadata);
+
+      const contentsResponse = await fetch(EO_REMOTE_SATELLITES_API_URL);
+      if (!contentsResponse.ok) {
+        throw new Error(t("eoPredictor.error.remoteCatalog", {
+          defaultValue: "Failed to load remote satellites catalog.",
+        }));
+      }
+      const contents = (await contentsResponse.json()) as Array<{ name: string; download_url?: string }>;
+      const jsonFiles = contents.filter((entry) => entry.name.endsWith(".json") && entry.download_url);
+      const catalogEntries = await Promise.all(
+        jsonFiles.map(async (entry) => {
+          const response = await fetch(entry.download_url as string);
+          if (!response.ok) return null;
+          const item = (await response.json()) as SatelliteCatalogEntry;
+          return item;
+        }),
+      );
+      const catalog = Object.fromEntries(
+        catalogEntries
+          .filter((entry): entry is SatelliteCatalogEntry => Boolean(entry?.constellation))
+          .map((entry) => [entry.constellation, entry]),
+      );
+      setSatelliteCatalog(catalog);
+
+      const tilesUrl = resolveRemoteTilesUrl(metadata);
+      setRemoteTilesUrl(tilesUrl);
+      const map = app.getMap?.();
+      if (map) {
+        ensureMapArtifacts(map);
+        ensureRemoteVectorSource(map, tilesUrl);
+        ingestRemoteFeatures(map);
+      }
+
+      setRemoteMode(true);
+      setMessage(t("eoPredictor.message.remoteReady", {
+        defaultValue: "Remote EO orbital data connected. Last update: {{updated}}.",
+        updated: metadata.lastUpdated ?? "n/a",
+      }));
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : t("eoPredictor.error.remoteGeneric", { defaultValue: "Failed to connect remote EO predictor data." }),
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const intersectsAoiPrecisely = useMemo(
     () => (feature: EoFeature): boolean => {
@@ -816,6 +1010,23 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
     };
   }, [app, filteredFeatures, aoiData]);
 
+  useEffect(() => {
+    if (!remoteMode || !remoteTilesUrl) return;
+    const map = app.getMap?.();
+    if (!map) return;
+
+    ensureRemoteVectorSource(map, remoteTilesUrl);
+    const refresh = () => ingestRemoteFeatures(map);
+    refresh();
+
+    map.on("moveend", refresh);
+    map.on("sourcedata", refresh);
+    return () => {
+      map.off("moveend", refresh);
+      map.off("sourcedata", refresh);
+    };
+  }, [app, ingestRemoteFeatures, remoteMode, remoteTilesUrl]);
+
   const passSummary = useMemo(() => {
     if (!rawData) {
       return t("eoPredictor.summary.noDataset", { defaultValue: "No dataset loaded." });
@@ -835,6 +1046,7 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
   const handleUploadEo = async (file: File | null) => {
     if (!file) return;
     setIsLoading(true);
+    setRemoteMode(false);
     setMessage(t("eoPredictor.message.loadingDataset", { defaultValue: "Loading EO dataset..." }));
     try {
       const text = await file.text();
@@ -912,6 +1124,10 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
     setAoiData(null);
     setAoiFeatures([]);
     setAoiBounds(null);
+    setRemoteMode(false);
+    setRemoteMetadata(null);
+    setRemoteTilesUrl(null);
+    setSatelliteCatalog({});
     setFilters(DEFAULT_FILTERS);
     setVisibleInViewCount(0);
     setMessage(t("eoPredictor.message.reset", { defaultValue: "EO Predictor state reset." }));
@@ -920,6 +1136,8 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
       ensureMapArtifacts(map);
       updateSourceData(map, EO_SOURCE_ID, toFeatureCollection([]));
       updateSourceData(map, EO_AOI_SOURCE_ID, toFeatureCollection([]));
+      if (map.getLayer(EO_REMOTE_LOAD_LAYER_ID)) map.removeLayer(EO_REMOTE_LOAD_LAYER_ID);
+      if (map.getSource(EO_REMOTE_SOURCE_ID)) map.removeSource(EO_REMOTE_SOURCE_ID);
     }
   };
 
@@ -939,6 +1157,10 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
         </p>
 
         <div className="flex flex-wrap gap-1.5">
+          <Button size="sm" variant="default" onClick={() => void loadRemoteFromRepository()}>
+            <Orbit className="mr-1 h-3.5 w-3.5" />
+            {t("eoPredictor.actions.connectRemote", { defaultValue: "Connect EO Orbital Data" })}
+          </Button>
           <Button size="sm" variant="outline" onClick={() => eoInputRef.current?.click()}>
             <Upload className="mr-1 h-3.5 w-3.5" />
             {t("eoPredictor.actions.loadPasses", { defaultValue: "Load EO Passes" })}
@@ -953,6 +1175,29 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
           </Button>
           {isLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : <Check className="h-4 w-4 text-emerald-600" />}
         </div>
+
+        <div className="rounded border bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+          {remoteMode
+            ? t("eoPredictor.source.remoteConnected", { defaultValue: "Source: EO Predictor upstream orbital tiles" })
+            : t("eoPredictor.source.localFile", { defaultValue: "Source: local uploaded GeoJSON" })}
+        </div>
+
+        {remoteMetadata ? (
+          <div className="grid grid-cols-2 gap-1 rounded border bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground">
+            <div>
+              {t("eoPredictor.metadata.lastUpdated", { defaultValue: "Last updated" })}: {remoteMetadata.lastUpdated ?? t("eoPredictor.na", { defaultValue: "n/a" })}
+            </div>
+            <div>
+              {t("eoPredictor.metadata.timeRange", { defaultValue: "Time range" })}: {remoteMetadata.minTime ?? "?"} -> {remoteMetadata.maxTime ?? "?"}
+            </div>
+            <div>
+              {t("eoPredictor.metadata.constellations", { defaultValue: "Constellations" })}: {remoteMetadata.constellations?.length ?? 0}
+            </div>
+            <div>
+              {t("eoPredictor.metadata.operators", { defaultValue: "Operators" })}: {remoteMetadata.operators?.length ?? 0}
+            </div>
+          </div>
+        ) : null}
 
         <input
           ref={eoInputRef}

@@ -342,9 +342,20 @@
       "commercial": "Commerciale"
     },
     "actions": {
+      "connectRemote": "Connetti dati orbitali EO",
       "loadPasses": "Carica passaggi EO",
       "loadAoi": "Carica AOI",
       "clear": "Pulisci"
+    },
+    "source": {
+      "remoteConnected": "Sorgente: tile orbitali EO Predictor upstream",
+      "localFile": "Sorgente: GeoJSON locale caricato"
+    },
+    "metadata": {
+      "lastUpdated": "Ultimo aggiornamento",
+      "timeRange": "Intervallo temporale",
+      "constellations": "Costellazioni",
+      "operators": "Operatori"
     },
     "filters": {
       "title": "Filtri",
@@ -362,11 +373,16 @@
       "loadingDataset": "Caricamento dataset EO...",
       "datasetLoaded": "Caricate {{count}} feature di passaggi EO da {{name}}.",
       "aoiLoaded": "AOI caricata da {{name}}.",
-      "reset": "Stato EO Predictor ripristinato."
+      "reset": "Stato EO Predictor ripristinato.",
+      "loadingRemote": "Caricamento metadati orbitali e catalogo satelliti da EO Predictor...",
+      "remoteReady": "Dati orbitali EO remoti connessi. Ultimo aggiornamento: {{updated}}."
     },
     "error": {
       "parseDataset": "Impossibile interpretare il dataset EO.",
       "parseAoi": "Impossibile interpretare il file AOI.",
+      "remoteMetadata": "Impossibile caricare i metadati satellitari remoti.",
+      "remoteCatalog": "Impossibile caricare il catalogo satelliti remoto.",
+      "remoteGeneric": "Impossibile connettere i dati EO Predictor remoti.",
       "datasetNotJson": "Il dataset EO non è un JSON valido.",
       "datasetNotFeatureCollection": "Il dataset EO deve essere una GeoJSON FeatureCollection.",
       "datasetNoFeatures": "Nessuna feature trovata nel dataset EO.",
