@@ -14,10 +14,10 @@ const EO_REMOTE_SOURCE_ID = "geolibre-eo-predictor-remote-source";
 const EO_REMOTE_LOAD_LAYER_ID = "geolibre-eo-predictor-remote-load-layer";
 const EO_REMOTE_SOURCE_LAYER = "satellite_paths";
 
-const EO_REMOTE_METADATA_URL =
-  "https://raw.githubusercontent.com/developmentseed/eo-predictor/main/public/satellite_paths_metadata.json";
+const EO_REMOTE_APP_BASE_URL = "https://developmentseed.org/eo-predictor";
+const EO_REMOTE_METADATA_URL = `${EO_REMOTE_APP_BASE_URL}/satellite_paths_metadata.json`;
 const EO_REMOTE_TILES_FALLBACK_URL =
-  "https://raw.githubusercontent.com/developmentseed/eo-predictor/main/public/tiles/{z}/{x}/{y}.pbf";
+  `${EO_REMOTE_APP_BASE_URL}/tiles/{z}/{x}/{y}.pbf`;
 const EO_REMOTE_SATELLITES_API_URL =
   "https://api.github.com/repos/developmentseed/eo-predictor/contents/scripts/satellites";
 
@@ -281,8 +281,11 @@ function resolveRemoteTilesUrl(metadata: EoRemoteMetadata): string {
   if (candidate && /^https?:\/\//i.test(candidate)) {
     return candidate;
   }
-  // Upstream metadata commonly exposes a relative "/tiles/{z}/{x}/{y}.pbf".
-  // In plugin mode we resolve directly to the repository raw public folder.
+  if (candidate && candidate.startsWith("/")) {
+    return `${EO_REMOTE_APP_BASE_URL}${candidate}`;
+  }
+  // Upstream metadata exposes a relative "/tiles/{z}/{x}/{y}.pbf" and the
+  // actual vector tiles live on the deployed app, not in the Git repository.
   return EO_REMOTE_TILES_FALLBACK_URL;
 }
 
@@ -1005,9 +1008,11 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
     refresh();
 
     map.on("moveend", refresh);
+    map.on("idle", refresh);
     map.on("sourcedata", refresh);
     return () => {
       map.off("moveend", refresh);
+      map.off("idle", refresh);
       map.off("sourcedata", refresh);
     };
   }, [app, ingestRemoteFeatures, remoteMode, remoteTilesUrl]);
