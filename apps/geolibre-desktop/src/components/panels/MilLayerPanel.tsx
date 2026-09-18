@@ -162,7 +162,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   const [category,    setCategory]    = useState("All");
   const [affiliation, setAffiliation] = useState<MilAffiliation>("FRIENDLY");
   const [symbolSizePx, setSymbolSizePx] = useState(DEFAULT_MIL_SYMBOL_SIZE_PX);
-  const [showAmplifiers, setShowAmplifiers] = useState(true);
+  const [showAmplifiers, setShowAmplifiers] = useState(false);
   const [placingSidc, setPlacingSidc] = useState<string | null>(null);
   const [pendingPatch, setPendingPatch] = useState<MilSymbolPatch | null>(null);
   const [pendingMove, setPendingMove] = useState<{ layerId: string; symbolId: string } | null>(null);
@@ -669,7 +669,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
             checked={showAmplifiers}
             onChange={(e) => handleToggleAmplifiers(e.target.checked)}
           />
-          Amplificatori contorno simboli
+          Mostra amplificatori
         </label>
       </div>
 
@@ -854,7 +854,7 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
           opacity: importedLayer.opacity,
           style: { ...DEFAULT_LAYER_STYLE },
           metadata: { milgeoManaged: true },
-          source: serializeMilSymbolLayerSource(symbols, DEFAULT_MIL_SYMBOL_SIZE_PX, true),
+          source: serializeMilSymbolLayerSource(symbols, DEFAULT_MIL_SYMBOL_SIZE_PX, false),
         });
       }
     }

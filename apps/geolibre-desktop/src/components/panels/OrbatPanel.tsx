@@ -81,7 +81,7 @@ function buildUnitLayer(unit: OrbatUnit, lon: number, lat: number) {
     opacity: 1,
     style: { ...DEFAULT_LAYER_STYLE },
     metadata: { milgeoManaged: true, orbatUnitId: unit.id },
-    source: serializeMilSymbolLayerSource([symbol], DEFAULT_MIL_SYMBOL_SIZE_PX, true),
+    source: serializeMilSymbolLayerSource([symbol], DEFAULT_MIL_SYMBOL_SIZE_PX, false),
     createdSymbolId: symbol.id,
   };
 }

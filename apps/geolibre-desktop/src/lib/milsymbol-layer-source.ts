@@ -109,12 +109,12 @@ function parseLegacySingleSymbol(raw: Record<string, unknown>): MilSymbolLayerIt
 
 export function parseMilSymbolLayerSource(raw: unknown): ParsedMilSymbolLayerSource {
   if (!raw || typeof raw !== "object") {
-    return { symbols: [], symbolSize: DEFAULT_MIL_SYMBOL_SIZE_PX, showAmplifiers: true };
+    return { symbols: [], symbolSize: DEFAULT_MIL_SYMBOL_SIZE_PX, showAmplifiers: false };
   }
 
   const record = raw as Record<string, unknown>;
   const symbolSize = parseNumber(record.symbolSize) ?? DEFAULT_MIL_SYMBOL_SIZE_PX;
-  const showAmplifiers = record.showAmplifiers !== false;
+  const showAmplifiers = record.showAmplifiers === true;
   const rawSymbols = Array.isArray(record.symbols) ? record.symbols : [];
   const symbols = rawSymbols
     .map((item) => parseSymbolItem(item))
@@ -135,7 +135,7 @@ export function parseMilSymbolLayerSource(raw: unknown): ParsedMilSymbolLayerSou
 export function serializeMilSymbolLayerSource(
   symbols: MilSymbolLayerItem[],
   symbolSize: number,
-  showAmplifiers = true,
+  showAmplifiers = false,
 ): Record<string, unknown> {
   const first = symbols[0];
 

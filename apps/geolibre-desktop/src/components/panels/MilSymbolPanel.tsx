@@ -35,6 +35,11 @@ import {
 import { useMilSymbol } from "../../hooks/useMilSymbol";
 import { useMapClick } from "../../hooks/useMapClick";
 import {
+  parseMilSymbolLayerSource,
+  serializeMilSymbolLayerSource,
+  DEFAULT_MIL_SYMBOL_SIZE_PX,
+} from "../../lib/milsymbol-layer-source";
+import {
   importMilSymbolsFromGeoJSON,
   importMilSymbolsFromKML,
 } from "../../lib/milsymbol-import";
@@ -110,6 +115,7 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
   // ── Shared state ────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ActiveTab>("units");
   const [affiliation, setAffiliation] = useState<MilAffiliation>("FRIENDLY");
+  const [showAmplifiers, setShowAmplifiers] = useState(false);
 
   // ── Unit catalog state ──────────────────────────────────────────────
   const [query, setQuery] = useState("");
@@ -139,6 +145,20 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
   const previewSidc = selectedEntry
     ? sidcWithAffiliation(selectedEntry.baseSidc, affiliation)
     : null;
+
+  const toggleAmplifiers = useCallback((enabled: boolean) => {
+    setShowAmplifiers(enabled);
+    for (const layer of milSymbolLayers) {
+      const parsed = parseMilSymbolLayerSource(layer.source);
+      updateLayer(layer.id, {
+        source: serializeMilSymbolLayerSource(
+          parsed.symbols,
+          parsed.symbolSize || DEFAULT_MIL_SYMBOL_SIZE_PX,
+          enabled,
+        ),
+      });
+    }
+  }, [milSymbolLayers, updateLayer]);
 
   // ── Unit placement ────────────────────────────────────────────────────
   const onUnitMapClick = useCallback(
@@ -338,6 +358,15 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
           </button>
         ))}
       </div>
+
+      <label className="inline-flex items-center gap-2 text-[11px] text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={showAmplifiers}
+          onChange={(e) => toggleAmplifiers(e.target.checked)}
+        />
+        Mostra amplificatori
+      </label>
 
       {/* ════════════════════════════════════════════════════════════ */}
       {activeTab === "units" && (
