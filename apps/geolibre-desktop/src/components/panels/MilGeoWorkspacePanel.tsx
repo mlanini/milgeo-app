@@ -57,13 +57,13 @@ export function MilGeoWorkspacePanel({
 
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
         <Shield className="h-4 w-4 text-primary" />
-        <span className="flex-1 text-sm font-semibold">MilGeo workspace</span>
+        <span className="flex-1 text-sm font-semibold">Mil Symbols</span>
         <Button
           variant="ghost"
           size="icon"
           className="h-7 w-7"
           onClick={onClose}
-          aria-label="Close MilGeo workspace"
+          aria-label="Close Mil Symbols"
         >
           <PanelRightClose className="h-4 w-4" />
         </Button>
@@ -104,7 +104,7 @@ export function MilGeoWorkspacePanel({
       <div className="min-h-0 flex-1">
         {enabledTabs.length === 0 ? (
           <div className="flex h-full items-center justify-center px-6 text-center text-xs text-muted-foreground">
-            Enable at least one MilGeo module from the MilGeo top menu.
+            Enable at least one Mil Symbols module from the top menu.
           </div>
         ) : activeTab === "milsymbols" ? (
           <MilLayerPanel mapControllerRef={mapControllerRef} />

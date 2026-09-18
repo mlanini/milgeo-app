@@ -25,6 +25,7 @@ import {
   openLegendPanel,
   openLidarLayerPanel,
   openPMTilesLayerPanel,
+  openRightPanel,
   openSearchPlacesPanel,
   openSplattingLayerPanel,
   openStacSearchLayerPanel,
@@ -89,6 +90,7 @@ import {
   getPluginManager,
   usePluginRegistry,
 } from "../../hooks/usePlugins";
+import { MILGEO_PLUGIN_ID } from "../../plugins/milgeo-plugin";
 import { useProjectFileActions } from "../../hooks/useProjectFileActions";
 import { useDesktopSettingsStore } from "../../hooks/useDesktopSettings";
 import type { ThemeMode } from "../../hooks/useThemeMode";
@@ -367,6 +369,16 @@ export function TopToolbar({
     setMapControlPosition,
   } = usePluginRegistry();
   const appApi = createAppAPI(mapControllerRef);
+  const handlePluginMenuClick = (pluginId: string) => {
+    if (pluginId === MILGEO_PLUGIN_ID) {
+      if (!isActive(pluginId)) {
+        toggle(pluginId, appApi);
+      }
+      openRightPanel(MILGEO_PLUGIN_ID);
+      return;
+    }
+    toggle(pluginId, appApi);
+  };
   const handleAddFlatGeobufLayer = () => {
     openFlatGeobufAddVectorLayerPanel(appApi);
   };
@@ -746,7 +758,7 @@ export function TopToolbar({
               return (
                 <DropdownMenuItem
                   key={p.id}
-                  onClick={() => toggle(p.id, appApi)}
+                  onClick={() => handlePluginMenuClick(p.id)}
                 >
                   {p.name}
                   {isActive(p.id) ? " ✓" : ""}
