@@ -22,6 +22,7 @@ import {
   Crosshair,
   MapPin,
   Pencil,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -200,24 +201,50 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       ?? null;
   }, [milSymbolLayers, selectedLayerId]);
 
-  const filtered = useMemo(
-    () =>
-      filterCatalog(search, category === "All" ? undefined : category).filter((entry) =>
-        QUICK_SYMBOL_BASE_SIDCS.has(entry.baseSidc),
-      ),
-    [search, category]
-  );
+  const filtered = useMemo(() => {
+    const catalog = filterCatalog(search, category === "All" ? undefined : category);
+    const quick: CatalogEntry[] = [];
+    const rest: CatalogEntry[] = [];
+
+    for (const entry of catalog) {
+      if (QUICK_SYMBOL_BASE_SIDCS.has(entry.baseSidc)) {
+        quick.push(entry);
+      } else {
+        rest.push(entry);
+      }
+    }
+
+    return [...quick, ...rest];
+  }, [search, category]);
 
   const targetLayer = useMemo(() => resolveTargetLayer(), [resolveTargetLayer]);
-  const tacticalLayer = useMemo(
+  const tacticalLayers = useMemo(
     () =>
-      layers.find(
+      layers.filter(
         (layer) =>
           layer.type === "geojson" &&
           layer.metadata.milgeoManaged === true &&
           layer.metadata.tacticalCollection === true,
-      ) ?? null,
+      ),
     [layers],
+  );
+  const tacticalLayerIndex = useMemo(
+    () =>
+      tacticalLayers.map((layer) => ({
+        layer,
+        parsed: parseMilGraphicLayerSource(layer.source),
+      })),
+    [tacticalLayers],
+  );
+  const tacticalLayer = useMemo(
+    () => tacticalLayerIndex.find((entry) => entry.parsed.graphics.length > 0)?.layer
+      ?? tacticalLayerIndex[0]?.layer
+      ?? null,
+    [tacticalLayerIndex],
+  );
+  const hasTacticalGraphics = useMemo(
+    () => tacticalLayerIndex.some((entry) => entry.parsed.graphics.length > 0),
+    [tacticalLayerIndex],
   );
   const targetSymbols = useMemo(() => {
     const parsed = targetLayer
@@ -470,6 +497,27 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     enableClick();
   }
 
+  function handleDeletePlacedSymbol(symbol: MilSymbolLayerItem) {
+    if (!targetLayer) return;
+    const parsed = parseMilSymbolLayerSource(targetLayer.source);
+    const nextSymbols = parsed.symbols.filter((item) => item.id !== symbol.id);
+    updateLayer(targetLayer.id, {
+      source: serializeMilSymbolLayerSource(nextSymbols, parsed.symbolSize, parsed.showAmplifiers),
+    });
+
+    if (selectedMapSymbol?.layerId === targetLayer.id && selectedMapSymbol.symbolId === symbol.id) {
+      setSelectedMapSymbol(null);
+    }
+    if (editingSymbol?.layerId === targetLayer.id && editingSymbol.symbolId === symbol.id) {
+      setEditingSymbol(null);
+      setEditingPlacedPatch(null);
+    }
+    if (pendingMove?.layerId === targetLayer.id && pendingMove.symbolId === symbol.id) {
+      setPendingMove(null);
+      disableClick();
+    }
+  }
+
   function handleChangeSymbolSize(value: number) {
     setSymbolSizePx(value);
     const target = resolveTargetLayer();
@@ -710,7 +758,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
             step={0.2}
             value={tacticalLineWidthPx}
             onChange={(e) => handleChangeTacticalLineWidth(Number(e.target.value))}
-            disabled={!tacticalLayer}
+            disabled={!hasTacticalGraphics}
           />
         </label>
         <label className="col-span-2 inline-flex items-center gap-2 text-[10px] text-muted-foreground">
@@ -727,7 +775,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       <div className="flex gap-1.5 px-3 pb-1">
         <input
           className="flex-1 h-6 rounded border border-input bg-background px-1.5 text-xs focus:outline-none"
-          placeholder="Cerca nel set rapido…"
+          placeholder="Cerca nel catalogo MilSymbols…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -834,6 +882,13 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
                   title="Modifica simbolo"
                 >
                   <Pencil size={11} />
+                </button>
+                <button
+                  className="p-1 rounded hover:bg-muted hover:text-red-500"
+                  onClick={() => handleDeletePlacedSymbol(symbol)}
+                  title="Elimina simbolo"
+                >
+                  <Trash2 size={11} />
                 </button>
               </div>
             ))}

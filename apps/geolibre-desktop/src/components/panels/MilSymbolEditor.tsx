@@ -2,7 +2,7 @@
  * MilSymbolEditor.tsx
  * Compact editor for a single MilSymbolItem:
  *  – SIDC builder: Context / Identity / Symbol Set / Status / HQ-TF-Dummy /
- *    Echelon / Entity 6-digit code
+ *    Echelon / Entity type (catalog-driven)
  *  – Text amplifiers: Unique Designation, Higher Formation, Staff Comments,
  *    Additional Info, DTG, Altitude/Depth, Direction, Quantity, Speed, Type,
  *    Reinforced/Reduced, Combat Effectiveness, Evaluation Rating
@@ -26,6 +26,7 @@ import {
   getModifierSet,
   type SidcOption,
 } from "../../lib/mil-sidc";
+import { SYMBOL_CATALOG } from "../../lib/milsymbol-catalog";
 
 const MilSymbol = ms.Symbol;
 const PREVIEW_SIZE = 42;
@@ -284,6 +285,30 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
     label: `${code} - ${label}`,
   });
 
+  const entityOptions = useMemo<SidcOption[]>(() => {
+    const byCode = new Map<string, string>();
+    for (const entry of SYMBOL_CATALOG) {
+      const baseParts = parseSidc(entry.baseSidc);
+      if (baseParts.symbolSet !== symbolSet) continue;
+      if (!byCode.has(baseParts.entity)) {
+        byCode.set(baseParts.entity, entry.name);
+      }
+    }
+    const options = Array.from(byCode.entries())
+      .sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([code, label]) => ({
+        code,
+        label: `${label} (${code})`,
+      }));
+    if (!byCode.has(entity)) {
+      options.unshift({ code: entity, label: `Custom (${entity})` });
+    }
+    if (options.length === 0) {
+      options.push({ code: "000000", label: "Unknown (000000)" });
+    }
+    return options;
+  }, [entity, symbolSet]);
+
   const modifier1Options = useMemo<SidcOption[]>(
     () => {
       const base = Object.entries(modifierSet.m1).map(([code, label]) => formatModifierOption(code, String(label)));
@@ -389,11 +414,11 @@ export function MilSymbolEditor({ initial, onSave, onCancel, className }: MilSym
             <SelectField label="Status"      value={status}    options={STATUS_OPTIONS}      onChange={setStatus}    />
             <SelectField label="QG/TF/Dummy" value={hqTf}      options={HQTF_OPTIONS}       onChange={setHqTf}      />
             <SelectField label="Echelon"     value={echelon}   options={ECHELON_OPTIONS}     onChange={setEchelon}   />
-            <TextField
-              label="Codice entità (6 cifre)"
+            <SelectField
+              label="Tipo entità"
               value={entity}
-              placeholder="000000"
-              onChange={(v) => setEntity((v.replace(/\D/g, "") + "000000").slice(0, 6))}
+              options={entityOptions}
+              onChange={setEntity}
             />
             <SelectField label="Modifier 1" value={modifier1} options={modifier1Options} onChange={setModifier1} />
             <SelectField label="Modifier 2" value={modifier2} options={modifier2Options} onChange={setModifier2} />
