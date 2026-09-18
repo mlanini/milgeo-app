@@ -1188,7 +1188,7 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
               {t("eoPredictor.metadata.lastUpdated", { defaultValue: "Last updated" })}: {remoteMetadata.lastUpdated ?? t("eoPredictor.na", { defaultValue: "n/a" })}
             </div>
             <div>
-              {t("eoPredictor.metadata.timeRange", { defaultValue: "Time range" })}: {remoteMetadata.minTime ?? "?"} -> {remoteMetadata.maxTime ?? "?"}
+              {t("eoPredictor.metadata.timeRange", { defaultValue: "Time range" })}: {remoteMetadata.minTime ?? "?"}{" -> "}{remoteMetadata.maxTime ?? "?"}
             </div>
             <div>
               {t("eoPredictor.metadata.constellations", { defaultValue: "Constellations" })}: {remoteMetadata.constellations?.length ?? 0}
