@@ -6,7 +6,7 @@ import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon, Posit
 import type { GeoLibreAppAPI } from "@geolibre/plugins";
 import { useAppStore } from "@geolibre/core";
 import { Button, cn } from "@geolibre/ui";
-import { Check, Layers, Loader2, Orbit, Upload, X } from "lucide-react";
+import { Check, Loader2, Orbit, Upload, X } from "lucide-react";
 
 const EO_SOURCE_ID = "geolibre-eo-predictor-source";
 const EO_FILL_LAYER_ID = "geolibre-eo-predictor-fill";
@@ -441,9 +441,12 @@ export function clearEoPredictorArtifacts(map: maplibregl.Map | null): void {
 export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
   const { t } = useTranslation();
   const addGeoJsonLayer = useAppStore((s) => s.addGeoJsonLayer);
+  const updateLayer = useAppStore((s) => s.updateLayer);
+  const removeLayer = useAppStore((s) => s.removeLayer);
   const eoInputRef = useRef<HTMLInputElement | null>(null);
   const aoiInputRef = useRef<HTMLInputElement | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  const eoLayerIdRef = useRef<string | null>(null);
 
   const [rawData, setRawData] = useState<FeatureCollection<Geometry, EoFeatureProperties> | null>(null);
   const [aoiData, setAoiData] = useState<FeatureCollection<Geometry> | null>(null);
@@ -1011,7 +1014,10 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
     const map = app.getMap?.();
     if (!map) return;
     ensureMapArtifacts(map);
-    updateSourceData(map, EO_SOURCE_ID, toFeatureCollection(filteredFeatures));
+    // The predicted passes are materialized as a real GeoLibre store layer (see
+    // the auto-sync effect below), so the internal MapLibre preview source is
+    // kept empty to avoid drawing the same geometries twice.
+    updateSourceData(map, EO_SOURCE_ID, toFeatureCollection([]));
 
     const nextAoi = aoiData ?? toFeatureCollection([]);
     updateSourceData(map, EO_AOI_SOURCE_ID, nextAoi);
@@ -1042,6 +1048,38 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
       map.off("zoomend", updateVisible);
     };
   }, [app, filteredFeatures, aoiData]);
+
+  // Keep a real GeoLibre layer in sync with the filtered predicted passes so it
+  // always reflects the current filter state and appears in the layer control.
+  useEffect(() => {
+    if (!rawData || filteredFeatures.length === 0) {
+      if (eoLayerIdRef.current) {
+        removeLayer(eoLayerIdRef.current);
+        eoLayerIdRef.current = null;
+      }
+      return;
+    }
+    const collection = toFeatureCollection(filteredFeatures);
+    const name = t("eoPredictor.layerName", {
+      defaultValue: "EO predicted passes ({{count}})",
+      count: filteredFeatures.length,
+    });
+    if (eoLayerIdRef.current) {
+      updateLayer(eoLayerIdRef.current, { geojson: collection, name });
+    } else {
+      eoLayerIdRef.current = addGeoJsonLayer(name, collection);
+    }
+  }, [filteredFeatures, rawData, addGeoJsonLayer, updateLayer, removeLayer, t]);
+
+  // Remove the managed passes layer when the panel unmounts (plugin deactivate).
+  useEffect(() => {
+    return () => {
+      if (eoLayerIdRef.current) {
+        removeLayer(eoLayerIdRef.current);
+        eoLayerIdRef.current = null;
+      }
+    };
+  }, [removeLayer]);
 
   useEffect(() => {
     if (!remoteMode || !remoteTilesUrl) return;
@@ -1152,29 +1190,6 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
     }
   };
 
-  const handleCreateLayer = () => {
-    if (filteredFeatures.length === 0) {
-      setMessage(
-        t("eoPredictor.message.noPassesForLayer", {
-          defaultValue: "No predicted passes match the current filters, nothing to add as a layer.",
-        }),
-      );
-      return;
-    }
-    const collection = toFeatureCollection(filteredFeatures);
-    const layerName = t("eoPredictor.layerName", {
-      defaultValue: "EO predicted passes ({{count}})",
-      count: filteredFeatures.length,
-    });
-    addGeoJsonLayer(layerName, collection);
-    setMessage(
-      t("eoPredictor.message.layerCreated", {
-        defaultValue: "Added {{count}} predicted passes as a map layer.",
-        count: filteredFeatures.length,
-      }),
-    );
-  };
-
   const handleReset = () => {
     setRawData(null);
     setAoiData(null);
@@ -1224,15 +1239,6 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
           <Button size="sm" variant="outline" onClick={() => aoiInputRef.current?.click()}>
             <Upload className="mr-1 h-3.5 w-3.5" />
             {t("eoPredictor.actions.loadAoi", { defaultValue: "Load AOI" })}
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={filteredFeatures.length === 0}
-            onClick={handleCreateLayer}
-          >
-            <Layers className="mr-1 h-3.5 w-3.5" />
-            {t("eoPredictor.actions.createLayer", { defaultValue: "Create pass layer" })}
           </Button>
           <Button size="sm" variant="ghost" onClick={handleReset}>
             <X className="mr-1 h-3.5 w-3.5" />
