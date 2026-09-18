@@ -345,8 +345,10 @@
       "connectRemote": "Connetti dati orbitali EO",
       "loadPasses": "Carica passaggi EO",
       "loadAoi": "Carica AOI",
+      "createLayer": "Crea layer passaggi",
       "clear": "Pulisci"
     },
+    "layerName": "Passaggi EO previsti ({{count}})",
     "source": {
       "remoteConnected": "Sorgente: tile orbitali EO Predictor upstream",
       "localFile": "Sorgente: GeoJSON locale caricato"
@@ -376,7 +378,9 @@
       "aoiLoaded": "AOI caricata da {{name}}.",
       "reset": "Stato EO Predictor ripristinato.",
       "loadingRemote": "Caricamento metadati orbitali e catalogo satelliti da EO Predictor...",
-      "remoteReady": "Dati orbitali EO remoti connessi. Ultimo aggiornamento: {{updated}}."
+      "remoteReady": "Dati orbitali EO remoti connessi. Ultimo aggiornamento: {{updated}}.",
+      "noPassesForLayer": "Nessun passaggio previsto corrisponde ai filtri correnti, niente da aggiungere come layer.",
+      "layerCreated": "Aggiunti {{count}} passaggi previsti come layer di mappa."
     },
     "error": {
       "parseDataset": "Impossibile interpretare il dataset EO.",

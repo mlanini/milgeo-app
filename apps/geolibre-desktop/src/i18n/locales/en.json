@@ -345,8 +345,10 @@
       "connectRemote": "Connect EO Orbital Data",
       "loadPasses": "Load EO Passes",
       "loadAoi": "Load AOI",
+      "createLayer": "Create pass layer",
       "clear": "Clear"
     },
+    "layerName": "EO predicted passes ({{count}})",
     "source": {
       "remoteConnected": "Source: EO Predictor upstream orbital tiles",
       "localFile": "Source: local uploaded GeoJSON"
@@ -376,7 +378,9 @@
       "aoiLoaded": "AOI loaded from {{name}}.",
       "reset": "EO Predictor state reset.",
       "loadingRemote": "Loading orbital metadata and satellite catalog from EO Predictor...",
-      "remoteReady": "Remote EO orbital data connected. Last update: {{updated}}."
+      "remoteReady": "Remote EO orbital data connected. Last update: {{updated}}.",
+      "noPassesForLayer": "No predicted passes match the current filters, nothing to add as a layer.",
+      "layerCreated": "Added {{count}} predicted passes as a map layer."
     },
     "error": {
       "parseDataset": "Failed to parse EO dataset.",

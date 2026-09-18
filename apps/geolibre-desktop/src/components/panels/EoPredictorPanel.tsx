@@ -4,8 +4,9 @@ import maplibregl from "maplibre-gl";
 import booleanIntersects from "@turf/boolean-intersects";
 import type { Feature, FeatureCollection, Geometry, MultiPolygon, Polygon, Position } from "geojson";
 import type { GeoLibreAppAPI } from "@geolibre/plugins";
+import { useAppStore } from "@geolibre/core";
 import { Button, cn } from "@geolibre/ui";
-import { Check, Loader2, Orbit, Upload, X } from "lucide-react";
+import { Check, Layers, Loader2, Orbit, Upload, X } from "lucide-react";
 
 const EO_SOURCE_ID = "geolibre-eo-predictor-source";
 const EO_FILL_LAYER_ID = "geolibre-eo-predictor-fill";
@@ -439,6 +440,7 @@ export function clearEoPredictorArtifacts(map: maplibregl.Map | null): void {
 
 export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
   const { t } = useTranslation();
+  const addGeoJsonLayer = useAppStore((s) => s.addGeoJsonLayer);
   const eoInputRef = useRef<HTMLInputElement | null>(null);
   const aoiInputRef = useRef<HTMLInputElement | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -1150,6 +1152,29 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
     }
   };
 
+  const handleCreateLayer = () => {
+    if (filteredFeatures.length === 0) {
+      setMessage(
+        t("eoPredictor.message.noPassesForLayer", {
+          defaultValue: "No predicted passes match the current filters, nothing to add as a layer.",
+        }),
+      );
+      return;
+    }
+    const collection = toFeatureCollection(filteredFeatures);
+    const layerName = t("eoPredictor.layerName", {
+      defaultValue: "EO predicted passes ({{count}})",
+      count: filteredFeatures.length,
+    });
+    addGeoJsonLayer(layerName, collection);
+    setMessage(
+      t("eoPredictor.message.layerCreated", {
+        defaultValue: "Added {{count}} predicted passes as a map layer.",
+        count: filteredFeatures.length,
+      }),
+    );
+  };
+
   const handleReset = () => {
     setRawData(null);
     setAoiData(null);
@@ -1199,6 +1224,15 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
           <Button size="sm" variant="outline" onClick={() => aoiInputRef.current?.click()}>
             <Upload className="mr-1 h-3.5 w-3.5" />
             {t("eoPredictor.actions.loadAoi", { defaultValue: "Load AOI" })}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={filteredFeatures.length === 0}
+            onClick={handleCreateLayer}
+          >
+            <Layers className="mr-1 h-3.5 w-3.5" />
+            {t("eoPredictor.actions.createLayer", { defaultValue: "Create pass layer" })}
           </Button>
           <Button size="sm" variant="ghost" onClick={handleReset}>
             <X className="mr-1 h-3.5 w-3.5" />
