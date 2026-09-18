@@ -13,6 +13,7 @@ import {
   useEffect,
   useRef,
 } from "react";
+import type maplibregl from "maplibre-gl";
 import { DEFAULT_LAYER_STYLE, useAppStore, type GeoLibreLayer } from "@geolibre/core";
 import { cn } from "@geolibre/ui";
 import ms from "../../lib/milsymbol-runtime";
@@ -59,6 +60,20 @@ const MilSymbol = ms.Symbol;
 const CATALOG_ICON = 32;
 const TACTICAL_LAYER_ID = "mil-tactical-graphics-layer";
 const TACTICAL_LAYER_NAME = "Grafiche tattiche";
+const SYM_LAYER_ID = "mil-symbol-layer";
+
+const QUICK_SYMBOL_BASE_SIDCS = new Set<string>([
+  "10031000001211000000", // Infantry
+  "10031000001211020000", // Armored Infantry
+  "10031000001211040000", // Motorized Infantry
+  "10031000001205000000", // Armor
+  "10031000001110000000", // Signal / Communications
+  "10031000001217000000", // Special Forces
+  "10031000001213000000", // Reconnaissance
+  "10031000001303000000", // Field Artillery
+  "10031000001407000000", // Engineer
+  "10031000001613000000", // Medical
+]);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -151,14 +166,26 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   const [placingSidc, setPlacingSidc] = useState<string | null>(null);
   const [pendingPatch, setPendingPatch] = useState<MilSymbolPatch | null>(null);
   const [pendingMove, setPendingMove] = useState<{ layerId: string; symbolId: string } | null>(null);
+  const [draggingCatalogPatch, setDraggingCatalogPatch] = useState<MilSymbolPatch | null>(null);
   const [editingEntry, setEditingEntry] = useState<CatalogEntry | null>(null);
   const [editingPatch, setEditingPatch] = useState<MilSymbolPatch | null>(null);
   const [editingSymbol, setEditingSymbol] = useState<{ layerId: string; symbolId: string } | null>(null);
   const [editingPlacedPatch, setEditingPlacedPatch] = useState<MilSymbolPatch | null>(null);
+  const [selectedMapSymbol, setSelectedMapSymbol] = useState<{ layerId: string; symbolId: string } | null>(null);
+  const mapDragSymbolRef = useRef<{ layerId: string; symbolId: string } | null>(null);
 
   const milSymbolLayers = useMemo(
     () => layers.filter((layer) => layer.type === "mil-symbol"),
     [layers]
+  );
+
+  const milSymbolLayerIndex = useMemo(
+    () =>
+      milSymbolLayers.map((layer) => ({
+        layer,
+        parsed: parseMilSymbolLayerSource(layer.source),
+      })),
+    [milSymbolLayers],
   );
 
   const resolveTargetLayer = useCallback(() => {
@@ -173,15 +200,20 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   }, [milSymbolLayers, selectedLayerId]);
 
   const filtered = useMemo(
-    () => filterCatalog(search, category === "All" ? undefined : category),
+    () =>
+      filterCatalog(search, category === "All" ? undefined : category).filter((entry) =>
+        QUICK_SYMBOL_BASE_SIDCS.has(entry.baseSidc),
+      ),
     [search, category]
   );
 
   const targetLayer = useMemo(() => resolveTargetLayer(), [resolveTargetLayer]);
-  const targetSymbols = useMemo(
-    () => (targetLayer ? parseMilSymbolLayerSource(targetLayer.source).symbols : []),
-    [targetLayer]
-  );
+  const targetSymbols = useMemo(() => {
+    const parsed = targetLayer
+      ? milSymbolLayerIndex.find((entry) => entry.layer.id === targetLayer.id)?.parsed
+      : undefined;
+    return parsed?.symbols ?? [];
+  }, [milSymbolLayerIndex, targetLayer]);
 
   useEffect(() => {
     if (!targetLayer) return;
@@ -211,61 +243,66 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     enableClick();
   }
 
-  const { enable: enableClick, disable: disableClick } = useMapClick(
-    mapControllerRef,
-    useCallback((lon, lat) => {
-      if (pendingMove) {
-        const layer = layers.find((item) => item.id === pendingMove.layerId);
-        if (layer?.type === "mil-symbol") {
-          const parsed = parseMilSymbolLayerSource(layer.source);
-          const symbols = parsed.symbols.map((symbol) =>
-            symbol.id === pendingMove.symbolId
-              ? { ...symbol, lon, lat }
-              : symbol
-          );
-          updateLayer(layer.id, {
-            source: serializeMilSymbolLayerSource(
-              symbols,
-              parsed.symbolSize,
-              parsed.showAmplifiers,
-            ),
-          });
-          selectLayer(layer.id);
-        }
-        setPendingMove(null);
-        return;
-      }
+  const applySymbolPatchToLayerItem = useCallback(
+    (symbol: MilSymbolLayerItem, patch: MilSymbolPatch): MilSymbolLayerItem => {
+      const nextSidc = patch.sidc ?? symbol.SIDC;
+      return {
+        ...symbol,
+        name: patch.name ?? symbol.name,
+        SIDC: nextSidc,
+        affiliation: affiliationFromSidc(nextSidc),
+        uniqueDesignation: patch.uniqueDesignation,
+        higherFormation: patch.higherFormation,
+        staffComments: patch.staffComments,
+        additionalInformation: patch.additionalInformation,
+        dtg: patch.dtg,
+        altitudeDepth: patch.altitudeDepth,
+        direction: patch.direction,
+        quantity: patch.quantity,
+        iffSif: patch.iffSif,
+        speed: patch.speed,
+        typeStr: patch.typeStr,
+        reinforcedReduced: patch.reinforcedReduced,
+        combatEffectiveness: patch.combatEffectiveness,
+        evaluationRating: patch.evaluationRating,
+      };
+    },
+    [],
+  );
 
-      if (!pendingPatch?.sidc) return;
+  const placePatchAt = useCallback(
+    (patch: MilSymbolPatch, lon: number, lat: number) => {
+      if (!patch.sidc) return;
 
       const target = resolveTargetLayer();
       const symbol: MilSymbolLayerItem = {
         id: crypto.randomUUID(),
-        name: pendingPatch.name || pendingPatch.uniqueDesignation || "Symbol",
-        SIDC: pendingPatch.sidc,
+        name: patch.name || patch.uniqueDesignation || "Symbol",
+        SIDC: patch.sidc,
         lon,
         lat,
-        affiliation: affiliationFromSidc(pendingPatch.sidc),
-        uniqueDesignation: pendingPatch.uniqueDesignation,
-        higherFormation: pendingPatch.higherFormation,
-        staffComments: pendingPatch.staffComments,
-        additionalInformation: pendingPatch.additionalInformation,
-        dtg: pendingPatch.dtg,
-        altitudeDepth: pendingPatch.altitudeDepth,
-        direction: pendingPatch.direction,
-        quantity: pendingPatch.quantity,
-        iffSif: pendingPatch.iffSif,
-        speed: pendingPatch.speed,
-        typeStr: pendingPatch.typeStr,
-        reinforcedReduced: pendingPatch.reinforcedReduced,
-        combatEffectiveness: pendingPatch.combatEffectiveness,
-        evaluationRating: pendingPatch.evaluationRating,
+        affiliation: affiliationFromSidc(patch.sidc),
+        uniqueDesignation: patch.uniqueDesignation,
+        higherFormation: patch.higherFormation,
+        staffComments: patch.staffComments,
+        additionalInformation: patch.additionalInformation,
+        dtg: patch.dtg,
+        altitudeDepth: patch.altitudeDepth,
+        direction: patch.direction,
+        quantity: patch.quantity,
+        iffSif: patch.iffSif,
+        speed: patch.speed,
+        typeStr: patch.typeStr,
+        reinforcedReduced: patch.reinforcedReduced,
+        combatEffectiveness: patch.combatEffectiveness,
+        evaluationRating: patch.evaluationRating,
       };
 
       if (!target) {
         const created = createMilSymbolLayer("Mil Symbols", symbol, symbolSizePx, showAmplifiers);
         addLayer(created);
         selectLayer(created.id);
+        setSelectedMapSymbol({ layerId: created.id, symbolId: symbol.id });
       } else {
         const parsed = parseMilSymbolLayerSource(target.source);
         updateLayer(target.id, {
@@ -276,13 +313,86 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
           ),
         });
         selectLayer(target.id);
+        setSelectedMapSymbol({ layerId: target.id, symbolId: symbol.id });
       }
 
       setPlacingSidc(null);
       setPendingPatch(null);
       setPendingMove(null);
+    },
+    [addLayer, resolveTargetLayer, selectLayer, showAmplifiers, symbolSizePx, updateLayer],
+  );
+
+  const moveSymbolTo = useCallback(
+    (layerId: string, symbolId: string, lon: number, lat: number) => {
+      const entry = milSymbolLayerIndex.find((item) => item.layer.id === layerId);
+      if (!entry) return;
+      const nextSymbols = entry.parsed.symbols.map((symbol) =>
+        symbol.id === symbolId
+          ? { ...symbol, lon, lat }
+          : symbol,
+      );
+      updateLayer(layerId, {
+        source: serializeMilSymbolLayerSource(
+          nextSymbols,
+          entry.parsed.symbolSize,
+          entry.parsed.showAmplifiers,
+        ),
+      });
+      selectLayer(layerId);
+      setSelectedMapSymbol({ layerId, symbolId });
+    },
+    [milSymbolLayerIndex, selectLayer, updateLayer],
+  );
+
+  const openPlacedSymbolEditor = useCallback(
+    (layerId: string, symbolId: string) => {
+      const entry = milSymbolLayerIndex.find((item) => item.layer.id === layerId);
+      const symbol = entry?.parsed.symbols.find((item) => item.id === symbolId);
+      if (!symbol) return;
+
+      setEditingEntry(null);
+      setEditingPatch(null);
+      setPendingMove(null);
+      setPendingPatch(null);
+      setPlacingSidc(null);
+      setSelectedMapSymbol({ layerId, symbolId });
+      setEditingSymbol({ layerId, symbolId });
+      setEditingPlacedPatch({
+        name: symbol.name,
+        sidc: symbol.SIDC,
+        uniqueDesignation: symbol.uniqueDesignation,
+        higherFormation: symbol.higherFormation,
+        staffComments: symbol.staffComments,
+        additionalInformation: symbol.additionalInformation,
+        dtg: symbol.dtg,
+        altitudeDepth: symbol.altitudeDepth,
+        direction: symbol.direction,
+        quantity: symbol.quantity,
+        iffSif: symbol.iffSif,
+        speed: symbol.speed,
+        typeStr: symbol.typeStr,
+        reinforcedReduced: symbol.reinforcedReduced,
+        combatEffectiveness: symbol.combatEffectiveness,
+        evaluationRating: symbol.evaluationRating,
+      });
+    },
+    [milSymbolLayerIndex],
+  );
+
+  const { enable: enableClick, disable: disableClick } = useMapClick(
+    mapControllerRef,
+    useCallback((lon, lat) => {
+      if (pendingMove) {
+        moveSymbolTo(pendingMove.layerId, pendingMove.symbolId, lon, lat);
+        setPendingMove(null);
+        return;
+      }
+
+      if (!pendingPatch?.sidc) return;
+      placePatchAt(pendingPatch, lon, lat);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pendingPatch, pendingMove, showAmplifiers, symbolSizePx, addLayer, resolveTargetLayer, updateLayer, selectLayer, layers]),
+    }, [moveSymbolTo, pendingPatch, pendingMove, placePatchAt]),
     true,
   );
 
@@ -305,27 +415,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
 
   function handleEditPlacedSymbol(symbol: MilSymbolLayerItem) {
     if (!targetLayer) return;
-    setEditingEntry(null);
-    setEditingPatch(null);
-    setEditingSymbol({ layerId: targetLayer.id, symbolId: symbol.id });
-    setEditingPlacedPatch({
-      name: symbol.name,
-      sidc: symbol.SIDC,
-      uniqueDesignation: symbol.uniqueDesignation,
-      higherFormation: symbol.higherFormation,
-      staffComments: symbol.staffComments,
-      additionalInformation: symbol.additionalInformation,
-      dtg: symbol.dtg,
-      altitudeDepth: symbol.altitudeDepth,
-      direction: symbol.direction,
-      quantity: symbol.quantity,
-      iffSif: symbol.iffSif,
-      speed: symbol.speed,
-      typeStr: symbol.typeStr,
-      reinforcedReduced: symbol.reinforcedReduced,
-      combatEffectiveness: symbol.combatEffectiveness,
-      evaluationRating: symbol.evaluationRating,
-    });
+    openPlacedSymbolEditor(targetLayer.id, symbol.id);
   }
 
   function handleSaveEditedPlacedSymbol(patch: MilSymbolPatch) {
@@ -334,34 +424,16 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     if (layer?.type !== "mil-symbol") return;
 
     const parsed = parseMilSymbolLayerSource(layer.source);
-    const symbols = parsed.symbols.map((symbol) => {
-      if (symbol.id !== editingSymbol.symbolId) return symbol;
-      const nextSidc = patch.sidc ?? symbol.SIDC;
-      return {
-        ...symbol,
-        name: patch.name ?? symbol.name,
-        SIDC: nextSidc,
-        affiliation: affiliationFromSidc(nextSidc),
-        uniqueDesignation: patch.uniqueDesignation,
-        higherFormation: patch.higherFormation,
-        staffComments: patch.staffComments,
-        additionalInformation: patch.additionalInformation,
-        dtg: patch.dtg,
-        altitudeDepth: patch.altitudeDepth,
-        direction: patch.direction,
-        quantity: patch.quantity,
-        iffSif: patch.iffSif,
-        speed: patch.speed,
-        typeStr: patch.typeStr,
-        reinforcedReduced: patch.reinforcedReduced,
-        combatEffectiveness: patch.combatEffectiveness,
-        evaluationRating: patch.evaluationRating,
-      };
-    });
+    const symbols = parsed.symbols.map((symbol) =>
+      symbol.id !== editingSymbol.symbolId
+        ? symbol
+        : applySymbolPatchToLayerItem(symbol, patch),
+    );
 
     updateLayer(layer.id, {
       source: serializeMilSymbolLayerSource(symbols, parsed.symbolSize, parsed.showAmplifiers),
     });
+    setSelectedMapSymbol({ layerId: layer.id, symbolId: editingSymbol.symbolId });
     setEditingSymbol(null);
     setEditingPlacedPatch(null);
   }
@@ -405,6 +477,126 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     disableClick();
   }
 
+  useEffect(() => {
+    const map = mapControllerRef.current?.getMap();
+    if (!map) return;
+
+    const canvas = map.getCanvas();
+
+    const onDragOver = (event: DragEvent) => {
+      if (!draggingCatalogPatch?.sidc) return;
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+    };
+
+    const onDrop = (event: DragEvent) => {
+      if (!draggingCatalogPatch?.sidc) return;
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const lngLat = map.unproject([x, y]);
+      placePatchAt(draggingCatalogPatch, lngLat.lng, lngLat.lat);
+      setDraggingCatalogPatch(null);
+    };
+
+    canvas.addEventListener("dragover", onDragOver);
+    canvas.addEventListener("drop", onDrop);
+    return () => {
+      canvas.removeEventListener("dragover", onDragOver);
+      canvas.removeEventListener("drop", onDrop);
+    };
+  }, [draggingCatalogPatch, mapControllerRef, placePatchAt]);
+
+  useEffect(() => {
+    const map = mapControllerRef.current?.getMap();
+    if (!map) return;
+
+    const getSymbolTarget = (event: maplibregl.MapLayerMouseEvent) => {
+      const feature = event.features?.[0];
+      if (!feature || !feature.properties) return null;
+      const props = feature.properties as Record<string, unknown>;
+      const layerId = typeof props.layerId === "string" ? props.layerId : "";
+      const symbolId = typeof props.symbolId === "string"
+        ? props.symbolId
+        : (typeof props.id === "string" ? props.id : "");
+      if (!layerId || !symbolId) return null;
+      return { layerId, symbolId };
+    };
+
+    const onMouseEnter = () => {
+      map.getCanvas().style.cursor = "grab";
+    };
+
+    const onMouseLeave = () => {
+      if (!mapDragSymbolRef.current) {
+        map.getCanvas().style.cursor = "";
+      }
+    };
+
+    const onClick = (event: maplibregl.MapLayerMouseEvent) => {
+      const target = getSymbolTarget(event);
+      if (!target) return;
+      setSelectedMapSymbol(target);
+      selectLayer(target.layerId);
+    };
+
+    const onDoubleClick = (event: maplibregl.MapLayerMouseEvent) => {
+      const target = getSymbolTarget(event);
+      if (!target) return;
+      event.preventDefault();
+      openPlacedSymbolEditor(target.layerId, target.symbolId);
+      selectLayer(target.layerId);
+    };
+
+    const onMouseDown = (event: maplibregl.MapLayerMouseEvent) => {
+      const target = getSymbolTarget(event);
+      if (!target) return;
+      event.preventDefault();
+      mapDragSymbolRef.current = target;
+      setSelectedMapSymbol(target);
+      selectLayer(target.layerId);
+      map.dragPan.disable();
+      map.getCanvas().style.cursor = "grabbing";
+    };
+
+    const onMouseMove = (event: maplibregl.MapMouseEvent) => {
+      const dragTarget = mapDragSymbolRef.current;
+      if (!dragTarget) return;
+      moveSymbolTo(dragTarget.layerId, dragTarget.symbolId, event.lngLat.lng, event.lngLat.lat);
+    };
+
+    const stopDrag = () => {
+      if (!mapDragSymbolRef.current) return;
+      mapDragSymbolRef.current = null;
+      map.dragPan.enable();
+      map.getCanvas().style.cursor = "";
+    };
+
+    map.on("mouseenter", SYM_LAYER_ID, onMouseEnter);
+    map.on("mouseleave", SYM_LAYER_ID, onMouseLeave);
+    map.on("click", SYM_LAYER_ID, onClick);
+    map.on("dblclick", SYM_LAYER_ID, onDoubleClick);
+    map.on("mousedown", SYM_LAYER_ID, onMouseDown);
+    map.on("mousemove", onMouseMove);
+    map.on("mouseup", stopDrag);
+    map.on("dragend", stopDrag);
+
+    return () => {
+      stopDrag();
+      map.off("mouseenter", SYM_LAYER_ID, onMouseEnter);
+      map.off("mouseleave", SYM_LAYER_ID, onMouseLeave);
+      map.off("click", SYM_LAYER_ID, onClick);
+      map.off("dblclick", SYM_LAYER_ID, onDoubleClick);
+      map.off("mousedown", SYM_LAYER_ID, onMouseDown);
+      map.off("mousemove", onMouseMove);
+      map.off("mouseup", stopDrag);
+      map.off("dragend", stopDrag);
+    };
+  }, [mapControllerRef, moveSymbolTo, openPlacedSymbolEditor, selectLayer]);
+
   const activeEditor = editingEntry && editingPatch
     ? (
         <MilSymbolEditor
@@ -434,7 +626,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   return (
     <div className="relative flex flex-col h-full">
       <div className="border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-        I simboli vengono aggiunti nel layer milsymbol selezionato nel pannello Layers principale.
+        Set rapido (10 simboli comuni): trascina e rilascia direttamente sulla mappa oppure clicca per piazzare.
       </div>
 
       {/* Affiliation bar */}
@@ -485,7 +677,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       <div className="flex gap-1.5 px-3 pb-1">
         <input
           className="flex-1 h-6 rounded border border-input bg-background px-1.5 text-xs focus:outline-none"
-          placeholder="Cerca simbolo…"
+          placeholder="Cerca nel set rapido…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -518,11 +710,19 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
           return (
             <div
               key={entry.baseSidc}
+              draggable
               className={cn(
                 "flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-muted/60 transition-colors",
                 isActive && "bg-primary/10 ring-1 ring-primary"
               )}
               onClick={() => handleSelectEntry(entry)}
+              onDragStart={(event) => {
+                const patch = buildDefaultPatch(entry);
+                setDraggingCatalogPatch(patch);
+                event.dataTransfer.effectAllowed = "copy";
+                event.dataTransfer.setData("text/plain", patch.sidc ?? "mil-symbol");
+              }}
+              onDragEnd={() => setDraggingCatalogPatch(null)}
             >
               <SymPreview sidc={previewSidc} size={CATALOG_ICON} />
               <div className="flex-1 min-w-0">
@@ -557,7 +757,15 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
           </div>
           <div className="max-h-28 overflow-y-auto space-y-0.5">
             {targetSymbols.map((symbol) => (
-              <div key={symbol.id} className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-muted/50">
+              <div
+                key={symbol.id}
+                className={cn(
+                  "flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-muted/50",
+                  selectedMapSymbol?.layerId === targetLayer.id && selectedMapSymbol?.symbolId === symbol.id
+                    ? "bg-primary/10 ring-1 ring-primary"
+                    : "",
+                )}
+              >
                 <SymPreview sidc={symbol.SIDC} size={18} />
                 <div className="flex-1 min-w-0 text-[10px]">
                   <div className="truncate font-medium">{symbol.name}</div>

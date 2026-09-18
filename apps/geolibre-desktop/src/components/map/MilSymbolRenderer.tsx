@@ -407,6 +407,8 @@ export default function MilSymbolRenderer({
           geometry: { type: "Point", coordinates: [symbol.lon, symbol.lat] },
           properties: {
             id:        symbol.id,
+            symbolId:  symbol.id,
+            layerId:   layer.id,
             symbolKey: key,
             direction,
             opacity:   layerOpacity,
