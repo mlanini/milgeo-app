@@ -39,6 +39,7 @@ interface EoFilters {
   daylight: DaylightType;
   hoursAhead: number;
   aoiOnly: boolean;
+  viewportAoi: boolean;
 }
 
 interface EoFeatureProperties {
@@ -103,8 +104,9 @@ const DEFAULT_FILTERS: EoFilters = {
   access: "all",
   tasking: "all",
   daylight: "all",
-  hoursAhead: 24,
+  hoursAhead: 48,
   aoiOnly: false,
+  viewportAoi: true,
 };
 
 function toFeatureCollection(features: EoFeature[]): FeatureCollection {
@@ -454,6 +456,7 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
   const [isLoading, setIsLoading] = useState(false);
   const [visibleInViewCount, setVisibleInViewCount] = useState<number>(0);
   const [zoom, setZoom] = useState<number>(1);
+  const [mapBounds, setMapBounds] = useState<[number, number, number, number] | null>(null);
   const [remoteMode, setRemoteMode] = useState(false);
   const [remoteMetadata, setRemoteMetadata] = useState<EoRemoteMetadata | null>(null);
   const [remoteTilesUrl, setRemoteTilesUrl] = useState<string | null>(null);
@@ -463,6 +466,26 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
     if (!rawData) return [];
     return rawData.features as EoFeature[];
   }, [rawData]);
+
+  // Time window is anchored to the dataset's own range (like the upstream app's
+  // min/max slider) instead of "now", so predicted passes are not silently
+  // filtered out when the dataset's window does not straddle the current clock.
+  const dataTimeRange = useMemo<[number, number] | null>(() => {
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const feature of allFeatures) {
+      const start = toIsoTime(feature.properties?.start_time);
+      const end = toIsoTime(feature.properties?.end_time) ?? start;
+      if (start !== null) {
+        min = Math.min(min, start);
+        max = Math.max(max, end ?? start);
+      }
+      if (end !== null) {
+        max = Math.max(max, end);
+      }
+    }
+    return Number.isFinite(min) && Number.isFinite(max) ? [min, max] : null;
+  }, [allFeatures]);
 
   const derivedConstellations = useMemo(() => uniq(allFeatures.map((f) => f.properties?.constellation)), [allFeatures]);
   const derivedOperators = useMemo(() => uniq(allFeatures.map((f) => f.properties?.operator)), [allFeatures]);
@@ -644,13 +667,20 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
         if (activeFilters.daylight === "night" && props.is_daytime !== false) return false;
       }
 
-      const now = Date.now();
-      const maxTs = now + activeFilters.hoursAhead * 60 * 60 * 1000;
+      const anchor = dataTimeRange ? dataTimeRange[0] : Date.now();
+      const windowEnd = anchor + activeFilters.hoursAhead * 60 * 60 * 1000;
       const start = toIsoTime(props.start_time);
       const end = toIsoTime(props.end_time) ?? start;
       if (start !== null) {
         const effectiveEnd = end ?? start;
-        if (start > maxTs || effectiveEnd < now) return false;
+        if (start > windowEnd || effectiveEnd < anchor) return false;
+      }
+
+      if (activeFilters.viewportAoi && mapBounds) {
+        const bounds = featureBounds(feature);
+        if (!bounds || !intersectsBounds(bounds, mapBounds)) {
+          return false;
+        }
       }
 
       if (activeFilters.aoiOnly && !intersectsAoiPrecisely(feature)) {
@@ -659,7 +689,7 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
 
       return true;
     },
-    [intersectsAoiPrecisely],
+    [dataTimeRange, intersectsAoiPrecisely, mapBounds],
   );
 
   const optionAvailability = useMemo(() => {
@@ -988,15 +1018,16 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
       if (!map) return;
       setZoom(map.getZoom());
       const bounds = map.getBounds();
-      const mapBounds: [number, number, number, number] = [
+      const viewBounds: [number, number, number, number] = [
         bounds.getWest(),
         bounds.getSouth(),
         bounds.getEast(),
         bounds.getNorth(),
       ];
+      setMapBounds(viewBounds);
       const count = filteredFeatures.reduce((acc, feature) => {
         const b = featureBounds(feature);
-        return b && intersectsBounds(mapBounds, b) ? acc + 1 : acc;
+        return b && intersectsBounds(viewBounds, b) ? acc + 1 : acc;
       }, 0);
       setVisibleInViewCount(count);
     };
@@ -1340,6 +1371,17 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
                 </option>
               ))}
             </select>
+          </label>
+
+          <label className="flex items-center gap-2 pt-5">
+            <input
+              type="checkbox"
+              checked={filters.viewportAoi}
+              onChange={(e) => setFilters((prev) => ({ ...prev, viewportAoi: e.target.checked }))}
+            />
+            <span className="text-[11px] text-muted-foreground">
+              {t("eoPredictor.filters.viewportAoi", { defaultValue: "Use current map view as AOI" })}
+            </span>
           </label>
 
           <label className="flex items-center gap-2 pt-5">

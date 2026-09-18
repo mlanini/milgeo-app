@@ -360,7 +360,8 @@
     "filters": {
       "title": "Filters",
       "predictionWindow": "Prediction window: {{hours}}h",
-      "aoiOnly": "Only AOI-intersecting passes"
+      "aoiOnly": "Only AOI-intersecting passes",
+      "viewportAoi": "Use current map view as AOI"
     },
     "summary": {
       "noDataset": "No dataset loaded.",

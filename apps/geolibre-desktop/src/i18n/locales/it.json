@@ -360,7 +360,8 @@
     "filters": {
       "title": "Filtri",
       "predictionWindow": "Finestra di previsione: {{hours}}h",
-      "aoiOnly": "Solo passaggi che intersecano AOI"
+      "aoiOnly": "Solo passaggi che intersecano AOI",
+      "viewportAoi": "Usa la vista mappa corrente come AOI"
     },
     "summary": {
       "noDataset": "Nessun dataset caricato.",
