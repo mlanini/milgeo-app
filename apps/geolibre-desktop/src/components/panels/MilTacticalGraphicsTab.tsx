@@ -18,7 +18,7 @@ import {
   serializeMilGraphicLayerSource,
   type MilGraphicLayerItem,
 } from "../../lib/milgraphic-layer-source";
-import { milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
+import { DEFAULT_TACTICAL_LINE_WIDTH_PX, milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
 import { resolveTacticalRuleKey } from "../../lib/tactical-rules/catalog";
 import { normalizeTacticalSidc } from "../../lib/tactical-rules/normalize";
 import { tacticalMiniIconDataUri } from "../../lib/tactical-rules/mini-icon";
@@ -144,6 +144,13 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     [layers],
   );
 
+  const tacticalStrokeWidth = useMemo(() => {
+    const value = tacticalLayer?.style?.strokeWidth;
+    return typeof value === "number" && Number.isFinite(value)
+      ? Math.max(1, value)
+      : DEFAULT_TACTICAL_LINE_WIDTH_PX;
+  }, [tacticalLayer]);
+
   const tacticalGraphics = useMemo(
     () => (tacticalLayer ? parseMilGraphicLayerSource(tacticalLayer.source).graphics : []),
     [tacticalLayer],
@@ -201,7 +208,14 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
           type: "geojson",
           ...serializeMilGraphicLayerSource(merged),
         } as unknown as Record<string, unknown>,
-        geojson: milGraphicsToGeoJson(merged),
+        geojson: milGraphicsToGeoJson(merged, { lineWidthPx: tacticalStrokeWidth }),
+        style: {
+          ...DEFAULT_LAYER_STYLE,
+          ...geojsonTacticalLayer.style,
+          simpleStyleEnabled: true,
+          strokeWidth: tacticalStrokeWidth,
+          fillOpacity: 0.2,
+        },
         metadata: {
           ...geojsonTacticalLayer.metadata,
           milgeoManaged: true,
@@ -220,7 +234,12 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
       type: "geojson",
       visible: true,
       opacity: 1,
-      style: { ...DEFAULT_LAYER_STYLE },
+      style: {
+        ...DEFAULT_LAYER_STYLE,
+        simpleStyleEnabled: true,
+        strokeWidth: tacticalStrokeWidth,
+        fillOpacity: 0.2,
+      },
       metadata: {
         milgeoManaged: true,
         tacticalCollection: true,
@@ -229,11 +248,11 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         type: "geojson",
         ...serializeMilGraphicLayerSource(migratedGraphics),
       } as unknown as Record<string, unknown>,
-      geojson: milGraphicsToGeoJson(migratedGraphics),
+      geojson: milGraphicsToGeoJson(migratedGraphics, { lineWidthPx: tacticalStrokeWidth }),
     });
 
     tacticalGraphicLayers.forEach((layer) => removeLayer(layer.id));
-  }, [addLayer, layers, removeLayer, tacticalLayer, updateLayer]);
+  }, [addLayer, layers, removeLayer, tacticalLayer, tacticalStrokeWidth, updateLayer]);
 
   const updateTacticalGraphics = useCallback(
     (
@@ -256,7 +275,14 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
             type: "geojson",
             ...serializeMilGraphicLayerSource(nextGraphics),
           } as unknown as Record<string, unknown>,
-          geojson: milGraphicsToGeoJson(nextGraphics),
+          geojson: milGraphicsToGeoJson(nextGraphics, { lineWidthPx: tacticalStrokeWidth }),
+          style: {
+            ...DEFAULT_LAYER_STYLE,
+            ...tacticalLayer.style,
+            simpleStyleEnabled: true,
+            strokeWidth: tacticalStrokeWidth,
+            fillOpacity: 0.2,
+          },
           metadata: {
             ...tacticalLayer.metadata,
             milgeoManaged: true,
@@ -283,7 +309,12 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         type: "geojson",
         visible: true,
         opacity: 1,
-        style: { ...DEFAULT_LAYER_STYLE },
+        style: {
+          ...DEFAULT_LAYER_STYLE,
+          simpleStyleEnabled: true,
+          strokeWidth: tacticalStrokeWidth,
+          fillOpacity: 0.2,
+        },
         metadata: {
           milgeoManaged: true,
           tacticalCollection: true,
@@ -292,12 +323,12 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
           type: "geojson",
           ...serializeMilGraphicLayerSource(nextGraphics),
         } as unknown as Record<string, unknown>,
-        geojson: milGraphicsToGeoJson(nextGraphics),
+        geojson: milGraphicsToGeoJson(nextGraphics, { lineWidthPx: tacticalStrokeWidth }),
       };
 
       addLayer(layer);
     },
-    [addLayer, removeLayer, tacticalLayer, updateLayer],
+    [addLayer, removeLayer, tacticalLayer, tacticalStrokeWidth, updateLayer],
   );
 
   const snapCandidates = useMemo<SnapCandidate[]>(() => {
@@ -484,7 +515,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         filter: ["==", ["geometry-type"], "LineString"],
         paint: {
           "line-color": "#4A7FCE",
-          "line-width": 2,
+          "line-width": Math.max(1.2, tacticalStrokeWidth),
           "line-dasharray": [2, 1],
         },
       });
@@ -509,7 +540,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     return () => {
       if (!drawing) clearPreview();
     };
-  }, [drawnPoints, drawing, hoverPoint, mapControllerRef, selected]);
+  }, [drawnPoints, drawing, hoverPoint, mapControllerRef, selected, tacticalStrokeWidth]);
 
   useEffect(() => {
     return () => {

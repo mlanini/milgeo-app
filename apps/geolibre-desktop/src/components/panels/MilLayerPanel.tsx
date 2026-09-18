@@ -54,7 +54,7 @@ import {
   serializeMilGraphicLayerSource,
   type MilGraphicLayerItem,
 } from "../../lib/milgraphic-layer-source";
-import { milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
+import { DEFAULT_TACTICAL_LINE_WIDTH_PX, milGraphicsToGeoJson } from "../../lib/milgraphic-geojson";
 
 const MilSymbol = ms.Symbol;
 const CATALOG_ICON = 32;
@@ -164,6 +164,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   const [symbolSizePx, setSymbolSizePx] = useState(DEFAULT_MIL_SYMBOL_SIZE_PX);
   const [showAmplifiers, setShowAmplifiers] = useState(false);
   const [placingSidc, setPlacingSidc] = useState<string | null>(null);
+  const [tacticalLineWidthPx, setTacticalLineWidthPx] = useState(DEFAULT_TACTICAL_LINE_WIDTH_PX);
   const [pendingPatch, setPendingPatch] = useState<MilSymbolPatch | null>(null);
   const [pendingMove, setPendingMove] = useState<{ layerId: string; symbolId: string } | null>(null);
   const [draggingCatalogPatch, setDraggingCatalogPatch] = useState<MilSymbolPatch | null>(null);
@@ -208,6 +209,16 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
   );
 
   const targetLayer = useMemo(() => resolveTargetLayer(), [resolveTargetLayer]);
+  const tacticalLayer = useMemo(
+    () =>
+      layers.find(
+        (layer) =>
+          layer.type === "geojson" &&
+          layer.metadata.milgeoManaged === true &&
+          layer.metadata.tacticalCollection === true,
+      ) ?? null,
+    [layers],
+  );
   const targetSymbols = useMemo(() => {
     const parsed = targetLayer
       ? milSymbolLayerIndex.find((entry) => entry.layer.id === targetLayer.id)?.parsed
@@ -221,6 +232,15 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     setSymbolSizePx(parsed.symbolSize);
     setShowAmplifiers(parsed.showAmplifiers);
   }, [targetLayer]);
+
+  useEffect(() => {
+    const width = tacticalLayer?.style?.strokeWidth;
+    if (typeof width === "number" && Number.isFinite(width)) {
+      setTacticalLineWidthPx(Math.max(1, width));
+      return;
+    }
+    setTacticalLineWidthPx(DEFAULT_TACTICAL_LINE_WIDTH_PX);
+  }, [tacticalLayer]);
 
   // Applies echelon to the SIDC before placing, preserving catalog modifiers.
   function applyEchelon(baseSidc: string): string {
@@ -470,6 +490,22 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
     });
   }
 
+  function handleChangeTacticalLineWidth(value: number) {
+    const width = Math.max(1, value);
+    setTacticalLineWidthPx(width);
+    if (!tacticalLayer) return;
+    const graphics = parseMilGraphicLayerSource(tacticalLayer.source).graphics;
+    updateLayer(tacticalLayer.id, {
+      style: {
+        ...DEFAULT_LAYER_STYLE,
+        ...tacticalLayer.style,
+        simpleStyleEnabled: true,
+        strokeWidth: width,
+      },
+      geojson: milGraphicsToGeoJson(graphics, { lineWidthPx: width }),
+    });
+  }
+
   function cancelPlace() {
     setPendingPatch(null);
     setPlacingSidc(null);
@@ -649,7 +685,7 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
       </div>
 
       {/* Symbol size */}
-      <div className="px-3 pb-1 grid grid-cols-1 gap-1.5">
+      <div className="px-3 pb-1 grid grid-cols-2 gap-1.5">
         <label className="flex flex-col gap-0.5">
           <span className="text-[10px] font-medium text-muted-foreground">
             Scale Symbols Size: {symbolSizePx}px
@@ -663,7 +699,21 @@ function CatalogTab({ mapControllerRef }: CatalogTabProps) {
             onChange={(e) => handleChangeSymbolSize(Number(e.target.value))}
           />
         </label>
-        <label className="inline-flex items-center gap-2 text-[10px] text-muted-foreground">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-medium text-muted-foreground">
+            Tactical Line Width: {tacticalLineWidthPx.toFixed(1)}px
+          </span>
+          <input
+            type="range"
+            min={1}
+            max={10}
+            step={0.2}
+            value={tacticalLineWidthPx}
+            onChange={(e) => handleChangeTacticalLineWidth(Number(e.target.value))}
+            disabled={!tacticalLayer}
+          />
+        </label>
+        <label className="col-span-2 inline-flex items-center gap-2 text-[10px] text-muted-foreground">
           <input
             type="checkbox"
             checked={showAmplifiers}
@@ -883,13 +933,24 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
       if (tacticalLayer) {
         const existing = parseMilGraphicLayerSource(tacticalLayer.source).graphics;
         const merged = [...existing, ...importedGraphics];
+        const tacticalWidth =
+          typeof tacticalLayer.style?.strokeWidth === "number" && Number.isFinite(tacticalLayer.style.strokeWidth)
+            ? Math.max(1, tacticalLayer.style.strokeWidth)
+            : DEFAULT_TACTICAL_LINE_WIDTH_PX;
         updateLayer(tacticalLayer.id, {
           type: "geojson",
           source: {
             type: "geojson",
             ...serializeMilGraphicLayerSource(merged),
           } as unknown as Record<string, unknown>,
-          geojson: milGraphicsToGeoJson(merged),
+          geojson: milGraphicsToGeoJson(merged, { lineWidthPx: tacticalWidth }),
+          style: {
+            ...DEFAULT_LAYER_STYLE,
+            ...tacticalLayer.style,
+            simpleStyleEnabled: true,
+            strokeWidth: tacticalWidth,
+            fillOpacity: 0.2,
+          },
           metadata: {
             ...tacticalLayer.metadata,
             milgeoManaged: true,
@@ -904,13 +965,20 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
           type: "geojson",
           visible: true,
           opacity: 1,
-          style: { ...DEFAULT_LAYER_STYLE },
+          style: {
+            ...DEFAULT_LAYER_STYLE,
+            simpleStyleEnabled: true,
+            strokeWidth: DEFAULT_TACTICAL_LINE_WIDTH_PX,
+            fillOpacity: 0.2,
+          },
           metadata: { milgeoManaged: true, tacticalCollection: true },
           source: {
             type: "geojson",
             ...serializeMilGraphicLayerSource(importedGraphics),
           } as unknown as Record<string, unknown>,
-          geojson: milGraphicsToGeoJson(importedGraphics),
+          geojson: milGraphicsToGeoJson(importedGraphics, {
+            lineWidthPx: DEFAULT_TACTICAL_LINE_WIDTH_PX,
+          }),
         });
       }
     }
