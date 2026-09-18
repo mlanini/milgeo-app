@@ -305,6 +305,80 @@
     "combatEffectiveness": "Combat effectiveness (AL)",
     "evaluationRating": "Evaluation rating (AP)"
   },
+  "eoPredictor": {
+    "title": "EO Predictor",
+    "description": "Satellite pass filtering inspired by developmentseed/eo-predictor. Upload a pass GeoJSON to visualize predicted coverage on the current map.",
+    "predictedPasses": "Predicted passes",
+    "constellation": "Constellation",
+    "operator": "Operator",
+    "sensor": "Sensor",
+    "resolution": "Resolution",
+    "dataAccess": "Data access",
+    "taskable": "Taskable",
+    "daylight": "Daylight",
+    "satellite": "Satellite",
+    "start": "Start",
+    "end": "End",
+    "all": "All",
+    "yes": "Yes",
+    "no": "No",
+    "day": "Day",
+    "night": "Night",
+    "na": "n/a",
+    "inView": "In current map view: {{count}}",
+    "zoomPrompt": "Zoom in to inspect predicted passes in detail.",
+    "sensorValues": {
+      "optical": "Optical",
+      "sar": "SAR",
+      "hyperspectral": "Hyperspectral"
+    },
+    "resolutionValues": {
+      "high": "High (<5m)",
+      "medium": "Medium (5-30m)",
+      "low": "Low (>30m)"
+    },
+    "accessValues": {
+      "open": "Open",
+      "commercial": "Commercial"
+    },
+    "actions": {
+      "loadPasses": "Load EO Passes",
+      "loadAoi": "Load AOI",
+      "clear": "Clear"
+    },
+    "filters": {
+      "title": "Filters",
+      "predictionWindow": "Prediction window: {{hours}}h",
+      "aoiOnly": "Only AOI-intersecting passes"
+    },
+    "summary": {
+      "noDataset": "No dataset loaded.",
+      "noPasses": "No predicted passes for current filters.",
+      "single": "1 predicted pass for current filters.",
+      "multiple": "{{count}} predicted passes for current filters."
+    },
+    "message": {
+      "initial": "Upload an EO-predictor compatible GeoJSON dataset to start.",
+      "loadingDataset": "Loading EO dataset...",
+      "datasetLoaded": "Loaded {{count}} EO pass features from {{name}}.",
+      "aoiLoaded": "AOI loaded from {{name}}.",
+      "reset": "EO Predictor state reset."
+    },
+    "error": {
+      "parseDataset": "Failed to parse EO dataset.",
+      "parseAoi": "Failed to parse AOI file.",
+      "datasetNotJson": "EO dataset is not valid JSON.",
+      "datasetNotFeatureCollection": "EO dataset must be a GeoJSON FeatureCollection.",
+      "datasetNoFeatures": "No features found in EO dataset.",
+      "aoiNotJson": "AOI file is not valid JSON.",
+      "aoiNotFeatureCollection": "AOI must be a GeoJSON FeatureCollection.",
+      "aoiNoPolygon": "AOI has no Polygon or MultiPolygon features.",
+      "aoiNoGeometry": "AOI has no valid geometry."
+    },
+    "popup": {
+      "unknownSatellite": "Unknown satellite"
+    }
+  },
   "addData": {
     "title": "Add Data",
     "kind": {

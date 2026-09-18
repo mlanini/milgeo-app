@@ -305,6 +305,80 @@
     "combatEffectiveness": "Efficacia combattimento (AL)",
     "evaluationRating": "Indice valutazione (AP)"
   },
+  "eoPredictor": {
+    "title": "EO Predictor",
+    "description": "Filtro dei passaggi satellitari ispirato a developmentseed/eo-predictor. Carica un GeoJSON dei passaggi per visualizzare la copertura prevista sulla mappa corrente.",
+    "predictedPasses": "Passaggi previsti",
+    "constellation": "Costellazione",
+    "operator": "Operatore",
+    "sensor": "Sensore",
+    "resolution": "Risoluzione",
+    "dataAccess": "Accesso ai dati",
+    "taskable": "Taskabile",
+    "daylight": "Luce diurna",
+    "satellite": "Satellite",
+    "start": "Inizio",
+    "end": "Fine",
+    "all": "Tutti",
+    "yes": "Sì",
+    "no": "No",
+    "day": "Giorno",
+    "night": "Notte",
+    "na": "n/d",
+    "inView": "Nella vista corrente: {{count}}",
+    "zoomPrompt": "Aumenta lo zoom per ispezionare in dettaglio i passaggi previsti.",
+    "sensorValues": {
+      "optical": "Ottico",
+      "sar": "SAR",
+      "hyperspectral": "Iperspettrale"
+    },
+    "resolutionValues": {
+      "high": "Alta (<5m)",
+      "medium": "Media (5-30m)",
+      "low": "Bassa (>30m)"
+    },
+    "accessValues": {
+      "open": "Aperto",
+      "commercial": "Commerciale"
+    },
+    "actions": {
+      "loadPasses": "Carica passaggi EO",
+      "loadAoi": "Carica AOI",
+      "clear": "Pulisci"
+    },
+    "filters": {
+      "title": "Filtri",
+      "predictionWindow": "Finestra di previsione: {{hours}}h",
+      "aoiOnly": "Solo passaggi che intersecano AOI"
+    },
+    "summary": {
+      "noDataset": "Nessun dataset caricato.",
+      "noPasses": "Nessun passaggio previsto con i filtri correnti.",
+      "single": "1 passaggio previsto con i filtri correnti.",
+      "multiple": "{{count}} passaggi previsti con i filtri correnti."
+    },
+    "message": {
+      "initial": "Carica un dataset GeoJSON compatibile con EO Predictor per iniziare.",
+      "loadingDataset": "Caricamento dataset EO...",
+      "datasetLoaded": "Caricate {{count}} feature di passaggi EO da {{name}}.",
+      "aoiLoaded": "AOI caricata da {{name}}.",
+      "reset": "Stato EO Predictor ripristinato."
+    },
+    "error": {
+      "parseDataset": "Impossibile interpretare il dataset EO.",
+      "parseAoi": "Impossibile interpretare il file AOI.",
+      "datasetNotJson": "Il dataset EO non è un JSON valido.",
+      "datasetNotFeatureCollection": "Il dataset EO deve essere una GeoJSON FeatureCollection.",
+      "datasetNoFeatures": "Nessuna feature trovata nel dataset EO.",
+      "aoiNotJson": "Il file AOI non è un JSON valido.",
+      "aoiNotFeatureCollection": "L'AOI deve essere una GeoJSON FeatureCollection.",
+      "aoiNoPolygon": "L'AOI non contiene feature Polygon o MultiPolygon.",
+      "aoiNoGeometry": "L'AOI non contiene geometrie valide."
+    },
+    "popup": {
+      "unknownSatellite": "Satellite sconosciuto"
+    }
+  },
   "addData": {
     "title": "Aggiungi dati",
     "kind": {
