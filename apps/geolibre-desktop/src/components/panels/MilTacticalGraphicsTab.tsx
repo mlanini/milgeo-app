@@ -137,7 +137,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     () =>
       layers.find(
         (layer) =>
-          layer.type === "mil-graphic" &&
+          (layer.type === "mil-graphic" || layer.type === "geojson") &&
           (layer.id === TACTICAL_LAYER_ID ||
             (layer.metadata.milgeoManaged === true && layer.metadata.tacticalCollection === true)),
       ) ?? null,
@@ -154,18 +154,18 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
     [search, family],
   );
 
-  // Migrate pre-aggregation tactical graphics (one layer per graphic) into one shared layer.
+  // Migrate plugin-managed mil-graphic tactical layers to one shared GeoJSON
+  // tactical layer, mirroring the stable Annotations rendering path.
   useEffect(() => {
-    const legacyTacticalLayers = layers.filter(
+    const tacticalGraphicLayers = layers.filter(
       (layer) =>
         layer.type === "mil-graphic" &&
-        layer.metadata.milgeoManaged === true &&
-        layer.metadata.tacticalCollection !== true,
+        (layer.id === TACTICAL_LAYER_ID || layer.metadata.milgeoManaged === true),
     );
 
-    if (legacyTacticalLayers.length === 0) return;
+    if (tacticalGraphicLayers.length === 0) return;
 
-    const migratedGraphics = legacyTacticalLayers
+    const migratedGraphics = tacticalGraphicLayers
       .flatMap((layer) => {
         const parsed = parseMilGraphicLayerSource(layer.source);
         return parsed.graphics.map((graphic) => ({
@@ -181,32 +181,43 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
       });
 
     if (migratedGraphics.length === 0) {
-      legacyTacticalLayers.forEach((layer) => removeLayer(layer.id));
+      tacticalGraphicLayers.forEach((layer) => removeLayer(layer.id));
       return;
     }
 
-    if (tacticalLayer) {
-      const existing = parseMilGraphicLayerSource(tacticalLayer.source).graphics;
+    const geojsonTacticalLayer = layers.find(
+      (layer) =>
+        layer.type === "geojson" &&
+        (layer.id === TACTICAL_LAYER_ID ||
+          (layer.metadata.milgeoManaged === true && layer.metadata.tacticalCollection === true)),
+    );
+
+    if (geojsonTacticalLayer) {
+      const existing = parseMilGraphicLayerSource(geojsonTacticalLayer.source).graphics;
       const merged = [...existing, ...migratedGraphics];
 
-      updateLayer(tacticalLayer.id, {
-        source: serializeMilGraphicLayerSource(merged) as unknown as Record<string, unknown>,
+      updateLayer(geojsonTacticalLayer.id, {
+        source: {
+          type: "geojson",
+          ...serializeMilGraphicLayerSource(merged),
+        } as unknown as Record<string, unknown>,
         geojson: milGraphicsToGeoJson(merged),
         metadata: {
-          ...tacticalLayer.metadata,
+          ...geojsonTacticalLayer.metadata,
           milgeoManaged: true,
           tacticalCollection: true,
         },
+        visible: true,
       });
 
-      legacyTacticalLayers.forEach((layer) => removeLayer(layer.id));
+      tacticalGraphicLayers.forEach((layer) => removeLayer(layer.id));
       return;
     }
 
     addLayer({
       id: TACTICAL_LAYER_ID,
       name: TACTICAL_LAYER_NAME,
-      type: "mil-graphic",
+      type: "geojson",
       visible: true,
       opacity: 1,
       style: { ...DEFAULT_LAYER_STYLE },
@@ -214,11 +225,14 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         milgeoManaged: true,
         tacticalCollection: true,
       },
-      source: serializeMilGraphicLayerSource(migratedGraphics) as unknown as Record<string, unknown>,
+      source: {
+        type: "geojson",
+        ...serializeMilGraphicLayerSource(migratedGraphics),
+      } as unknown as Record<string, unknown>,
       geojson: milGraphicsToGeoJson(migratedGraphics),
     });
 
-    legacyTacticalLayers.forEach((layer) => removeLayer(layer.id));
+    tacticalGraphicLayers.forEach((layer) => removeLayer(layer.id));
   }, [addLayer, layers, removeLayer, tacticalLayer, updateLayer]);
 
   const updateTacticalGraphics = useCallback(
@@ -237,8 +251,17 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
         }
 
         updateLayer(tacticalLayer.id, {
-          source: serializeMilGraphicLayerSource(nextGraphics) as unknown as Record<string, unknown>,
+          type: "geojson",
+          source: {
+            type: "geojson",
+            ...serializeMilGraphicLayerSource(nextGraphics),
+          } as unknown as Record<string, unknown>,
           geojson: milGraphicsToGeoJson(nextGraphics),
+          metadata: {
+            ...tacticalLayer.metadata,
+            milgeoManaged: true,
+            tacticalCollection: true,
+          },
           ...(ensureVisible
             ? {
                 visible: true,
@@ -257,7 +280,7 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
       const layer: GeoLibreLayer = {
         id: TACTICAL_LAYER_ID,
         name: TACTICAL_LAYER_NAME,
-        type: "mil-graphic",
+        type: "geojson",
         visible: true,
         opacity: 1,
         style: { ...DEFAULT_LAYER_STYLE },
@@ -265,7 +288,10 @@ export function MilTacticalGraphicsTab({ mapControllerRef }: Props) {
           milgeoManaged: true,
           tacticalCollection: true,
         },
-        source: serializeMilGraphicLayerSource(nextGraphics) as unknown as Record<string, unknown>,
+        source: {
+          type: "geojson",
+          ...serializeMilGraphicLayerSource(nextGraphics),
+        } as unknown as Record<string, unknown>,
         geojson: milGraphicsToGeoJson(nextGraphics),
       };
 

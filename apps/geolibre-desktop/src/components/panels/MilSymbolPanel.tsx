@@ -39,12 +39,13 @@ import {
   serializeMilSymbolLayerSource,
   DEFAULT_MIL_SYMBOL_SIZE_PX,
 } from "../../lib/milsymbol-layer-source";
+import { parseMilGraphicLayerSource } from "../../lib/milgraphic-layer-source";
 import {
   importMilSymbolsFromGeoJSON,
   importMilSymbolsFromKML,
 } from "../../lib/milsymbol-import";
 import { downloadMilLayersAsGeoJSON } from "../../lib/milsymbol-export";
-import type { FeatureCollection } from "geojson";
+import type { Feature, FeatureCollection, LineString, Point, Polygon } from "geojson";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -107,7 +108,11 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
   const updateLayer = useAppStore((s) => s.updateLayer);
 
   const milSymbolLayers = layers.filter((l) => l.type === "mil-symbol");
-  const milGraphicLayers = layers.filter((l) => l.type === "mil-graphic");
+  const milGraphicLayers = layers.filter(
+    (l) =>
+      l.type === "mil-graphic" ||
+      (l.type === "geojson" && l.metadata?.milgeoManaged === true && l.metadata?.tacticalCollection === true),
+  );
   const allMilLayers = [...milSymbolLayers, ...milGraphicLayers];
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -316,6 +321,100 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
   // ── Export ────────────────────────────────────────────────────────
   const handleExport = () => {
     downloadMilLayersAsGeoJSON(allMilLayers, "milgeo-symbols");
+  };
+
+  const handleExportJson = () => {
+    const features: Feature[] = [];
+
+    for (const layer of allMilLayers) {
+      const metadata = (layer.metadata ?? {}) as Record<string, unknown>;
+      const isOrbatLayer =
+        layer.type === "mil-symbol" &&
+        (metadata.orbatDocumentName !== undefined
+          || metadata.orbatParentId !== undefined
+          || metadata.orbatUnitId !== undefined);
+
+      if (layer.type === "mil-symbol") {
+        const parsed = parseMilSymbolLayerSource(layer.source);
+        for (const symbol of parsed.symbols) {
+          if (!Number.isFinite(symbol.lon) || !Number.isFinite(symbol.lat)) continue;
+          const feature: Feature<Point> = {
+            type: "Feature",
+            id: `${layer.id}:${symbol.id}`,
+            geometry: {
+              type: "Point",
+              coordinates: [symbol.lon, symbol.lat],
+            },
+            properties: {
+              SIDC: symbol.SIDC,
+              name: symbol.name || layer.name,
+              affiliation: symbol.affiliation,
+              uniqueDesignation: symbol.uniqueDesignation,
+              higherFormation: symbol.higherFormation,
+              additionalInfo: symbol.additionalInformation,
+              speed: symbol.speed,
+              direction: symbol.direction,
+              layerId: layer.id,
+              layerName: layer.name,
+              layerType: layer.type,
+              layerClass: isOrbatLayer ? "orbat" : "simple",
+              orbatParentId:
+                typeof metadata.orbatParentId === "string" || metadata.orbatParentId === null
+                  ? metadata.orbatParentId
+                  : undefined,
+            },
+          };
+          features.push(feature);
+        }
+        continue;
+      }
+
+      if (
+        layer.type === "mil-graphic" ||
+        (layer.type === "geojson" && metadata.milgeoManaged === true && metadata.tacticalCollection === true)
+      ) {
+        const parsed = parseMilGraphicLayerSource(layer.source);
+        for (const graphic of parsed.graphics) {
+          if (!Array.isArray(graphic.coordinates) || graphic.coordinates.length < 2) continue;
+          const geometry =
+            graphic.geometryType === "Polygon"
+              ? ({ type: "Polygon", coordinates: [graphic.coordinates] } as Polygon)
+              : ({ type: "LineString", coordinates: graphic.coordinates } as LineString);
+          const feature: Feature<LineString | Polygon> = {
+            type: "Feature",
+            id: `${layer.id}:${graphic.id}`,
+            geometry,
+            properties: {
+              SIDC: graphic.sidcOriginal ?? graphic.SIDC,
+              name: graphic.name || layer.name,
+              affiliation: graphic.affiliation,
+              uniqueDesignation: graphic.uniqueDesignation,
+              additionalInfo: graphic.additionalInfo,
+              sidcCanonical: graphic.sidcCanonical,
+              ruleKey: graphic.ruleKey,
+              layerId: layer.id,
+              layerName: layer.name,
+              layerType: layer.type,
+              layerClass: "tactical",
+            },
+          };
+          features.push(feature);
+        }
+      }
+    }
+
+    const doc: FeatureCollection = {
+      type: "FeatureCollection",
+      features,
+    };
+    const json = JSON.stringify(doc, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "milgeo-symbols-export.json";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // ─────────────────────────────────────────────────────────────────────
@@ -683,11 +782,19 @@ export function MilSymbolPanel({ mapControllerRef }: MilSymbolPanelProps) {
         </button>
         <button
           className="flex-1 flex items-center justify-center gap-1 py-1 rounded border text-[11px] hover:bg-muted transition-colors"
+          onClick={handleExportJson}
+          disabled={allMilLayers.length === 0}
+          title="Export JSON compatibile con import (GeoJSON + SIDC)"
+        >
+          <Download size={12} /> Export JSON
+        </button>
+        <button
+          className="flex-1 flex items-center justify-center gap-1 py-1 rounded border text-[11px] hover:bg-muted transition-colors"
           onClick={handleExport}
           disabled={allMilLayers.length === 0}
           title="Export all mil-symbols as GeoJSON"
         >
-          <Download size={12} /> Export
+          <Download size={12} /> Export GeoJSON
         </button>
       </div>
 

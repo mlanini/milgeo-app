@@ -875,7 +875,7 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
     if (importedGraphics.length > 0) {
       const tacticalLayer = layers.find(
         (layer) =>
-          layer.type === "mil-graphic" &&
+          (layer.type === "mil-graphic" || layer.type === "geojson") &&
           (layer.id === TACTICAL_LAYER_ID
             || (layer.metadata.milgeoManaged === true && layer.metadata.tacticalCollection === true)),
       );
@@ -884,19 +884,32 @@ export function MilLayerPanel({ mapControllerRef }: MilLayerPanelProps) {
         const existing = parseMilGraphicLayerSource(tacticalLayer.source).graphics;
         const merged = [...existing, ...importedGraphics];
         updateLayer(tacticalLayer.id, {
-          source: serializeMilGraphicLayerSource(merged) as unknown as Record<string, unknown>,
+          type: "geojson",
+          source: {
+            type: "geojson",
+            ...serializeMilGraphicLayerSource(merged),
+          } as unknown as Record<string, unknown>,
           geojson: milGraphicsToGeoJson(merged),
+          metadata: {
+            ...tacticalLayer.metadata,
+            milgeoManaged: true,
+            tacticalCollection: true,
+          },
+          visible: true,
         });
       } else {
         addLayer({
           id: TACTICAL_LAYER_ID,
           name: TACTICAL_LAYER_NAME,
-          type: "mil-graphic",
+          type: "geojson",
           visible: true,
           opacity: 1,
           style: { ...DEFAULT_LAYER_STYLE },
           metadata: { milgeoManaged: true, tacticalCollection: true },
-          source: serializeMilGraphicLayerSource(importedGraphics) as unknown as Record<string, unknown>,
+          source: {
+            type: "geojson",
+            ...serializeMilGraphicLayerSource(importedGraphics),
+          } as unknown as Record<string, unknown>,
           geojson: milGraphicsToGeoJson(importedGraphics),
         });
       }
