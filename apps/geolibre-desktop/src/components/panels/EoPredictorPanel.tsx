@@ -8,9 +8,6 @@ import { useAppStore } from "@geolibre/core";
 import { Button, cn } from "@geolibre/ui";
 import { Check, Loader2, Orbit, Upload, X } from "lucide-react";
 
-const EO_SOURCE_ID = "geolibre-eo-predictor-source";
-const EO_FILL_LAYER_ID = "geolibre-eo-predictor-fill";
-const EO_LINE_LAYER_ID = "geolibre-eo-predictor-line";
 const EO_AOI_SOURCE_ID = "geolibre-eo-predictor-aoi-source";
 const EO_AOI_LAYER_ID = "geolibre-eo-predictor-aoi-line";
 const EO_REMOTE_SOURCE_ID = "geolibre-eo-predictor-remote-source";
@@ -64,6 +61,7 @@ interface EoRemoteMetadata {
   operators?: string[];
   sensor_types?: string[];
   data_access_options?: string[];
+  spatial_resolution_ranges?: string[];
   minTime?: string;
   maxTime?: string;
   lastUpdated?: string;
@@ -251,93 +249,7 @@ function uniq(values: Array<string | undefined>): string[] {
   );
 }
 
-function buildPopupHtml(
-  props: EoFeatureProperties,
-  t: (key: string, options?: Record<string, unknown>) => string,
-): string {
-  const resolution = getSpatialResolutionMeters(props);
-  const na = t("eoPredictor.na", { defaultValue: "n/a" });
-  const start = props.start_time ? new Date(props.start_time).toUTCString() : na;
-  const end = props.end_time ? new Date(props.end_time).toUTCString() : na;
-  const tasking = typeof props.tasking === "boolean"
-    ? props.tasking
-      ? t("eoPredictor.yes", { defaultValue: "Yes" })
-      : t("eoPredictor.no", { defaultValue: "No" })
-    : na;
-  const daylight = typeof props.is_daytime === "boolean"
-    ? props.is_daytime
-      ? t("eoPredictor.day", { defaultValue: "Day" })
-      : t("eoPredictor.night", { defaultValue: "Night" })
-    : na;
-  return [
-    `<div style=\"min-width:230px;font-size:12px;line-height:1.4\">`,
-    `<div style=\"font-weight:600;margin-bottom:4px\">${props.satellite ?? t("eoPredictor.popup.unknownSatellite", { defaultValue: "Unknown satellite" })}</div>`,
-    `<div><strong>${t("eoPredictor.constellation", { defaultValue: "Constellation" })}:</strong> ${props.constellation ?? na}</div>`,
-    `<div><strong>${t("eoPredictor.operator", { defaultValue: "Operator" })}:</strong> ${props.operator ?? na}</div>`,
-    `<div><strong>${t("eoPredictor.sensor", { defaultValue: "Sensor" })}:</strong> ${props.sensor_type ?? na}</div>`,
-    `<div><strong>${t("eoPredictor.resolution", { defaultValue: "Resolution" })}:</strong> ${resolution !== null ? `${resolution} m` : na}</div>`,
-    `<div><strong>${t("eoPredictor.dataAccess", { defaultValue: "Data access" })}:</strong> ${props.data_access ?? na}</div>`,
-    `<div><strong>${t("eoPredictor.taskable", { defaultValue: "Taskable" })}:</strong> ${tasking}</div>`,
-    `<div><strong>${t("eoPredictor.daylight", { defaultValue: "Daylight" })}:</strong> ${daylight}</div>`,
-    `<div style=\"margin-top:6px\"><strong>${t("eoPredictor.start", { defaultValue: "Start" })}:</strong> ${start}</div>`,
-    `<div><strong>${t("eoPredictor.end", { defaultValue: "End" })}:</strong> ${end}</div>`,
-    `</div>`,
-  ].join("");
-}
-
 function ensureMapArtifacts(map: maplibregl.Map): void {
-  if (!map.getSource(EO_SOURCE_ID)) {
-    map.addSource(EO_SOURCE_ID, {
-      type: "geojson",
-      data: toFeatureCollection([]),
-    });
-  }
-
-  if (!map.getLayer(EO_FILL_LAYER_ID)) {
-    map.addLayer({
-      id: EO_FILL_LAYER_ID,
-      type: "fill",
-      source: EO_SOURCE_ID,
-      paint: {
-        "fill-color": [
-          "match",
-          ["get", "sensor_type"],
-          "optical",
-          "#3b82f6",
-          "SAR",
-          "#eab308",
-          "hyperspectral",
-          "#22c55e",
-          "#ef4444",
-        ],
-        "fill-opacity": ["interpolate", ["linear"], ["zoom"], 1.5, 0.02, 5, 0.09, 8, 0.14],
-      },
-    });
-  }
-
-  if (!map.getLayer(EO_LINE_LAYER_ID)) {
-    map.addLayer({
-      id: EO_LINE_LAYER_ID,
-      type: "line",
-      source: EO_SOURCE_ID,
-      paint: {
-        "line-color": [
-          "match",
-          ["get", "sensor_type"],
-          "optical",
-          "#1d4ed8",
-          "SAR",
-          "#ca8a04",
-          "hyperspectral",
-          "#15803d",
-          "#b91c1c",
-        ],
-        "line-width": ["interpolate", ["linear"], ["zoom"], 2, 0.3, 6, 1.4],
-        "line-opacity": 0.8,
-      },
-    });
-  }
-
   if (!map.getSource(EO_AOI_SOURCE_ID)) {
     map.addSource(EO_AOI_SOURCE_ID, {
       type: "geojson",
@@ -430,11 +342,8 @@ function computeCollectionBounds(collection: FeatureCollection<Geometry>): [numb
 export function clearEoPredictorArtifacts(map: maplibregl.Map | null): void {
   if (!map) return;
   if (map.getLayer(EO_REMOTE_LOAD_LAYER_ID)) map.removeLayer(EO_REMOTE_LOAD_LAYER_ID);
-  if (map.getLayer(EO_FILL_LAYER_ID)) map.removeLayer(EO_FILL_LAYER_ID);
-  if (map.getLayer(EO_LINE_LAYER_ID)) map.removeLayer(EO_LINE_LAYER_ID);
   if (map.getLayer(EO_AOI_LAYER_ID)) map.removeLayer(EO_AOI_LAYER_ID);
   if (map.getSource(EO_REMOTE_SOURCE_ID)) map.removeSource(EO_REMOTE_SOURCE_ID);
-  if (map.getSource(EO_SOURCE_ID)) map.removeSource(EO_SOURCE_ID);
   if (map.getSource(EO_AOI_SOURCE_ID)) map.removeSource(EO_AOI_SOURCE_ID);
 }
 
@@ -445,7 +354,6 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
   const removeLayer = useAppStore((s) => s.removeLayer);
   const eoInputRef = useRef<HTMLInputElement | null>(null);
   const aoiInputRef = useRef<HTMLInputElement | null>(null);
-  const popupRef = useRef<maplibregl.Popup | null>(null);
   const eoLayerIdRef = useRef<string | null>(null);
 
   const [rawData, setRawData] = useState<FeatureCollection<Geometry, EoFeatureProperties> | null>(null);
@@ -714,37 +622,86 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
       return result;
     };
 
-    const constellationCounts = countByDimension("constellation", ["all", ...uniqueConstellations], (feature) =>
-      (feature.properties?.constellation ?? "") as string,
+    const fillFallbackCounts = <T extends string>(
+      result: Record<T, number>,
+      availableValues: Iterable<T>,
+      allCount: number,
+    ): Record<T, number> => {
+      if (allFeatures.length > 0 || !remoteMode) return result;
+      for (const value of availableValues) {
+        if (value in result && value !== "all") {
+          result[value] = Math.max(result[value], 1);
+        }
+      }
+      if ("all" in result) {
+        const counts = result as Record<string, number>;
+        counts.all = Math.max(counts.all ?? 0, allCount);
+      }
+      return result;
+    };
+
+    const remoteSensorTypes: SensorType[] = (remoteMetadata?.sensor_types ?? [])
+      .map((value: string) => (value.toLowerCase() === "sar" ? "SAR" : value.toLowerCase()))
+      .filter(
+        (value: string): value is SensorType =>
+          value === "all" || value === "optical" || value === "SAR" || value === "hyperspectral",
+      );
+    const remoteResolutionRanges: ResolutionBucket[] = (remoteMetadata?.spatial_resolution_ranges ?? []).filter(
+      (value: string): value is ResolutionBucket =>
+        value === "all" || value === "high" || value === "medium" || value === "low",
     );
-    const operatorCounts = countByDimension("operator", ["all", ...uniqueOperators], (feature) =>
-      (feature.properties?.operator ?? "") as string,
+    const remoteAccessOptions: AccessType[] = (remoteMetadata?.data_access_options ?? []).filter(
+      (value: string): value is AccessType => value === "all" || value === "open" || value === "commercial",
     );
-    const sensorCounts = countByDimension("sensorType", SENSOR_VALUES, (feature) => {
+    const remoteTaskingOptions: TaskingType[] = [];
+    let remoteCatalogCount = 0;
+    for (const key in satelliteCatalog) {
+      const entry = satelliteCatalog[key];
+      if (!entry) continue;
+      remoteCatalogCount += 1;
+      if (entry.tasking === true) remoteTaskingOptions.push("yes");
+      if (entry.tasking === false) remoteTaskingOptions.push("no");
+    }
+
+    const constellationCounts = fillFallbackCounts(
+      countByDimension("constellation", ["all", ...uniqueConstellations], (feature) =>
+        (feature.properties?.constellation ?? "") as string,
+      ),
+      uniqueConstellations,
+      uniqueConstellations.length,
+    );
+    const operatorCounts = fillFallbackCounts(
+      countByDimension("operator", ["all", ...uniqueOperators], (feature) =>
+        (feature.properties?.operator ?? "") as string,
+      ),
+      uniqueOperators,
+      uniqueOperators.length,
+    );
+    const sensorCounts = fillFallbackCounts(countByDimension("sensorType", SENSOR_VALUES, (feature) => {
       const sensor = normalizeSensor(feature.properties?.sensor_type);
       if (sensor === "SAR") return "SAR";
       if (sensor === "optical") return "optical";
       if (sensor === "hyperspectral") return "hyperspectral";
       return "all";
-    });
-    const resolutionCounts = countByDimension("resolution", RESOLUTION_VALUES, (feature) => {
+    }), remoteSensorTypes, remoteSensorTypes.length);
+    const resolutionCounts = fillFallbackCounts(countByDimension("resolution", RESOLUTION_VALUES, (feature) => {
       const res = getSpatialResolutionMeters(feature.properties ?? {});
       if (res === null) return "all";
       if (res < 5) return "high";
       if (res <= 30) return "medium";
       return "low";
-    });
-    const accessCounts = countByDimension("access", ACCESS_VALUES, (feature) => {
+    }), remoteResolutionRanges, remoteResolutionRanges.length);
+    const accessCounts = fillFallbackCounts(countByDimension("access", ACCESS_VALUES, (feature) => {
       const access = feature.properties?.data_access;
       if (access === "open") return "open";
       if (access === "commercial") return "commercial";
       return "all";
-    });
-    const taskingCounts = countByDimension("tasking", TASKING_VALUES, (feature) => {
+    }), remoteAccessOptions, remoteAccessOptions.length);
+    const taskingCounts = fillFallbackCounts(countByDimension("tasking", TASKING_VALUES, (feature) => {
       if (feature.properties?.tasking === true) return "yes";
       if (feature.properties?.tasking === false) return "no";
       return "all";
-    });
+    }), remoteTaskingOptions, remoteCatalogCount);
     const daylightCounts = countByDimension("daylight", DAYLIGHT_VALUES, (feature) => {
       if (feature.properties?.is_daytime === true) return "day";
       if (feature.properties?.is_daytime === false) return "night";
@@ -760,7 +717,7 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
       taskingCounts,
       daylightCounts,
     };
-  }, [allFeatures, featureMatches, filters, uniqueConstellations, uniqueOperators]);
+  }, [allFeatures, featureMatches, filters, remoteMetadata, remoteMode, satelliteCatalog, uniqueConstellations, uniqueOperators]);
 
   const constellationOptions = useMemo<FilterOption<string>[]>(() => {
     const allLabel = t("eoPredictor.all", { defaultValue: "All" });
@@ -975,50 +932,7 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
   useEffect(() => {
     const map = app.getMap?.();
     if (!map) return;
-
     ensureMapArtifacts(map);
-    setZoom(map.getZoom());
-
-    const clickHandler = (event: maplibregl.MapMouseEvent & maplibregl.EventData) => {
-      const feature = event.features?.[0] as EoFeature | undefined;
-      if (!feature) return;
-      popupRef.current?.remove();
-      popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: "280px" })
-        .setLngLat(event.lngLat)
-        .setHTML(buildPopupHtml(feature.properties ?? {}, t))
-        .addTo(map);
-    };
-
-    const pointerEnter = () => {
-      map.getCanvas().style.cursor = "pointer";
-    };
-    const pointerLeave = () => {
-      map.getCanvas().style.cursor = "";
-    };
-
-    map.on("click", EO_FILL_LAYER_ID, clickHandler);
-    map.on("mouseenter", EO_FILL_LAYER_ID, pointerEnter);
-    map.on("mouseleave", EO_FILL_LAYER_ID, pointerLeave);
-
-    return () => {
-      map.off("click", EO_FILL_LAYER_ID, clickHandler);
-      map.off("mouseenter", EO_FILL_LAYER_ID, pointerEnter);
-      map.off("mouseleave", EO_FILL_LAYER_ID, pointerLeave);
-      map.getCanvas().style.cursor = "";
-      popupRef.current?.remove();
-      popupRef.current = null;
-    };
-  }, [app, t]);
-
-  useEffect(() => {
-    const map = app.getMap?.();
-    if (!map) return;
-    ensureMapArtifacts(map);
-    // The predicted passes are materialized as a real GeoLibre store layer (see
-    // the auto-sync effect below), so the internal MapLibre preview source is
-    // kept empty to avoid drawing the same geometries twice.
-    updateSourceData(map, EO_SOURCE_ID, toFeatureCollection([]));
-
     const nextAoi = aoiData ?? toFeatureCollection([]);
     updateSourceData(map, EO_AOI_SOURCE_ID, nextAoi);
 
@@ -1202,10 +1116,13 @@ export function EoPredictorPanel({ app }: { app: GeoLibreAppAPI }) {
     setFilters(DEFAULT_FILTERS);
     setVisibleInViewCount(0);
     setMessage(t("eoPredictor.message.reset", { defaultValue: "EO Predictor state reset." }));
+    if (eoLayerIdRef.current) {
+      removeLayer(eoLayerIdRef.current);
+      eoLayerIdRef.current = null;
+    }
     const map = app.getMap?.();
     if (map) {
       ensureMapArtifacts(map);
-      updateSourceData(map, EO_SOURCE_ID, toFeatureCollection([]));
       updateSourceData(map, EO_AOI_SOURCE_ID, toFeatureCollection([]));
       if (map.getLayer(EO_REMOTE_LOAD_LAYER_ID)) map.removeLayer(EO_REMOTE_LOAD_LAYER_ID);
       if (map.getSource(EO_REMOTE_SOURCE_ID)) map.removeSource(EO_REMOTE_SOURCE_ID);
