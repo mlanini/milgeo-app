@@ -493,22 +493,27 @@ export default function MilSymbolRenderer({
             ? symbol.direction
             : 0;
         const opts: SymbolOptions = {
-          size:              layerSize,
-          infoFields:        true,
-          uniqueDesignation: symbol.uniqueDesignation,
-          higherFormation:   symbol.higherFormation,
-          staffComments:     symbol.staffComments,
-          additionalInformation: symbol.additionalInformation,
-          dtg:               symbol.dtg,
-          altitudeDepth:     symbol.altitudeDepth,
-          ...(showAmplifiers ? { outlineColor: "white", outlineWidth: 6 } : {}),
-          quantity:          symbol.quantity,
-          iffSif:            symbol.iffSif,
-          speed:             symbol.speed,
-          type:              symbol.typeStr,
-          reinforcedReduced: symbol.reinforcedReduced,
-          combatEffectiveness: symbol.combatEffectiveness,
-          evaluationRating:  symbol.evaluationRating,
+          size: layerSize,
+          infoFields: showAmplifiers,
+          ...(showAmplifiers
+            ? {
+                uniqueDesignation: symbol.uniqueDesignation,
+                higherFormation: symbol.higherFormation,
+                staffComments: symbol.staffComments,
+                additionalInformation: symbol.additionalInformation,
+                dtg: symbol.dtg,
+                altitudeDepth: symbol.altitudeDepth,
+                outlineColor: "white",
+                outlineWidth: 6,
+                quantity: symbol.quantity,
+                iffSif: symbol.iffSif,
+                speed: symbol.speed,
+                type: symbol.typeStr,
+                reinforcedReduced: symbol.reinforcedReduced,
+                combatEffectiveness: symbol.combatEffectiveness,
+                evaluationRating: symbol.evaluationRating,
+              }
+            : {}),
         };
         const cleanedOpts = cleanSymbolOptions(opts);
         const key = makeSymbolKey(symbol.SIDC, cleanedOpts);
@@ -567,21 +572,26 @@ export default function MilSymbolRenderer({
         if (!Number.isFinite(symbol.lon) || !Number.isFinite(symbol.lat)) continue;
         const opts: SymbolOptions = cleanSymbolOptions({
           size: layerSize,
-          infoFields: true,
-          uniqueDesignation: symbol.uniqueDesignation,
-          higherFormation: symbol.higherFormation,
-          staffComments: symbol.staffComments,
-          additionalInformation: symbol.additionalInformation,
-          dtg: symbol.dtg,
-          altitudeDepth: symbol.altitudeDepth,
-          ...(showAmplifiers ? { outlineColor: "white", outlineWidth: 6 } : {}),
-          quantity: symbol.quantity,
-          iffSif: symbol.iffSif,
-          speed: symbol.speed,
-          type: symbol.typeStr,
-          reinforcedReduced: symbol.reinforcedReduced,
-          combatEffectiveness: symbol.combatEffectiveness,
-          evaluationRating: symbol.evaluationRating,
+          infoFields: showAmplifiers,
+          ...(showAmplifiers
+            ? {
+                uniqueDesignation: symbol.uniqueDesignation,
+                higherFormation: symbol.higherFormation,
+                staffComments: symbol.staffComments,
+                additionalInformation: symbol.additionalInformation,
+                dtg: symbol.dtg,
+                altitudeDepth: symbol.altitudeDepth,
+                outlineColor: "white",
+                outlineWidth: 6,
+                quantity: symbol.quantity,
+                iffSif: symbol.iffSif,
+                speed: symbol.speed,
+                type: symbol.typeStr,
+                reinforcedReduced: symbol.reinforcedReduced,
+                combatEffectiveness: symbol.combatEffectiveness,
+                evaluationRating: symbol.evaluationRating,
+              }
+            : {}),
         });
         const markerId = `${layer.id}:${symbol.id}`;
         nextIds.add(markerId);
